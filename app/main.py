@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.api.exception_handlers import register_exception_handlers
-from app.api.routes import health_router
+from app.api.routes import health_router, projects_router
 from app.config.logging_config import configure_logging
 from app.config.settings import settings
 from app.db.base import engine
@@ -60,3 +60,4 @@ register_exception_handlers(app)
 
 # Register routers
 app.include_router(health_router)
+app.include_router(projects_router, prefix="/api/v1")

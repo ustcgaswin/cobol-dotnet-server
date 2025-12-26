@@ -5,9 +5,21 @@ from app.core.exceptions.db_exceptions import (
     DatabaseException,
     DatabaseHealthCheckError,
 )
+from app.core.exceptions.project import (
+    ProjectCreationError,
+    ProjectException,
+    ProjectNotFoundException,
+    ProjectValidationError,
+)
 
 __all__ = [
+    # Database
     "DatabaseException",
     "DatabaseConnectionError",
     "DatabaseHealthCheckError",
+    # Project
+    "ProjectException",
+    "ProjectNotFoundException",
+    "ProjectCreationError",
+    "ProjectValidationError",
 ]

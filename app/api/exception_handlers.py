@@ -10,6 +10,10 @@ from app.core.exceptions import (
     DatabaseConnectionError,
     DatabaseException,
     DatabaseHealthCheckError,
+    ProjectCreationError,
+    ProjectException,
+    ProjectNotFoundException,
+    ProjectValidationError,
 )
 
 
@@ -28,6 +32,36 @@ async def database_exception_handler(
         status_code = 503
     else:
         error_code = "DATABASE_ERROR"
+        status_code = 500
+    
+    response = APIResponse.fail(
+        code=error_code,
+        message=exc.message,
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=response.model_dump(mode="json"),
+    )
+
+
+async def project_exception_handler(
+    request: Request, exc: ProjectException
+) -> JSONResponse:
+    """Handle project-related exceptions."""
+    logger.error(f"Project error: {exc.message}")
+    
+    # Determine error code and status based on exception type
+    if isinstance(exc, ProjectNotFoundException):
+        error_code = "PROJECT_NOT_FOUND"
+        status_code = 404
+    elif isinstance(exc, ProjectValidationError):
+        error_code = "PROJECT_VALIDATION_ERROR"
+        status_code = 400
+    elif isinstance(exc, ProjectCreationError):
+        error_code = "PROJECT_CREATION_ERROR"
+        status_code = 500
+    else:
+        error_code = "PROJECT_ERROR"
         status_code = 500
     
     response = APIResponse.fail(
@@ -76,5 +110,6 @@ async def generic_exception_handler(
 def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers with the FastAPI app."""
     app.add_exception_handler(DatabaseException, database_exception_handler)
+    app.add_exception_handler(ProjectException, project_exception_handler)
     app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
