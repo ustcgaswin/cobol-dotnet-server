@@ -3,8 +3,10 @@
 import uuid
 from typing import Sequence
 
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.storage import FileStorage
 from app.db.models.project import Project, ProjectStatus
 from app.db.repositories.project import ProjectRepository
 
@@ -14,6 +16,7 @@ class ProjectService:
     
     def __init__(self, session: AsyncSession):
         self.repository = ProjectRepository(session)
+        self.storage = FileStorage()
     
     async def create_project(
         self,
@@ -62,5 +65,15 @@ class ProjectService:
         return await self.repository.update(project)
     
     async def delete_project(self, project: Project) -> None:
-        """Delete a project."""
+        """Delete a project and all its storage files."""
+        project_id = project.id
+        
+        # Delete from database (cascade will delete source_files records)
         await self.repository.delete(project)
+        
+        # Delete storage folder
+        deleted = await self.storage.delete_project_folder(project_id)
+        if deleted:
+            logger.info(f"Deleted project storage for project: {project_id}")
+        else:
+            logger.debug(f"No storage folder found for project: {project_id}")

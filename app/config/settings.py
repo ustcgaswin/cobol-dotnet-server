@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional
 
 from pydantic import Field
@@ -13,6 +14,25 @@ class Settings(BaseSettings):
     # Environment
     ENV: str = Field(default="development")
 
+    # Storage
+    PROJECT_STORAGE_PATH: str = Field(
+        default="project_storage",
+        description="Base path for project file storage"
+    )
+    
+    # File size limits in MB (based on production mainframe standards)
+    FILE_SIZE_LIMITS_MB: dict[str, int] = Field(
+        default={
+            "cobol": 10,
+            "copybook": 5,
+            "jcl": 2,
+            "rexx": 5,
+            "catproc": 2,
+            "proc": 2,
+            "pli": 10,
+        },
+        description="Maximum file size in MB per file type"
+    )
 
     # Database
     DATABASE_URL: Optional[str] = Field(default=None)
@@ -51,6 +71,15 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=True,
     )
+    
+    def get_file_size_limit_bytes(self, file_type: str) -> int:
+        """Get file size limit in bytes for a given file type."""
+        limit_mb = self.FILE_SIZE_LIMITS_MB.get(file_type, 5)  # Default 5MB
+        return limit_mb * 1024 * 1024
+    
+    def get_storage_path(self) -> Path:
+        """Get the storage path as a Path object."""
+        return Path(self.PROJECT_STORAGE_PATH)
 
 
 settings = Settings()

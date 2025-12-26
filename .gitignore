@@ -210,3 +210,4 @@ __marimo__/
 
 .env
 logs/
+project_storage/

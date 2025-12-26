@@ -1,5 +1,7 @@
 """Centralized exception handlers for FastAPI application."""
 
+import json
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -10,10 +12,14 @@ from app.core.exceptions import (
     DatabaseConnectionError,
     DatabaseException,
     DatabaseHealthCheckError,
+    FileSizeExceededError,
+    InvalidFileTypeError,
     ProjectCreationError,
     ProjectException,
     ProjectNotFoundException,
     ProjectValidationError,
+    SourceFileException,
+    SourceFileNotFoundException,
 )
 
 
@@ -74,6 +80,41 @@ async def project_exception_handler(
     )
 
 
+async def source_file_exception_handler(
+    request: Request, exc: SourceFileException
+) -> JSONResponse:
+    """Handle source file-related exceptions."""
+    logger.error(f"Source file error: {exc.message}")
+    
+    # Determine error code and status based on exception type
+    if isinstance(exc, SourceFileNotFoundException):
+        error_code = "SOURCE_FILE_NOT_FOUND"
+        status_code = 404
+        details = None
+    elif isinstance(exc, InvalidFileTypeError):
+        error_code = "INVALID_FILE_TYPE"
+        status_code = 400
+        details = json.dumps({"supported_types": exc.supported_types})
+    elif isinstance(exc, FileSizeExceededError):
+        error_code = "FILE_SIZE_EXCEEDED"
+        status_code = 400
+        details = json.dumps(exc.violations)
+    else:
+        error_code = "SOURCE_FILE_ERROR"
+        status_code = 500
+        details = None
+    
+    response = APIResponse.fail(
+        code=error_code,
+        message=exc.message,
+        details=details,
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=response.model_dump(mode="json"),
+    )
+
+
 async def sqlalchemy_exception_handler(
     request: Request, exc: SQLAlchemyError
 ) -> JSONResponse:
@@ -111,5 +152,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers with the FastAPI app."""
     app.add_exception_handler(DatabaseException, database_exception_handler)
     app.add_exception_handler(ProjectException, project_exception_handler)
+    app.add_exception_handler(SourceFileException, source_file_exception_handler)
     app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)

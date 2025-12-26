@@ -11,6 +11,13 @@ from app.core.exceptions.project import (
     ProjectNotFoundException,
     ProjectValidationError,
 )
+from app.core.exceptions.source_file import (
+    FileSizeExceededError,
+    FileUploadError,
+    InvalidFileTypeError,
+    SourceFileException,
+    SourceFileNotFoundException,
+)
 
 __all__ = [
     # Database
@@ -22,4 +29,10 @@ __all__ = [
     "ProjectNotFoundException",
     "ProjectCreationError",
     "ProjectValidationError",
+    # Source File
+    "SourceFileException",
+    "InvalidFileTypeError",
+    "FileSizeExceededError",
+    "SourceFileNotFoundException",
+    "FileUploadError",
 ]

@@ -14,7 +14,7 @@ from app.config.settings import settings
 from app.db.base import Base
 
 # Import all models to ensure they are registered with Base.metadata
-from app.db.models import Project  # noqa: F401
+from app.db.models import Project, SourceFile  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
