@@ -1,14 +1,23 @@
-from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings, ChatOpenAI
+"""LLM and embedding model configuration."""
+
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models.chat_models import BaseChatModel
-from .settings import settings
-# from langchain_azure_ai import AzureAIChatCompletions
+from langchain_openai import AzureOpenAIEmbeddings
+
+from app.config.settings import settings
+
 
 def get_llm() -> BaseChatModel:
     """
     Returns the configured LLM based on the provider in settings.
+    
+    Currently supports:
+    - azure_anthropic: Claude via Azure AI Foundry
+    
+    To add a new provider:
+    1. Add settings in settings.py
+    2. Add elif block here
     """
-
     if settings.LLM_PROVIDER == "azure_anthropic":
         return ChatAnthropic(
             model=settings.AZURE_ANTHROPIC_MODEL,
@@ -18,22 +27,9 @@ def get_llm() -> BaseChatModel:
             max_tokens=settings.LLM_MAX_TOKENS,
             timeout=settings.LLM_TIMEOUT,
         )
- 
     
-    elif settings.LLM_PROVIDER == "azure_openai":
-        # Standard Azure OpenAI integration
-        return AzureChatOpenAI(
-            azure_deployment=settings.AZURE_ANTHROPIC_MODEL, # In Azure, model usually matches deployment name
-            api_key=settings.AZURE_ANTHROPIC_API_KEY,
-            azure_endpoint=settings.AZURE_ANTHROPIC_ENDPOINT,
-            api_version="2024-02-01", # Update as per your Azure requirements
-            temperature=settings.LLM_TEMPERATURE,
-            max_tokens=settings.LLM_MAX_TOKENS,
-            timeout=settings.LLM_TIMEOUT,
-        )
-    
-    else:
-        raise ValueError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
+    raise ValueError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
+
 
 def get_embeddings() -> AzureOpenAIEmbeddings:
     """
@@ -47,9 +43,9 @@ def get_embeddings() -> AzureOpenAIEmbeddings:
         openai_api_key=settings.AZURE_OPENAI_EMBED_API_KEY,
         azure_endpoint=settings.AZURE_OPENAI_EMBED_API_ENDPOINT,
         api_version=settings.AZURE_OPENAI_EMBED_VERSION or "2023-05-15",
-        chunk_size=1  # Recommended for Azure
     )
 
-# Pre-initialize instances for reuse across the LangGraph
+
+# Initialize at startup for early validation via health check
 llm = get_llm()
 embeddings = get_embeddings()

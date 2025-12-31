@@ -118,25 +118,16 @@ async def llm_health_check() -> APIResponse[LLMHealthStatus]:
                 model=settings.AZURE_ANTHROPIC_MODEL,
                 temperature=settings.LLM_TEMPERATURE,
                 max_tokens=settings.LLM_MAX_TOKENS,
-                timeout=settings.LLM_TIMEOUT,
+                timeout=int(settings.LLM_TIMEOUT),
             ),
             embeddings=EmbeddingHealth(
-            status=embeddings_status,
-            deployment=settings.AZURE_OPENAI_EMBED_DEPLOYMENT_NAME,
-            dimension=settings.EMBEDDING_DIMENSION,
-        ),
-
+                status=embeddings_status,
+                deployment=settings.AZURE_OPENAI_EMBED_DEPLOYMENT_NAME,
+                dimension=settings.EMBEDDING_DIMENSION,
+            ),
             timestamp=datetime.utcnow(),
         )
     )
-
-
-
-
-
-
-
-
 
 
 
