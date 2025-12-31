@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     AZURE_OPENAI_EMBED_VERSION: Optional[str] = Field(default=None)
     AZURE_OPENAI_EMBED_DEPLOYMENT_NAME: Optional[str] = Field(default=None)
     EMBEDDING_DIMENSION: int = Field(default=1536, description="Embedding vector dimension")
+    EMBEDDING_ENCODING: str = Field(
+        default="cl100k_base",
+        description="tiktoken encoding for chunking (must match embedding model)"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

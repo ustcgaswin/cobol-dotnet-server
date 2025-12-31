@@ -1,5 +1,10 @@
 """Core exceptions for the application."""
 
+from app.core.exceptions.chunker import (
+    ChunkerException,
+    ChunkError,
+    UnsupportedFileTypeError,
+)
 from app.core.exceptions.db_exceptions import (
     DatabaseConnectionError,
     DatabaseException,
@@ -28,6 +33,10 @@ from app.core.exceptions.source_file import (
 )
 
 __all__ = [
+    # Chunker
+    "ChunkerException",
+    "ChunkError",
+    "UnsupportedFileTypeError",
     # Database
     "DatabaseException",
     "DatabaseConnectionError",
@@ -51,4 +60,5 @@ __all__ = [
     "SourceFileNotFoundException",
     "FileUploadError",
 ]
+
 

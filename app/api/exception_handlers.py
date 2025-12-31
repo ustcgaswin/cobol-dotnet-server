@@ -9,6 +9,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.schemas.common import APIResponse
 from app.core.exceptions import (
+    ChunkError,
+    ChunkerException,
     DatabaseConnectionError,
     DatabaseException,
     DatabaseHealthCheckError,
@@ -23,6 +25,7 @@ from app.core.exceptions import (
     ProjectValidationError,
     SourceFileException,
     SourceFileNotFoundException,
+    UnsupportedFileTypeError,
 )
 
 
@@ -177,12 +180,40 @@ async def parser_exception_handler(
     )
 
 
+async def chunker_exception_handler(
+    request: Request, exc: ChunkerException
+) -> JSONResponse:
+    """Handle chunker-related exceptions."""
+    logger.error(f"Chunker error: {str(exc)}")
+    
+    if isinstance(exc, UnsupportedFileTypeError):
+        error_code = "UNSUPPORTED_FILE_TYPE"
+        status_code = 400
+    elif isinstance(exc, ChunkError):
+        error_code = "CHUNK_ERROR"
+        status_code = 400
+    else:
+        error_code = "CHUNKER_ERROR"
+        status_code = 500
+    
+    response = APIResponse.fail(
+        code=error_code,
+        message=str(exc),
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=response.model_dump(mode="json"),
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers with the FastAPI app."""
+    app.add_exception_handler(ChunkerException, chunker_exception_handler)
     app.add_exception_handler(DatabaseException, database_exception_handler)
     app.add_exception_handler(ParserException, parser_exception_handler)
     app.add_exception_handler(ProjectException, project_exception_handler)
     app.add_exception_handler(SourceFileException, source_file_exception_handler)
     app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
+
 
