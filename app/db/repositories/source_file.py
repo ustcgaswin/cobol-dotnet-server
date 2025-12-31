@@ -64,3 +64,18 @@ class SourceFileRepository:
         """Delete a source file record."""
         await self.session.delete(source_file)
         await self.session.flush()
+    
+    async def get_by_project_and_type(
+        self,
+        project_id: uuid.UUID,
+        file_type: str,
+    ) -> Sequence[SourceFile]:
+        """Get all source files for a project of a specific type."""
+        result = await self.session.execute(
+            select(SourceFile).where(
+                SourceFile.project_id == project_id,
+                SourceFile.file_type == file_type,
+            ).order_by(SourceFile.filename)
+        )
+        return result.scalars().all()
+

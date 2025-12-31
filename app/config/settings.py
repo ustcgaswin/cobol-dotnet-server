@@ -19,6 +19,10 @@ class Settings(BaseSettings):
         default="project_storage",
         description="Base path for project file storage"
     )
+    PROJECT_ARTIFACTS_PATH: str = Field(
+        default="project_artifacts",
+        description="Base path for project artifacts (parsed outputs, etc.)"
+    )
     
     # File size limits in MB (based on production mainframe standards)
     FILE_SIZE_LIMITS_MB: dict[str, int] = Field(
@@ -80,6 +84,10 @@ class Settings(BaseSettings):
     def get_storage_path(self) -> Path:
         """Get the storage path as a Path object."""
         return Path(self.PROJECT_STORAGE_PATH)
+    
+    def get_artifacts_path(self) -> Path:
+        """Get the artifacts path as a Path object."""
+        return Path(self.PROJECT_ARTIFACTS_PATH)
 
 
 settings = Settings()

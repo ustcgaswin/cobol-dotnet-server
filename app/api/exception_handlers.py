@@ -14,6 +14,9 @@ from app.core.exceptions import (
     DatabaseHealthCheckError,
     FileSizeExceededError,
     InvalidFileTypeError,
+    ParseError,
+    ParserException,
+    ParserNotFoundError,
     ProjectCreationError,
     ProjectException,
     ProjectNotFoundException,
@@ -148,10 +151,38 @@ async def generic_exception_handler(
     )
 
 
+async def parser_exception_handler(
+    request: Request, exc: ParserException
+) -> JSONResponse:
+    """Handle parser-related exceptions."""
+    logger.error(f"Parser error: {str(exc)}")
+    
+    if isinstance(exc, ParserNotFoundError):
+        error_code = "PARSER_NOT_FOUND"
+        status_code = 400
+    elif isinstance(exc, ParseError):
+        error_code = "PARSE_ERROR"
+        status_code = 400
+    else:
+        error_code = "PARSER_ERROR"
+        status_code = 500
+    
+    response = APIResponse.fail(
+        code=error_code,
+        message=str(exc),
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=response.model_dump(mode="json"),
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers with the FastAPI app."""
     app.add_exception_handler(DatabaseException, database_exception_handler)
+    app.add_exception_handler(ParserException, parser_exception_handler)
     app.add_exception_handler(ProjectException, project_exception_handler)
     app.add_exception_handler(SourceFileException, source_file_exception_handler)
     app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
+

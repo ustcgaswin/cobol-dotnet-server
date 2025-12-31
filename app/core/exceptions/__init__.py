@@ -5,6 +5,14 @@ from app.core.exceptions.db_exceptions import (
     DatabaseException,
     DatabaseHealthCheckError,
 )
+from app.core.exceptions.parser import (
+    InvalidSyntaxError,
+    ParseError,
+    ParserException,
+    ParserNotFoundError,
+    UnrecognizedClauseError,
+    UnsupportedFeatureError,
+)
 from app.core.exceptions.project import (
     ProjectCreationError,
     ProjectException,
@@ -24,6 +32,13 @@ __all__ = [
     "DatabaseException",
     "DatabaseConnectionError",
     "DatabaseHealthCheckError",
+    # Parser
+    "ParserException",
+    "ParserNotFoundError",
+    "ParseError",
+    "InvalidSyntaxError",
+    "UnsupportedFeatureError",
+    "UnrecognizedClauseError",
     # Project
     "ProjectException",
     "ProjectNotFoundException",
@@ -36,3 +51,4 @@ __all__ = [
     "SourceFileNotFoundException",
     "FileUploadError",
 ]
+
