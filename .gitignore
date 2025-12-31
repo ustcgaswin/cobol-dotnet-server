@@ -212,3 +212,5 @@ __marimo__/
 logs/
 project_storage/
 project_artifacts/
+faiss_index/
+

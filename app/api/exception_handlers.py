@@ -15,6 +15,8 @@ from app.core.exceptions import (
     DatabaseException,
     DatabaseHealthCheckError,
     FileSizeExceededError,
+    IndexBuildError,
+    IndexNotFoundError,
     InvalidFileTypeError,
     ParseError,
     ParserException,
@@ -23,6 +25,8 @@ from app.core.exceptions import (
     ProjectException,
     ProjectNotFoundException,
     ProjectValidationError,
+    RAGException,
+    SearchError,
     SourceFileException,
     SourceFileNotFoundException,
     UnsupportedFileTypeError,
@@ -206,14 +210,45 @@ async def chunker_exception_handler(
     )
 
 
+async def rag_exception_handler(
+    request: Request, exc: RAGException
+) -> JSONResponse:
+    """Handle RAG-related exceptions."""
+    logger.error(f"RAG error: {str(exc)}")
+    
+    if isinstance(exc, IndexNotFoundError):
+        error_code = "INDEX_NOT_FOUND"
+        status_code = 404
+    elif isinstance(exc, IndexBuildError):
+        error_code = "INDEX_BUILD_ERROR"
+        status_code = 500
+    elif isinstance(exc, SearchError):
+        error_code = "SEARCH_ERROR"
+        status_code = 400
+    else:
+        error_code = "RAG_ERROR"
+        status_code = 500
+    
+    response = APIResponse.fail(
+        code=error_code,
+        message=str(exc),
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=response.model_dump(mode="json"),
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers with the FastAPI app."""
     app.add_exception_handler(ChunkerException, chunker_exception_handler)
     app.add_exception_handler(DatabaseException, database_exception_handler)
     app.add_exception_handler(ParserException, parser_exception_handler)
     app.add_exception_handler(ProjectException, project_exception_handler)
+    app.add_exception_handler(RAGException, rag_exception_handler)
     app.add_exception_handler(SourceFileException, source_file_exception_handler)
     app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
+
 
 

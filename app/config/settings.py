@@ -74,6 +74,20 @@ class Settings(BaseSettings):
         description="tiktoken encoding for chunking (must match embedding model)"
     )
 
+    # RAG settings
+    RAG_DATA_PATH: str = Field(
+        default="app/data",
+        description="Path to RAG data folder containing documents"
+    )
+    FAISS_INDEX_PATH: str = Field(
+        default="faiss_index",
+        description="Path to store FAISS index"
+    )
+    RAG_DEFAULT_K: int = Field(
+        default=4,
+        description="Default number of chunks to retrieve for RAG queries"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

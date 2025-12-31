@@ -24,6 +24,12 @@ from app.core.exceptions.project import (
     ProjectNotFoundException,
     ProjectValidationError,
 )
+from app.core.exceptions.rag import (
+    IndexBuildError,
+    IndexNotFoundError,
+    RAGException,
+    SearchError,
+)
 from app.core.exceptions.source_file import (
     FileSizeExceededError,
     FileUploadError,
@@ -53,6 +59,11 @@ __all__ = [
     "ProjectNotFoundException",
     "ProjectCreationError",
     "ProjectValidationError",
+    # RAG
+    "RAGException",
+    "IndexNotFoundError",
+    "IndexBuildError",
+    "SearchError",
     # Source File
     "SourceFileException",
     "InvalidFileTypeError",
@@ -60,5 +71,6 @@ __all__ = [
     "SourceFileNotFoundException",
     "FileUploadError",
 ]
+
 
 

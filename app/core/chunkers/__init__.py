@@ -1,12 +1,13 @@
 """Chunker module for document chunking."""
 
 from app.core.chunkers.base import BaseChunker
-from app.core.chunkers.document import DocumentChunker
+from app.core.chunkers.markdown import MarkdownChunker
+from app.core.chunkers.pdf import PDFChunker
 
 # Registry mapping extensions to chunker classes
 CHUNKER_REGISTRY: dict[str, type[BaseChunker]] = {
-    ".pdf": DocumentChunker,
-    ".md": DocumentChunker,
+    ".pdf": PDFChunker,
+    ".md": MarkdownChunker,
 }
 
 
@@ -36,7 +37,8 @@ def get_chunker(extension: str) -> BaseChunker:
 
 __all__ = [
     "BaseChunker",
-    "DocumentChunker",
+    "MarkdownChunker",
+    "PDFChunker",
     "CHUNKER_REGISTRY",
     "get_chunker",
 ]
