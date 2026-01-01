@@ -88,6 +88,20 @@ class Settings(BaseSettings):
         description="Default number of chunks to retrieve for RAG queries"
     )
 
+    # MLflow
+    MLFLOW_ENABLED: bool = Field(
+        default=False,
+        description="Enable MLflow tracing for LangChain/LangGraph"
+    )
+    MLFLOW_TRACKING_URI: str | None = Field(
+        default=None,
+        description="MLflow tracking server URI (e.g., http://localhost:5000)"
+    )
+    MLFLOW_EXPERIMENT_NAME: str = Field(
+        default="cobol-converter",
+        description="MLflow experiment name for organizing traces"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

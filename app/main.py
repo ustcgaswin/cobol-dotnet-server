@@ -7,11 +7,13 @@ from loguru import logger
 from app.api.exception_handlers import register_exception_handlers
 from app.api.routes import health_router, parsers_router, projects_router, rag_router, source_files_router
 from app.config.logging_config import configure_logging
+from app.config.mlflow_config import configure_mlflow
 from app.config.settings import settings
 from app.db.base import engine
 
 
 configure_logging()
+configure_mlflow()
 
 
 @asynccontextmanager

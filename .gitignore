@@ -213,4 +213,5 @@ logs/
 project_storage/
 project_artifacts/
 faiss_index/
-
+mlflow.db
+mlruns/

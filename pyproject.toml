@@ -23,4 +23,5 @@ dependencies = [
     "faiss-cpu>=1.13.2",
     "legacylens-cobol-parser>=0.1.20",
     "pypdf>=6.5.0",
+    "mlflow>=3.8.1",
 ]
