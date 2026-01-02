@@ -21,12 +21,10 @@ import sys
 import logging
 import argparse
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Optional
 from abc import ABC, abstractmethod
 
 from app.core.parsers.base import BaseParser
-from app.core.exceptions import InvalidSyntaxError, ParseError
+from app.core.exceptions import CobolParseError, InvalidSyntaxError
 
 # Configure structured logging
 logging.basicConfig(

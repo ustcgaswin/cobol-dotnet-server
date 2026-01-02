@@ -9,7 +9,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import settings
-from app.core.exceptions import ParseError, ParserNotFoundError
+from app.core.exceptions import ParserNotFoundError
 from app.core.parsers import PARSER_REGISTRY, get_parser
 from app.core.storage import FileStorage
 from app.db.repositories.source_file import SourceFileRepository

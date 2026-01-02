@@ -119,7 +119,7 @@ def grep_search(
         project_path = _get_project_path(project_id)
         
         if not project_path.exists():
-            return f"Error: Project directory not found"
+            return "Error: Project directory not found"
         
         # Build grep command
         # Using findstr on Windows, grep on Unix

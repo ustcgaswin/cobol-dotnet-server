@@ -12,7 +12,7 @@ from app.api.dependencies import get_db
 from app.api.schemas.common import APIResponse
 from app.core.exceptions import ProjectNotFoundException, ParserNotFoundError
 from app.core.parsers import PARSER_REGISTRY
-from app.services.parser import ParserService, ParseSummary
+from app.services.parser import ParserService
 from app.services.project import ProjectService
 
 router = APIRouter(prefix="/projects/{project_id}/parse", tags=["Parsing"])

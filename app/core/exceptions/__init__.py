@@ -11,6 +11,8 @@ from app.core.exceptions.db_exceptions import (
     DatabaseHealthCheckError,
 )
 from app.core.exceptions.parser import (
+    CobolParseError,
+    CopybookParseError,
     InvalidSyntaxError,
     ParseError,
     ParserException,
@@ -54,6 +56,8 @@ __all__ = [
     "InvalidSyntaxError",
     "UnsupportedFeatureError",
     "UnrecognizedClauseError",
+    "CobolParseError",
+    "CopybookParseError",
     # Project
     "ProjectException",
     "ProjectNotFoundException",

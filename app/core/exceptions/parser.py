@@ -51,3 +51,13 @@ class UnsupportedFeatureError(ParseError):
 class UnrecognizedClauseError(ParseError):
     """Raised when an unrecognized clause is found."""
     pass
+
+
+class CobolParseError(ParseError):
+    """Raised when COBOL parsing fails."""
+    pass
+
+
+class CopybookParseError(ParseError):
+    """Raised when copybook parsing fails."""
+    pass

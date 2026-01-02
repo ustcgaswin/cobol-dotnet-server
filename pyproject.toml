@@ -25,3 +25,8 @@ dependencies = [
     "pypdf>=6.5.0",
     "mlflow>=3.8.1",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.10",
+]

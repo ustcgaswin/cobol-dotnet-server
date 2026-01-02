@@ -29,9 +29,8 @@ from enum import Enum
 
 from app.core.parsers.base import BaseParser
 from app.core.exceptions import (
+    CopybookParseError,
     InvalidSyntaxError,
-    ParseError,
-    UnrecognizedClauseError,
     UnsupportedFeatureError,
 )
 
