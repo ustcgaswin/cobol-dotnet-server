@@ -2,7 +2,8 @@
 
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
@@ -23,6 +24,29 @@ class ParseResult:
     success: bool
     output_path: str | None = None
     error: str | None = None
+
+
+@dataclass
+class FileParseError:
+    """Represents a single parsing error or warning."""
+    
+    filename: str
+    error_type: str  # "fatal", "warning", "unrecognized"
+    message: str
+    line_number: int | None = None
+    content: str | None = None  # offending line content
+
+
+@dataclass
+class ParseErrorReport:
+    """Complete error report for a file type."""
+    
+    file_type: str
+    project_id: str
+    timestamp: str
+    total_files: int
+    files_with_errors: int
+    errors: list[FileParseError]
 
 
 @dataclass
@@ -118,6 +142,8 @@ class ParserService:
         
         results: list[ParseResult] = []
         all_parsed: list[dict] = []
+        all_errors: list[FileParseError] = []
+        files_with_errors: set[str] = set()
         
         for source_file in source_files:
             # Get file path from storage
@@ -131,6 +157,14 @@ class ParserService:
             try:
                 # Parse the file
                 parsed_data = parser.parse_file(str(file_path))
+                
+                # Extract warnings and unrecognized patterns from parsed data
+                file_errors = self._extract_errors_from_parsed_data(
+                    source_file.filename, parsed_data
+                )
+                if file_errors:
+                    all_errors.extend(file_errors)
+                    files_with_errors.add(source_file.filename)
                 
                 # Save individual output
                 output_filename = f"{Path(source_file.filename).stem}.json"
@@ -156,6 +190,13 @@ class ParserService:
                     success=False,
                     error=str(e),
                 ))
+                # Add fatal error to error list
+                all_errors.append(FileParseError(
+                    filename=source_file.filename,
+                    error_type="fatal",
+                    message=str(e),
+                ))
+                files_with_errors.add(source_file.filename)
         
         # Save consolidated output if any files were parsed successfully
         consolidated_path = None
@@ -165,6 +206,16 @@ class ParserService:
                 json.dump(all_parsed, f, indent=2, ensure_ascii=False)
             consolidated_path = str(consolidated_file)
             logger.info(f"Saved consolidated output: {consolidated_path}")
+        
+        # Save parse errors report (always, even if empty)
+        self._save_parse_errors(
+            output_dir=output_dir,
+            project_id=project_id,
+            file_type=file_type,
+            total_files=len(source_files),
+            files_with_errors=len(files_with_errors),
+            errors=all_errors,
+        )
         
         successful = sum(1 for r in results if r.success)
         
@@ -177,3 +228,79 @@ class ParserService:
             results=results,
             consolidated_path=consolidated_path,
         )
+    
+    def _extract_errors_from_parsed_data(
+        self,
+        filename: str,
+        parsed_data: dict,
+    ) -> list[FileParseError]:
+        """Extract warnings and unrecognized patterns from parsed output.
+        
+        Works with COBOL and Copybook parsers that store errors in
+        '_warnings' and '_unrecognized' keys.
+        """
+        errors: list[FileParseError] = []
+        
+        # Extract warnings (list of strings)
+        warnings = parsed_data.get("_warnings", [])
+        for warning in warnings:
+            errors.append(FileParseError(
+                filename=filename,
+                error_type="warning",
+                message=str(warning),
+            ))
+        
+        # Extract unrecognized patterns (list of dicts with line, content, error)
+        unrecognized = parsed_data.get("_unrecognized", [])
+        for item in unrecognized:
+            errors.append(FileParseError(
+                filename=filename,
+                error_type="unrecognized",
+                message=item.get("error", "Unknown parsing issue"),
+                line_number=item.get("line"),
+                content=item.get("content"),
+            ))
+        
+        return errors
+    
+    def _save_parse_errors(
+        self,
+        output_dir: Path,
+        project_id: uuid.UUID,
+        file_type: str,
+        total_files: int,
+        files_with_errors: int,
+        errors: list[FileParseError],
+    ) -> None:
+        """Save parse_errors.json report to the output directory.
+        
+        Always creates the file, even if there are no errors.
+        """
+        report = ParseErrorReport(
+            file_type=file_type,
+            project_id=str(project_id),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            total_files=total_files,
+            files_with_errors=files_with_errors,
+            errors=errors,
+        )
+        
+        # Convert to dict for JSON serialization
+        report_dict = {
+            "file_type": report.file_type,
+            "project_id": report.project_id,
+            "timestamp": report.timestamp,
+            "total_files": report.total_files,
+            "files_with_errors": report.files_with_errors,
+            "errors": [asdict(e) for e in report.errors],
+        }
+        
+        error_file = output_dir / "parse_errors.json"
+        with open(error_file, "w", encoding="utf-8") as f:
+            json.dump(report_dict, f, indent=2, ensure_ascii=False)
+        
+        logger.info(
+            f"Saved parse errors report: {error_file} "
+            f"({files_with_errors} files with errors)"
+        )
+
