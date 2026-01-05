@@ -15,7 +15,11 @@ from app.core.parsers import PARSER_REGISTRY
 from app.services.parser import ParserService
 from app.services.project import ProjectService
 
+# Project-scoped router for parsing actions
 router = APIRouter(prefix="/projects/{project_id}/parse", tags=["Parsing"])
+
+# Top-level router for parser metadata
+parsers_metadata_router = APIRouter(prefix="/parsers", tags=["Parsers"])
 
 
 # Response schemas
@@ -142,7 +146,7 @@ async def parse_file_type(
     return APIResponse.ok(response)
 
 
-@router.get("/supported-types", response_model=APIResponse[list[str]])
+@parsers_metadata_router.get("/supported-types", response_model=APIResponse[list[str]])
 async def get_supported_types() -> APIResponse[list[str]]:
     """Get list of file types that have parsers available."""
     return APIResponse.ok(list(PARSER_REGISTRY.keys()))
