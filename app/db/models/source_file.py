@@ -2,26 +2,12 @@
 
 import uuid
 from datetime import datetime
-from enum import Enum
-
 from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-
-
-class SourceFileType(str, Enum):
-    """Supported source file types."""
-    
-    COBOL = "cobol"
-    COPYBOOK = "copybook"
-    JCL = "jcl"
-    REXX = "rexx"
-    CATPROC = "catproc"
-    PROC = "proc"
-    PLI = "pli"
-
+from app.db.enums import SourceFileType  # <--- NEW IMPORT
 
 class SourceFile(Base):
     """Model for tracking uploaded source files."""
