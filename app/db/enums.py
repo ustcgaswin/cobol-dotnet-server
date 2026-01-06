@@ -11,3 +11,4 @@ class SourceFileType(str, Enum):
     PROC = "proc"
     PLI = "pli"
     PLI_COPYBOOK = "pli_copybook"
+    DCLGEN = "dclgen" 

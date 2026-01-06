@@ -6,6 +6,7 @@ from app.core.parsers.cobol_parser import CobolParser
 from app.core.parsers.copybook_parser import CopybookParser
 from app.core.parsers.pli_parser import PLIParser
 from app.core.parsers.pli_copybook_parser import PLICopybookParser
+from app.core.parsers.dclgen_parser import DclgenParser
 
 # Registry mapping file types to parser classes
 PARSER_REGISTRY: dict[str, type[BaseParser]] = {
@@ -13,6 +14,7 @@ PARSER_REGISTRY: dict[str, type[BaseParser]] = {
     SourceFileType.COPYBOOK.value: CopybookParser,
     SourceFileType.PLI.value: PLIParser,
     SourceFileType.PLI_COPYBOOK.value: PLICopybookParser,
+    SourceFileType.DCLGEN.value: DclgenParser,  
 }
 
 def get_parser(file_type: str) -> BaseParser:
@@ -41,6 +43,7 @@ __all__ = [
     "CopybookParser",
     "PLIParser",
     "PLICopybookParser",
+    "DclgenParser", 
     "SourceFileType",
     "PARSER_REGISTRY",
     "get_parser",
