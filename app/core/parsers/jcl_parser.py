@@ -7,7 +7,7 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any
 
-from base import BaseParser
+from app.core.parsers.base import BaseParser
 
 logging.basicConfig(
     level=logging.INFO,
@@ -151,6 +151,9 @@ class JCLParser(BaseParser):
         return logical_lines
 
     def parse_file(self, filepath: str) -> dict:
+        if not self.library_path:
+            self.library_path = os.path.dirname(filepath)
+
         try:
             logger.info(f"Parsing: {filepath}")
             lines = self._get_logical_lines(filepath)
@@ -161,7 +164,8 @@ class JCLParser(BaseParser):
                     "type": "UNKNOWN",
                     "definitions": {}, 
                     "steps": [],
-                    "includes": []
+                    "includes": [],
+                    "_unrecognized": []
                 },
                 "current_step": None,
                 "in_proc_def": False,
@@ -206,7 +210,8 @@ class JCLParser(BaseParser):
                     stmt_parser_class().parse(label, params, context)
                 else:
                     self._unrecognized.append({"line": line, "reason": f"Unknown Op: {op}"})
-
+            
+            context["result"]["_unrecognized"] = self._unrecognized
             return context["result"]
 
         except Exception as e:
