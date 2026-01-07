@@ -1,4 +1,7 @@
+"""Database enums."""
+
 from enum import Enum
+
 
 class SourceFileType(str, Enum):
     """Supported source file types."""
@@ -14,3 +17,5 @@ class SourceFileType(str, Enum):
     DCLGEN = "dclgen" 
     CA7  = "ca7"
     BIND = "bind"
+    CSV = "csv"
+    FIXED_LENGTH = "fixed_length"
