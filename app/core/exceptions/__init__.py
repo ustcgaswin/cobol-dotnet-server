@@ -13,6 +13,7 @@ from app.core.exceptions.db_exceptions import (
 from app.core.exceptions.parser import (
     CobolParseError,
     CA7ParseError,
+    BindParseError,
     CopybookParseError,
     InvalidSyntaxError,
     ParseError,
