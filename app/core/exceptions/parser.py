@@ -62,6 +62,7 @@ class CopybookParseError(ParseError):
     """Raised when copybook parsing fails."""
     pass
 
+
 class CA7ParseError(Exception):
     """Base exception for CA-7 parsing errors."""
     pass
@@ -70,3 +71,36 @@ class BindParseError(Exception):
     """Base exception for Bind parsing errors."""
     pass
 
+class FlatFileParseError(ParseError):
+    """Base exception for flat file parsing errors."""
+    pass
+
+
+class CSVParseError(FlatFileParseError):
+    """Raised when CSV parsing fails."""
+    pass
+
+
+class FixedLengthParseError(FlatFileParseError):
+    """Raised when fixed-length file parsing fails."""
+    pass
+
+
+class EmptyFileError(FlatFileParseError):
+    """Raised when file contains no valid data."""
+    pass
+
+
+class SchemaInferenceError(FlatFileParseError):
+    """Raised when schema cannot be inferred."""
+    pass
+
+
+class InvalidLayoutError(FlatFileParseError):
+    """Raised when provided layout is invalid."""
+    pass
+
+
+class EncodingDetectionError(FlatFileParseError):
+    """Raised when encoding cannot be determined."""
+    pass
