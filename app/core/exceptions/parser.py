@@ -65,3 +65,8 @@ class CopybookParseError(ParseError):
 class CA7ParseError(Exception):
     """Base exception for CA-7 parsing errors."""
     pass
+
+class BindParseError(Exception):
+    """Base exception for Bind parsing errors."""
+    pass
+

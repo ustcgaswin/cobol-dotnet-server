@@ -10,6 +10,7 @@ from app.core.parsers.pli_copybook_parser import PLICopybookParser
 from app.core.parsers.dclgen_parser import DclgenParser
 from app.core.parsers.jcl_parser import JCLParser
 from app.core.parsers.ca7_parser import CA7Parser
+from app.core.parsers.bind_parser import BindParser
 
 
 # Registry mapping file types to parser classes
@@ -20,7 +21,8 @@ PARSER_REGISTRY: dict[str, type[BaseParser]] = {
     SourceFileType.PLI_COPYBOOK.value: PLICopybookParser,
     SourceFileType.DCLGEN.value: DclgenParser,  
     SourceFileType.JCL.value: JCLParser,
-    SourceFileType.CA7.value: CA7Parser
+    SourceFileType.CA7.value: CA7Parser,
+    SourceFileType.BIND.value: BindParser
 }
 
 def get_parser(file_type: str) -> BaseParser:
@@ -54,5 +56,6 @@ __all__ = [
     "PARSER_REGISTRY",
     "get_parser",
     "JCLParser",
-    "CA7Parser"
+    "CA7Parser",
+    "BindParser"
 ]
