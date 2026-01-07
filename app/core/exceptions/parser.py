@@ -61,3 +61,7 @@ class CobolParseError(ParseError):
 class CopybookParseError(ParseError):
     """Raised when copybook parsing fails."""
     pass
+
+class CA7ParseError(Exception):
+    """Base exception for CA-7 parsing errors."""
+    pass

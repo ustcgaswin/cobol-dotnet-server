@@ -12,3 +12,4 @@ class SourceFileType(str, Enum):
     PLI = "pli"
     PLI_COPYBOOK = "pli_copybook"
     DCLGEN = "dclgen" 
+    CA7  = "ca7"
