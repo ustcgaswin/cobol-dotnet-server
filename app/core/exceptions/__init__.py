@@ -11,14 +11,21 @@ from app.core.exceptions.db_exceptions import (
     DatabaseHealthCheckError,
 )
 from app.core.exceptions.parser import (
-    CobolParseError,
     CA7ParseError,
     BindParseError,
+    CobolParseError,
     CopybookParseError,
+    CSVParseError,
+    EmptyFileError,
+    EncodingDetectionError,
+    FixedLengthParseError,
+    FlatFileParseError,
+    InvalidLayoutError,
     InvalidSyntaxError,
     ParseError,
     ParserException,
     ParserNotFoundError,
+    SchemaInferenceError,
     UnrecognizedClauseError,
     UnsupportedFeatureError,
 )
@@ -60,6 +67,15 @@ __all__ = [
     "UnrecognizedClauseError",
     "CobolParseError",
     "CopybookParseError",
+    "CA7ParseError",
+    # Flat File Parser
+    "FlatFileParseError",
+    "CSVParseError",
+    "FixedLengthParseError",
+    "EmptyFileError",
+    "SchemaInferenceError",
+    "InvalidLayoutError",
+    "EncodingDetectionError",
     # Project
     "ProjectException",
     "ProjectNotFoundException",
@@ -77,6 +93,3 @@ __all__ = [
     "SourceFileNotFoundException",
     "FileUploadError",
 ]
-
-
-
