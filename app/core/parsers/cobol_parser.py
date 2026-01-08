@@ -487,8 +487,9 @@ class ProcedureDivisionParser(BaseDivisionParser):
         
         # Find paragraphs (name at margin A followed by period)
         # Paragraph names start in column 8-11 (Area A)
+        # COBOL paragraph names can start with digits (e.g., 0000-MAIN-PARA)
         paragraph_pattern = re.compile(
-            r'^(\s{0,4})([A-Za-z][A-Za-z0-9_-]*)\s*\.',
+            r'^(\s{0,4})([A-Za-z0-9][A-Za-z0-9_-]*)\s*\.',
             re.MULTILINE
         )
         
@@ -508,7 +509,11 @@ class ProcedureDivisionParser(BaseDivisionParser):
             # Skip if it's a section name or a COBOL keyword
             if para_name not in section_names and para_name not in (
                 'IDENTIFICATION', 'ENVIRONMENT', 'DATA', 'PROCEDURE',
-                'DIVISION', 'SECTION', 'COPY', 'END'
+                'DIVISION', 'SECTION', 'COPY', 'END', 'EXIT', 'STOP',
+                'GOBACK', 'CONTINUE', 'NEXT', 'PERFORM', 'IF', 'ELSE',
+                'EVALUATE', 'WHEN', 'MOVE', 'COMPUTE', 'ADD', 'SUBTRACT',
+                'MULTIPLY', 'DIVIDE', 'CALL', 'OPEN', 'CLOSE', 'READ',
+                'WRITE', 'REWRITE', 'DELETE', 'START', 'RETURN',
             ):
                 result['paragraphs'].append({
                     'name': para_name
@@ -819,6 +824,10 @@ class CobolParser(BaseParser):
     # Limits
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (COBOL programs can be large)
     
+    # Augmentation configuration
+    AUGMENTATION_MAX_RETRIES = 3
+    AUGMENTATION_TIMEOUT = 60  # seconds per LLM call
+    
     def __init__(self, strict: bool = False):
         self.strict = strict
         self._source: str = ""
@@ -963,6 +972,210 @@ class CobolParser(BaseParser):
             result['_unrecognized'] = self._unrecognized
         
         return result
+    
+    # =========================================================================
+    # LLM AUGMENTATION
+    # =========================================================================
+    
+    def _create_augmentation_agent(self):
+        """Create LangGraph ReAct agent with RAG tool access.
+        
+        The agent can decide when to search COBOL documentation for context.
+        """
+        from langgraph.prebuilt import create_react_agent
+        from app.config.llm_config import llm
+        from app.core.tools.rag_tools import search_cobol_docs
+        
+        return create_react_agent(model=llm, tools=[search_cobol_docs])
+    
+    async def augment(self, parsed_data: dict) -> dict:
+        """Augment parsed COBOL data with LLM-generated metadata.
+        
+        Adds:
+        - description: Program-level description for C# service class naming
+        - summary: Paragraph-level summary for C# method naming
+        
+        Args:
+            parsed_data: The parsed COBOL JSON structure
+            
+        Returns:
+            The augmented parsed data with description and summary fields
+        """
+        import asyncio
+        from tenacity import retry, stop_after_attempt, wait_exponential
+        
+        agent = self._create_augmentation_agent()
+        
+        # Add program description
+        try:
+            parsed_data["description"] = await self._augment_program(agent, parsed_data)
+        except Exception as e:
+            logger.error(f"Failed to augment program description: {e}")
+            parsed_data["description"] = None
+            parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
+            parsed_data["_augmentation_errors"].append(f"Program description failed: {e}")
+        
+        # Add paragraph summaries (sequential within file)
+        if "procedure_division" in parsed_data:
+            paragraphs = parsed_data["procedure_division"].get("paragraphs", [])
+            # Get list of paragraph names for code extraction
+            para_names = [p.get("name", "") for p in paragraphs]
+            
+            for i, para in enumerate(paragraphs):
+                try:
+                    # Extract code for this paragraph
+                    para_code = self._extract_paragraph_code(
+                        para.get("name", ""),
+                        para_names[i + 1] if i + 1 < len(para_names) else None
+                    )
+                    para["summary"] = await self._augment_paragraph(
+                        agent, para, parsed_data, para_code
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to augment paragraph {para.get('name')}: {e}")
+                    para["summary"] = None
+                    parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
+                    parsed_data["_augmentation_errors"].append(
+                        f"Paragraph {para.get('name')} failed: {e}"
+                    )
+        
+        return parsed_data
+    
+    async def _augment_program(self, agent, parsed_data: dict) -> str:
+        """Generate program description using LangGraph agent.
+        
+        The agent may use RAG tool to understand COBOL constructs.
+        """
+        import asyncio
+        from tenacity import retry, stop_after_attempt, wait_exponential
+        
+        program_name = parsed_data.get("program_name", "UNKNOWN")
+        id_div = parsed_data.get("identification_division", {})
+        deps = parsed_data.get("dependencies", {})
+        
+        # Build context from parsed data
+        copybooks = [c.get("copybook_name", "") for c in deps.get("copybooks", [])]
+        calls = [c.get("program", "") if isinstance(c, dict) else c for c in deps.get("calls", [])]
+        
+        prompt = f"""Analyze this COBOL program and provide a concise business description.
+
+Program ID: {program_name}
+Author: {id_div.get('author', 'Unknown')}
+Copybooks used: {', '.join(copybooks) if copybooks else 'None'}
+Programs called: {', '.join(calls) if calls else 'None'}
+
+If you need to understand specific COBOL constructs, use the search tool.
+
+Provide a 1-2 sentence description of what this program does, suitable for naming a C# service class.
+Return ONLY the description, no additional text."""
+
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            return result["messages"][-1].content.strip()
+        
+        return await invoke_with_retry()
+    
+    def _extract_paragraph_code(
+        self, para_name: str, next_para_name: str | None
+    ) -> str:
+        """Extract the code for a paragraph from the stored source.
+        
+        Args:
+            para_name: Name of the paragraph to extract
+            next_para_name: Name of the next paragraph (to know where to stop)
+            
+        Returns:
+            The code content of the paragraph
+        """
+        if not self._source:
+            return ""
+        
+        lines = self._source.split('\n')
+        in_paragraph = False
+        para_lines = []
+        
+        # Pattern to match paragraph start
+        para_start_pattern = re.compile(
+            rf'^\s{{0,7}}{re.escape(para_name)}\s*\.',
+            re.IGNORECASE
+        )
+        
+        # Pattern to match next paragraph or end markers
+        if next_para_name:
+            next_para_pattern = re.compile(
+                rf'^\s{{0,7}}{re.escape(next_para_name)}\s*\.',
+                re.IGNORECASE
+            )
+        else:
+            next_para_pattern = None
+        
+        for line in lines:
+            # Check if this line starts our paragraph
+            if not in_paragraph and para_start_pattern.search(line):
+                in_paragraph = True
+                para_lines.append(line)
+                continue
+            
+            if in_paragraph:
+                # Check if we've hit the next paragraph
+                if next_para_pattern and next_para_pattern.search(line):
+                    break
+                # Check for end of procedure division or another division
+                if re.match(r'^\s{0,7}[A-Za-z0-9]+-', line.strip()):
+                    # Might be another paragraph without us knowing
+                    if len(para_lines) > 2:  # We have some content
+                        break
+                
+                para_lines.append(line)
+        
+        return '\n'.join(para_lines)
+    
+    async def _augment_paragraph(
+        self, agent, paragraph: dict, parsed_data: dict, para_code: str
+    ) -> str:
+        """Generate paragraph summary using LangGraph agent.
+        
+        The agent may use RAG tool for unfamiliar COBOL statements.
+        """
+        import asyncio
+        from tenacity import retry, stop_after_attempt, wait_exponential
+        
+        para_name = paragraph.get("name", "UNKNOWN")
+        program_name = parsed_data.get("program_name", "UNKNOWN")
+        
+        prompt = f"""Analyze this COBOL paragraph and provide a brief summary.
+
+Program: {program_name}
+Paragraph: {para_name}
+
+Code:
+{para_code if para_code else "(Code not available)"}
+
+If you need to understand specific COBOL statements, use the search tool.
+
+Provide a 1-sentence summary of what this paragraph does.
+This will be used to name a C# method, so be concise and action-oriented.
+Return ONLY the summary, no questions or additional text."""
+
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            return result["messages"][-1].content.strip()
+        
+        return await invoke_with_retry()
     
     def _preprocess(self, content: str) -> list[tuple]:
         """Preprocess COBOL source into (line_number, text, original) tuples"""
