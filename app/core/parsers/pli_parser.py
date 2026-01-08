@@ -1,96 +1,133 @@
 """
-PL/1 Source Parser for IBM Enterprise PL/I for z/OS
+PL/1 Source Parser - Hybrid AI/Deterministic Engine (v2.2)
 
-Comprehensive parsing of PL/I source including:
-- AST-like Block Structure (Procedures, Begin Blocks, DO groups)
-- Scope-aware variable detection
-- Control Flow extraction (ON units, SIGNAL, IF/SELECT)
-- Detailed Dependency Extraction (SQL, CICS, INCLUDE, CALL/FETCH)
-- Preprocessor handling (%INCLUDE, %IF)
+A production-grade parser for IBM Enterprise PL/I for z/OS.
+Combines deterministic regex strategies with selective AI enrichment.
+
+Updates in v2.2:
+- FIXED: LangChain Prompt Template escaping (passed variables via invoke).
+- FIXED: Line number drifting. Tokenizer now preserves newlines inside comments.
+- RETAINED: [AI_CORRECTION] logging strategy.
 
 Usage:
-    python pli-parser.py <pli_file> [-o output.json]
+    python pli_parser.py <pli_file> [-o output.json]
 """
-
 import re
 import json
 import sys
 import logging
 import argparse
+import os
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
+from dataclasses import dataclass, field
 
 # =============================================================================
-# Core Interfaces & Exceptions
+# CONFIGURATION & AI SETUP
 # =============================================================================
 
-class BaseParser(ABC):
-    """Abstract Base Parser for consistency with the application core."""
-    @abstractmethod
-    def parse_file(self, filepath: str) -> dict: pass
-    
-class InvalidSyntaxError(Exception): pass
-class PLIParseError(Exception): pass
+MAX_AI_RETRIES_PER_FILE = 15  # Circuit Breaker
 
-# Configure structured logging
-logging.basicConfig(
-    level=logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# Centralized LLM Import
+ENABLE_AI = False
+_llm_model = None
+
+# Logger
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger('pli_parser')
 
-class ExitCode:
-    SUCCESS = 0
-    FILE_NOT_FOUND = 1
-    EMPTY_FILE = 2
-    PARSE_ERROR = 4
-    INVALID_INPUT = 5
+try:
+    # Adjust import to match your application structure
+    from app.config.llm_config import get_llm as app_llm
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_core.output_parsers import JsonOutputParser
+    
+    # Placeholder for actual import success check
+    if 'app_llm' in globals() and app_llm:
+        _llm_model = app_llm
+        ENABLE_AI = True
+        logger.info("AI Model initialized successfully.")
+except ImportError:
+    pass  # Run in deterministic mode
+except Exception as e:
+    logging.getLogger('pli_parser').error(f"Failed to initialize AI: {e}")
 
 # =============================================================================
-# Robust Tokenizer
+# SHARED CONTEXT & TOKENIZER
 # =============================================================================
+
+@dataclass
+class ParseContext:
+    """Shared state passed between sub-parsers."""
+    source_file: str
+    ai_calls: int = 0
+    errors: List[Dict] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+
+    def record_error(self, content: str, msg: str, line: int):
+        """Records a hard failure."""
+        self.errors.append({
+            "line": line,
+            "content": content[:100],
+            "error": msg
+        })
+    
+    def record_correction(self, content: str, reason: str, line: int):
+        """
+        Records a successful AI intervention.
+        """
+        self.errors.append({
+            "line": line,
+            "content": content[:100],
+            "error": f"[AI_CORRECTION] Regex failed ({reason}). AI successfully inferred structure."
+        })
+    
+    def record_warning(self, msg: str):
+        if msg not in self.warnings:
+            self.warnings.append(msg)
+
+    def can_call_ai(self) -> bool:
+        return ENABLE_AI and self.ai_calls < MAX_AI_RETRIES_PER_FILE
 
 class PLITokenizer:
     """
-    Robust tokenizer for PL/I. 
-    Handles: Comments (/* */), Strings ('...'), Preprocessor (%), Semicolons.
-    Does NOT split semicolons if they are inside strings or comments.
+    Robust tokenizer for PL/I. Handles comments, strings, semicolons.
     """
     @staticmethod
     def get_statements(content: str) -> List[Dict]:
         statements = []
-        
-        # 1. Strip comments carefully to avoid stripping inside strings
         clean_content = []
         i = 0
         n = len(content)
         in_string = False
-        string_char = "'" # PL/I uses single quotes usually
+        string_char = "'" 
         
+        # 1. Strip comments (/* ... */) but PRESERVE NEWLINES to keep line numbers accurate
         while i < n:
-            # Check for comment start /*
             if not in_string and content[i:i+2] == '/*':
-                end_comment = content.find('*/', i+2)
-                if end_comment == -1:
-                    i = n # Unterminated comment
+                end = content.find('*/', i+2)
+                if end == -1:
+                    i = n # Unterminated
                 else:
-                    i = end_comment + 2
-                    clean_content.append(' ') # Replace with space to preserve separation
+                    # Capture the comment content
+                    comment_body = content[i+2:end]
+                    # Count newlines inside the comment
+                    newlines = comment_body.count('\n')
+                    # Replace comment with equal newlines + space to maintain line count
+                    clean_content.append('\n' * newlines + ' ')
+                    i = end + 2
                 continue
             
-            # Check for string start/end
             if content[i] in ("'", '"'):
                 if not in_string:
                     in_string = True
                     string_char = content[i]
                 elif content[i] == string_char:
-                    # Check for escaped quote (e.g. 'It''s')
+                    # Handle escaped quotes (e.g. 'It''s')
                     if i+1 < n and content[i+1] == string_char:
-                        clean_content.append(content[i]) # Keep the first quote
-                        clean_content.append(content[i+1]) # Keep the second quote
-                        i += 2 # Skip both
+                        clean_content.append(content[i] + content[i+1])
+                        i += 2
                         continue
                     else:
                         in_string = False
@@ -100,29 +137,22 @@ class PLITokenizer:
             
         full_text = "".join(clean_content)
         
-        # 2. Split by semicolon, respecting remaining string boundaries
+        # 2. Split by semicolon
         current_stmt = []
-        line_number = 1
         start_line = 1
-        
+        line_number = 1
         in_string = False
-        quote_char = None
         
-        for idx, char in enumerate(full_text):
+        for char in full_text:
             if char == '\n':
                 line_number += 1
                 current_stmt.append(' ')
                 continue
             
             if char in ("'", '"'):
-                if not in_string:
-                    in_string = True
-                    quote_char = char
-                elif char == quote_char:
-                    # Check for double quote escape isn't strictly needed here as we just need boundaries
-                    in_string = False
-                    quote_char = None
-                
+                if not in_string: in_string = True
+                elif in_string: in_string = False 
+            
             if char == ';' and not in_string:
                 stmt_str = "".join(current_stmt).strip()
                 if stmt_str:
@@ -132,67 +162,44 @@ class PLITokenizer:
                         'type': PLITokenizer._identify_type(stmt_str)
                     })
                 current_stmt = []
+                # Update start_line to current line for the NEXT statement
                 start_line = line_number
             else:
+                if not current_stmt:
+                    # If this is the first char of a new stmt, record the start line
+                    start_line = line_number
                 current_stmt.append(char)
                 
         return statements
 
     @staticmethod
     def _identify_type(stmt: str) -> str:
-        first_word = stmt.split()[0].upper() if stmt else ""
-        
-        # Labels: LABEL: PROC;
-        if ':' in stmt and not stmt.upper().startswith('EXEC') and not stmt.upper().startswith('WHEN'):
-            return "LABEL"
-            
-        if first_word in ['DCL', 'DECLARE']: return "DECLARE"
-        if first_word in ['CALL', 'FETCH']: return "CALL"
-        if first_word in ['IF', 'THEN', 'ELSE', 'SELECT', 'WHEN', 'OTHERWISE']: return "LOGIC"
-        if first_word in ['DO', 'BEGIN', 'PROC', 'PROCEDURE', 'PACKAGE']: return "BLOCK_START"
-        if first_word == 'END': return "BLOCK_END"
-        if first_word == 'EXEC': return "EXEC"
-        if first_word == 'ON': return "ON_UNIT"
-        if first_word in ['SIGNAL', 'REVERT']: return "SIGNAL"
-        if stmt.startswith('%') or first_word.startswith('%'): return "PREPROCESSOR"
+        first = stmt.split()[0].upper() if stmt else ""
+        if ':' in stmt and first not in ['EXEC', 'WHEN']: return "LABEL"
+        if first in ['DCL', 'DECLARE']: return "DECLARE"
+        if first in ['CALL', 'FETCH']: return "CALL"
+        if first in ['IF', 'THEN', 'ELSE', 'SELECT', 'WHEN', 'OTHERWISE']: return "LOGIC"
+        if first in ['DO', 'BEGIN', 'PROC', 'PROCEDURE', 'PACKAGE']: return "BLOCK_START"
+        if first == 'END': return "BLOCK_END"
+        if first == 'EXEC': return "EXEC"
+        if first == 'ON': return "ON_UNIT"
+        if first in ['SIGNAL', 'REVERT']: return "SIGNAL"
+        if first.startswith('%') or stmt.startswith('%'): return "PREPROCESSOR"
         return "STATEMENT"
 
 # =============================================================================
-# Parsers Registry
+# SUB-PARSERS
 # =============================================================================
-
-class ParserRegistry:
-    """Registry for section parsers - enables easy extension"""
-    _parsers = {}
-    
-    @classmethod
-    def register(cls, name):
-        def wrapper(clz):
-            cls._parsers[name] = clz
-            return clz
-        return wrapper
-    
-    @classmethod
-    def get_all(cls):
-        return cls._parsers
 
 class BaseSectionParser(ABC):
-    def __init__(self):
-        self._unrecognized: list[dict] = []
-    
     @abstractmethod
-    def parse(self, statements: List[Dict]) -> dict:
-        pass
+    def parse(self, statements: List[Dict], ctx: ParseContext) -> dict: pass
 
-# =============================================================================
-# Section Implementations
-# =============================================================================
-
-@ParserRegistry.register("structure")
 class StructureParser(BaseSectionParser):
-    """Parses Block Structure (PROC, DO, BEGIN) and Scoping"""
-    
-    def parse(self, statements: List[Dict]) -> dict:
+    """
+    Parses Block Structure (PROC, DO, BEGIN), Scoping, and Program Meta.
+    """
+    def parse(self, statements: List[Dict], ctx: ParseContext) -> dict:
         procs = []
         block_stack = []
         
@@ -201,47 +208,40 @@ class StructureParser(BaseSectionParser):
             typ = stmt['type']
             upper = text.upper()
             
-            # Handle Labels and PROCs
-            # Pattern: LABEL: PROC(PARAMS) OPTIONS(...);
             if typ == "LABEL" and ("PROC" in upper or "PROCEDURE" in upper):
-                # Extract Label
                 label_match = re.match(r'([\w\$]+)\s*:', text)
                 proc_name = label_match.group(1).upper() if label_match else "UNKNOWN"
                 
-                is_main = 'MAIN' in upper and 'OPTIONS' in upper
+                params = self._extract_params(text)
+                options = self._extract_options(text)
+                is_main = 'MAIN' in [o.upper() for o in options]
                 
-                proc_entry = {
+                procs.append({
                     "name": proc_name,
                     "line": stmt['line'],
                     "is_main": is_main,
-                    "parameters": self._extract_params(text),
-                    "options": self._extract_options(text),
+                    "parameters": params,
+                    "options": options,
                     "parent": block_stack[-1] if block_stack else None
-                }
-                
-                procs.append(proc_entry)
+                })
                 block_stack.append(proc_name)
                 
-            elif typ == "BLOCK_START" and "PROC" in upper:
-                # Unlabeled PROC (rare but possible in some contexts)
-                block_stack.append("UNNAMED_PROC")
-                
             elif typ == "BLOCK_END":
-                # END label; or just END;
-                # Check if it ends a specific block: END A;
                 match = re.match(r'END\s+([\w\$]+)', upper)
                 if match:
                     closing_label = match.group(1)
                     if block_stack and block_stack[-1] == closing_label:
                         block_stack.pop()
+                    else:
+                        ctx.record_warning(f"Mismatched END at line {stmt['line']}: Found {closing_label}, expected {block_stack[-1] if block_stack else 'None'}")
                 else:
-                    # Simple END; pops the top
-                    if block_stack:
-                        block_stack.pop()
+                    if block_stack: block_stack.pop()
 
+        program_name = next((p['name'] for p in procs if p.get('is_main')), procs[0]['name'] if procs else None)
+        
         return {
-            "procedures": procs, 
-            "program_id": next((p['name'] for p in procs if p.get('is_main')), procs[0]['name'] if procs else None)
+            "procedures": procs,
+            "program_id": program_name
         }
 
     def _extract_params(self, text: str) -> List[str]:
@@ -252,11 +252,46 @@ class StructureParser(BaseSectionParser):
         match = re.search(r'OPTIONS\s*\((.*?)\)', text, re.IGNORECASE)
         return [o.strip() for o in match.group(1).split(',')] if match else []
 
-@ParserRegistry.register("dependencies")
+class LogicParser(BaseSectionParser):
+    """
+    Extracts File I/O and Error Handling (ON units).
+    """
+    def parse(self, statements: List[Dict], ctx: ParseContext) -> dict:
+        result = {"conditions": [], "io_files": []}
+        
+        for stmt in statements:
+            text = stmt['text']
+            upper = text.upper()
+            line = stmt['line']
+            
+            # 1. ON Conditions
+            if stmt['type'] == "ON_UNIT" or text.lstrip().upper().startswith("ON "):
+                match = re.match(r'ON\s+([A-Za-z0-9_\-\$]+)(?:\((.*?)\))?', text, re.IGNORECASE)
+                if match:
+                    result["conditions"].append({
+                        "condition": match.group(1).upper(),
+                        "target": match.group(2).upper() if match.group(2) else None,
+                        "line": line
+                    })
+
+            # 2. File I/O Heuristics
+            if re.match(r'\b(OPEN|CLOSE|READ|WRITE|REWRITE|DELETE)\b', upper):
+                 file_match = re.search(r'\bFILE\s*\(\s*([\w\$]+)\s*\)', text, re.IGNORECASE)
+                 if file_match:
+                     result["io_files"].append({
+                         "operation": upper.split()[0],
+                         "file": file_match.group(1).upper(),
+                         "line": line
+                     })
+        return result
+
 class DependenciesParser(BaseSectionParser):
-    """Extracts External Calls, Includes, SQL and CICS"""
+    """
+    Extracts External Calls, SQL, and CICS. 
+    Uses Hybrid AI Fallback and records successful interventions.
+    """
     
-    def parse(self, statements: List[Dict]) -> dict:
+    def parse(self, statements: List[Dict], ctx: ParseContext) -> dict:
         result = {
             "includes": [],
             "calls": [],
@@ -266,189 +301,216 @@ class DependenciesParser(BaseSectionParser):
         
         for stmt in statements:
             text = stmt['text']
-            upper_text = text.upper()
+            upper = text.upper()
+            line = stmt['line']
             
-            # 1. Preprocessor Includes (%INCLUDE or ++INCLUDE)
-            if stmt['type'] == "PREPROCESSOR" and 'INCLUDE' in upper_text:
+            # 1. Includes
+            if stmt['type'] == "PREPROCESSOR" and 'INCLUDE' in upper:
                 match = re.search(r'(?:%|\+\+)\s*INCLUDE\s+([\w\$\@\#]+)', text, re.IGNORECASE)
-                if match:
-                    result["includes"].append({"name": match.group(1).upper(), "line": stmt['line']})
+                if match: result["includes"].append({"name": match.group(1).upper(), "line": line})
 
-            # 2. CALLs
+            # 2. Calls
             if stmt['type'] == "CALL":
-                # Handles: CALL PROCNAME (ARGS);
                 match = re.match(r'CALL\s+([\w\$\@\#]+)', text, re.IGNORECASE)
-                if match:
-                    result["calls"].append({
-                        "target": match.group(1).upper(),
-                        "line": stmt['line']
-                    })
+                if match: result["calls"].append({"target": match.group(1).upper(), "line": line})
 
-            # 3. EXEC SQL / CICS
+            # 3. EXEC SQL / CICS (Hybrid Parsing)
             if stmt['type'] == "EXEC":
                 clean = " ".join(text.split())
-                if 'EXEC SQL' in upper_text:
-                    sql_type = 'UNKNOWN'
-                    if 'SELECT' in upper_text: sql_type = 'SELECT'
-                    elif 'INSERT' in upper_text: sql_type = 'INSERT'
-                    elif 'UPDATE' in upper_text: sql_type = 'UPDATE'
-                    elif 'DELETE' in upper_text: sql_type = 'DELETE'
-                    elif 'DECLARE' in upper_text: sql_type = 'CURSOR'
-                    
-                    result["sql_queries"].append({
-                        "type": sql_type,
-                        "statement": clean,
-                        "line": stmt['line']
-                    })
-                elif 'EXEC CICS' in upper_text:
-                    cmd_match = re.search(r'EXEC\s+CICS\s+(\w+)', clean, re.IGNORECASE)
-                    cmd = cmd_match.group(1) if cmd_match else "UNKNOWN"
-                    result["cics_commands"].append({
-                        "command": cmd,
-                        "statement": clean,
-                        "line": stmt['line']
-                    })
+                
+                if 'EXEC SQL' in upper:
+                    self._parse_sql(clean, line, result["sql_queries"], ctx)
+                elif 'EXEC CICS' in upper:
+                    self._parse_cics(clean, line, result["cics_commands"], ctx)
                     
         return result
 
-@ParserRegistry.register("logic")
-class LogicParser(BaseSectionParser):
-    """Parses IO operations and Error Handling"""
-    
-    def parse(self, statements: List[Dict]) -> dict:
-        result = {"conditions": [], "io_files": []}
+    def _parse_sql(self, text: str, line: int, output_list: list, ctx: ParseContext):
+        # 1. Regex Heuristic
+        upper = text.upper()
+        sql_type = "UNKNOWN"
         
-        for stmt in statements:
-            text = stmt['text']
-            upper = text.upper()
-            
-            # ON Conditions (Error handling)
-            if stmt['type'] == "ON_UNIT":
-                # ON ERROR ... ; ON ENDFILE(F) ...;
-                match = re.match(r'ON\s+([A-Za-z0-9_\-\$]+)(?:\((.*?)\))?', text, re.IGNORECASE)
-                if match:
-                    cond = match.group(1).upper()
-                    target = match.group(2).upper() if match.group(2) else None
-                    result["conditions"].append({
-                        "condition": cond,
-                        "target": target,
-                        "line": stmt['line']
+        if 'SELECT' in upper: sql_type = 'SELECT'
+        elif 'INSERT' in upper: sql_type = 'INSERT'
+        elif 'UPDATE' in upper: sql_type = 'UPDATE'
+        elif 'DELETE' in upper: sql_type = 'DELETE'
+        elif 'DECLARE' in upper: sql_type = 'CURSOR'
+        
+        # 2. AI Fallback check
+        if sql_type == "UNKNOWN" or (sql_type == "SELECT" and "FROM" not in upper):
+            if ctx.can_call_ai():
+                ctx.ai_calls += 1
+                try:
+                    ai_res = self._ai_extract(text, "SQL")
+                    output_list.append({
+                        "type": ai_res.get('type', 'UNKNOWN'),
+                        "tables": ai_res.get('tables', []),
+                        "statement": text,
+                        "line": line,
+                        "ai_inferred": True
                     })
+                    ctx.record_correction(text, "Unparseable SQL Pattern", line)
+                    return
+                except Exception as e:
+                    ctx.record_error(text, f"AI SQL Parse Failed: {e}", line)
+            else:
+                 pass
 
-            # File I/O Heuristics (OPEN/CLOSE/READ/WRITE)
-            if re.match(r'\b(OPEN|CLOSE|READ|WRITE|REWRITE|DELETE)\b', upper):
-                 file_match = re.search(r'\bFILE\s*\(\s*([\w\$]+)\s*\)', text, re.IGNORECASE)
-                 if file_match:
-                     result["io_files"].append({
-                         "operation": upper.split()[0],
-                         "file": file_match.group(1).upper(),
-                         "line": stmt['line']
-                     })
+        output_list.append({"type": sql_type, "statement": text, "line": line})
 
-        return result
+    def _parse_cics(self, text: str, line: int, output_list: list, ctx: ParseContext):
+        # 1. Regex Heuristic
+        match = re.search(r'EXEC\s+CICS\s+(\w+)', text, re.IGNORECASE)
+        cmd = match.group(1).upper() if match else "UNKNOWN"
+        
+        # 2. AI Fallback
+        if cmd == "UNKNOWN" and ctx.can_call_ai():
+            ctx.ai_calls += 1
+            try:
+                ai_res = self._ai_extract(text, "CICS")
+                output_list.append({
+                    "command": ai_res.get('command', 'UNKNOWN'),
+                    "options": ai_res.get('options', []),
+                    "statement": text,
+                    "line": line,
+                    "ai_inferred": True
+                })
+                ctx.record_correction(text, "Unparseable CICS Command", line)
+                return
+            except Exception as e:
+                ctx.record_error(text, f"AI CICS Parse Failed: {e}", line)
+
+        output_list.append({"command": cmd, "statement": text, "line": line})
+
+    def _ai_extract(self, text: str, mode: str) -> dict:
+        # Requires external dependencies
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.output_parsers import JsonOutputParser
+
+        parser = JsonOutputParser()
+        prompt_text = ""
+        
+        # NOTE: Using Templates instead of F-Strings to avoid JSON brace conflicts
+        if mode == "SQL":
+            prompt_text = """
+            Analyze this embedded SQL statement.
+            Statement: "{statement}"
+            Return JSON: {{ "type": "SELECT/INSERT/UPDATE/DELETE/CURSOR", "tables": ["table_names"] }}
+            """
+        else:
+            prompt_text = """
+            Analyze this CICS command.
+            Statement: "{statement}"
+            Return JSON: {{ "command": "LINK/XCTL/READ...", "options": ["key_options"] }}
+            """
+
+        # Pass variables via invoke to handle escaping properly
+        chain = ChatPromptTemplate.from_template(prompt_text) | _llm_model | parser
+        return chain.invoke({"statement": text})
 
 # =============================================================================
-# Main Driver
+# MAIN PARSER
 # =============================================================================
 
-class PLIParser(BaseParser):
-    """
-    Main parser for PL/1 Source Files.
-    """
+class PLIParser:
     FILE_TYPE = "pli"
-    # Common EBCDIC codepages
     EBCDIC_CODEPAGES = ['cp1047', 'cp037', 'cp500', 'cp875']
 
-    def __init__(self, strict: bool = False):
-        self.strict = strict
-
     def parse_file(self, filepath: str) -> dict:
-        logger.info(f"Parsing PL/1 file: {filepath}")
         path = Path(filepath)
         if not path.exists():
-            raise FileNotFoundError(f"File not found: {filepath}")
+            return {"error": "File not found"}
 
-        # Robust Encoding Detection
+        # Robust EBCDIC detection logic
         raw = path.read_bytes()
-        content, encoding = self._detect_and_decode(raw)
-        
-        result = self.parse_string(content, str(path.name))
-        result['encoding'] = encoding
-        return result
+        content = None
+        encoding = 'utf-8'
 
-    def _detect_and_decode(self, raw: bytes) -> Tuple[str, str]:
-        # Try UTF-8
         try:
-            return raw.decode('utf-8'), 'utf-8'
-        except UnicodeDecodeError: pass
-        
-        # Try EBCDIC
-        for cp in self.EBCDIC_CODEPAGES:
-            try:
-                txt = raw.decode(cp)
-                # Heuristic: Check for common PL/1 keywords
-                if 'PROC' in txt or 'DCL' in txt or 'DECLARE' in txt:
-                    return txt, cp
-            except: continue
-            
-        # Fallback
-        return raw.decode('latin-1', errors='replace'), 'latin-1'
+            content = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            pass
 
-    def parse_string(self, content: str, source_file: str) -> dict:
-        # 1. Tokenize
+        if content is None:
+            for cp in self.EBCDIC_CODEPAGES:
+                try:
+                    txt = raw.decode(cp)
+                    if 'PROC' in txt or 'DCL' in txt or 'DECLARE' in txt or '/*' in txt:
+                        content = txt
+                        encoding = cp
+                        break
+                except:
+                    continue
+        
+        if content is None:
+            content = raw.decode('latin-1', errors='replace')
+            encoding = 'latin-1 (fallback)'
+            
+        return self.parse_string(content, path.name, encoding)
+
+    def parse_string(self, content: str, source_name: str, encoding: str = 'utf-8') -> dict:
+        ctx = ParseContext(source_file=source_name)
         statements = PLITokenizer.get_statements(content)
         
-        # 2. Initialize Result
         result = {
-            'source_file': source_file, 
-            'file_type': self.FILE_TYPE,
-            'stats': {'statement_count': len(statements)}
+            'meta': {
+                'source_file': source_name, 
+                'file_type': self.FILE_TYPE,
+                'encoding': encoding,
+                'stmts': len(statements)
+            }
         }
         
-        # 3. Dispatch to Sub-Parsers
-        for name, parser_cls in ParserRegistry.get_all().items():
-            parser = parser_cls()
+        parsers = [
+            ("structure", StructureParser()),
+            ("dependencies", DependenciesParser()),
+            ("logic", LogicParser())
+        ]
+        
+        for key, parser in parsers:
             try:
-                data = parser.parse(statements)
-                result[name] = data
+                result[key] = parser.parse(statements, ctx)
             except Exception as e:
-                logger.error(f"Parser {name} failed: {e}")
-                if self.strict: raise
-                result[f"{name}_error"] = str(e)
-                
-        # 4. Hoist program name to top level
-        if 'structure' in result and result['structure'].get('program_id'):
-            result['program_name'] = result['structure']['program_id']
+                logger.error(f"Parser {key} failed: {e}")
+                ctx.record_error("Whole File", f"Parser {key} crashed: {str(e)}", 0)
 
+        # 3. Standardized Error Reporting
+        # Both true errors and [AI_CORRECTION] entries appear here
+        result['parse_errors'] = ctx.errors
+        result['_warnings'] = ctx.warnings
+        
+        if ctx.ai_calls > 0:
+            result['meta']['ai_calls'] = ctx.ai_calls
+            
         return result
 
+# =============================================================================
+# CLI
+# =============================================================================
+
 def main():
-    parser = argparse.ArgumentParser(
-        description='Parse PL/1 Source Code to JSON',
-        epilog='Handles Enterprise PL/I syntax including nested blocks and SQL.'
-    )
+    parser = argparse.ArgumentParser(description='Hybrid PL/1 Source Parser (v2.2)')
     parser.add_argument('input', help='Input PL/1 file path')
-    parser.add_argument('-o', '--output', help='Output JSON file (default: stdout)')
-    parser.add_argument('--strict', action='store_true', help='Fail on parse errors')
+    parser.add_argument('-o', '--output', help='Output JSON file')
     
     args = parser.parse_args()
     
-    try:
-        pli_parser = PLIParser(strict=args.strict)
-        result = pli_parser.parse_file(args.input)
+    if not os.path.exists(args.input):
+        print(f"Error: File {args.input} not found.")
+        sys.exit(1)
         
-        json_output = json.dumps(result, indent=2)
-        if args.output:
-            Path(args.output).write_text(json_output, encoding='utf-8')
-            print(f"Output written to {args.output}")
-        else:
-            print(json_output)
-            
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return ExitCode.PARSE_ERROR
+    pli_parser = PLIParser()
+    result = pli_parser.parse_file(args.input)
     
-    return ExitCode.SUCCESS
+    json_output = json.dumps(result, indent=2)
+    
+    if args.output:
+        Path(args.output).write_text(json_output, encoding='utf-8')
+        print(f"Parsed {args.input} -> {args.output}")
+        if result.get('parse_errors'):
+            print(f"WARNING: {len(result['parse_errors'])} errors/corrections recorded.")
+    else:
+        print(json_output)
 
 if __name__ == '__main__':
-    sys.exit(main())
+    main()
