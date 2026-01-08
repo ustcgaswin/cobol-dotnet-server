@@ -22,7 +22,7 @@ PARSER_REGISTRY: dict[str, type[BaseParser]] = {
     SourceFileType.DCLGEN.value: DclgenParser,  
     SourceFileType.JCL.value: JCLParser,
     SourceFileType.CA7.value: CA7Parser,
-    SourceFileType.BIND.value: BindParser
+    SourceFileType.BIND.value: BindParser,
     SourceFileType.CSV.value: CSVParser,
     SourceFileType.FIXED_LENGTH.value: FixedLengthParser,
 }
