@@ -1,5 +1,6 @@
 """Parser service for orchestrating file parsing."""
 
+import asyncio
 import json
 import uuid
 from dataclasses import dataclass, asdict
@@ -74,6 +75,9 @@ class ParserService:
         """Get output directory for parsed files."""
         return self.artifacts_path / str(project_id) / "parsed_outputs" / file_type
     
+    # Maximum concurrent files to process in parallel
+    MAX_CONCURRENT_FILES = 5
+    
     async def parse_project(
         self,
         project_id: uuid.UUID,
@@ -145,58 +149,104 @@ class ParserService:
         all_errors: list[FileParseError] = []
         files_with_errors: set[str] = set()
         
-        for source_file in source_files:
-            # Get file path from storage
-            file_path = (
-                settings.get_storage_path() 
-                / str(project_id) 
-                / file_type 
-                / source_file.filename
-            )
-            
-            try:
-                # Parse the file
-                parsed_data = parser.parse_file(str(file_path))
-                
-                # Extract warnings and unrecognized patterns from parsed data
-                file_errors = self._extract_errors_from_parsed_data(
-                    source_file.filename, parsed_data
+        # Create semaphore for limiting concurrent file processing
+        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_FILES)
+        
+        async def process_single_file(source_file) -> tuple[ParseResult, dict | None]:
+            """Process a single file with semaphore-controlled concurrency."""
+            async with semaphore:
+                file_path = (
+                    settings.get_storage_path() 
+                    / str(project_id) 
+                    / file_type 
+                    / source_file.filename
                 )
-                if file_errors:
-                    all_errors.extend(file_errors)
-                    files_with_errors.add(source_file.filename)
                 
-                # Save individual output
-                output_filename = f"{Path(source_file.filename).stem}.json"
-                output_path = output_dir / output_filename
-                
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(parsed_data, f, indent=2, ensure_ascii=False)
-                
-                logger.info(f"Parsed {source_file.filename} -> {output_path}")
-                
-                results.append(ParseResult(
-                    filename=source_file.filename,
-                    success=True,
-                    output_path=str(output_path),
-                ))
-                
-                all_parsed.append(parsed_data)
-                
-            except Exception as e:
-                logger.error(f"Failed to parse {source_file.filename}: {e}")
+                try:
+                    # Parse the file (sync operation)
+                    parsed_data = parser.parse_file(str(file_path))
+                    
+                    # Augment with LLM-generated metadata
+                    if hasattr(parser, 'augment'):
+                        parsed_data = await parser.augment(parsed_data)
+                    
+                    # Save individual output
+                    output_filename = f"{Path(source_file.filename).stem}.json"
+                    output_path = output_dir / output_filename
+                    
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        json.dump(parsed_data, f, indent=2, ensure_ascii=False)
+                    
+                    logger.info(
+                        f"Parsed and augmented {source_file.filename} -> {output_path}"
+                    )
+                    
+                    return (
+                        ParseResult(
+                            filename=source_file.filename,
+                            success=True,
+                            output_path=str(output_path),
+                        ),
+                        parsed_data,
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Failed to parse {source_file.filename}: {e}")
+                    return (
+                        ParseResult(
+                            filename=source_file.filename,
+                            success=False,
+                            error=str(e),
+                        ),
+                        None,
+                    )
+        
+        # Process all files in parallel (limited by semaphore)
+        logger.info(
+            f"Processing {len(source_files)} {file_type} files "
+            f"(max {self.MAX_CONCURRENT_FILES} concurrent)"
+        )
+        file_results = await asyncio.gather(
+            *[process_single_file(sf) for sf in source_files],
+            return_exceptions=True,
+        )
+        
+        # Collect results
+        for i, result in enumerate(file_results):
+            if isinstance(result, Exception):
+                # Unexpected exception during gather
+                source_file = source_files[i]
                 results.append(ParseResult(
                     filename=source_file.filename,
                     success=False,
-                    error=str(e),
+                    error=str(result),
                 ))
-                # Add fatal error to error list
                 all_errors.append(FileParseError(
                     filename=source_file.filename,
                     error_type="fatal",
-                    message=str(e),
+                    message=str(result),
                 ))
                 files_with_errors.add(source_file.filename)
+            else:
+                parse_result, parsed_data = result
+                results.append(parse_result)
+                
+                if parsed_data:
+                    all_parsed.append(parsed_data)
+                    # Extract warnings and unrecognized patterns
+                    file_errors = self._extract_errors_from_parsed_data(
+                        parse_result.filename, parsed_data
+                    )
+                    if file_errors:
+                        all_errors.extend(file_errors)
+                        files_with_errors.add(parse_result.filename)
+                elif not parse_result.success:
+                    all_errors.append(FileParseError(
+                        filename=parse_result.filename,
+                        error_type="fatal",
+                        message=parse_result.error or "Unknown error",
+                    ))
+                    files_with_errors.add(parse_result.filename)
         
         # Save consolidated output if any files were parsed successfully
         consolidated_path = None
