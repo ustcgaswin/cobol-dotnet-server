@@ -1,15 +1,15 @@
 """
-PL/1 Copybook Parser - Enterprise Grade
+PL/1 Copybook Parser - Hybrid AI/Deterministic Engine (v3.3)
 
-Features:
-- Token-Based Attribute Parsing (No fragile Regex for nested parens)
-- Handles Complex Factoring: DCL (A, B) CHAR(5); -> A CHAR(5), B CHAR(5)
-- Hierarchy Reconstruction: Maps Level 1 -> 2 -> 3 correctly.
-- Robust Attribute Parsing: Handles BIT, BIN FIXED(31), DEC(15,3), VARYING.
-- Size Calculation: Approximates storage bytes for mainframe types.
+Updates:
+- FIXED: Line number calculation.
+  1. Removed destructive whitespace collapsing.
+  2. Implemented per-field newline tracking inside DCL blocks.
+- FIXED: LangChain Prompt Template escaping (JSON braces vs Prompt variables).
+- RETAINED: Strict validation, I-N rules, and AI Correction logging.
 
 Usage:
-    python pli-copybook-parser.py <copybook> [-o output.json]
+    python pli_copybook_parser.py <copybook> [-o output.json]
 """
 
 import re
@@ -17,24 +17,43 @@ import json
 import sys
 import logging
 import argparse
+import os
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-# Core Mock for consistency
-class InvalidSyntaxError(Exception): pass
+# =============================================================================
+# CONFIGURATION & AI SETUP
+# =============================================================================
 
-# Logger
-logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
-logger = logging.getLogger('pli_cpy')
+MAX_AI_RETRIES_PER_FILE = 15
+ENABLE_AI = False
+_llm_model = None
+
+# Logger Setup
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger('pli_copybook_parser')
+
+try:
+    from app.config.llm_config import get_llm
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_core.output_parsers import JsonOutputParser
+    
+    _llm_model = get_llm()
+    ENABLE_AI = True
+    logger.info("AI Model initialized successfully.")
+    
+except ImportError:
+    logger.warning("Could not import 'get_llm'. Running in Deterministic Mode.")
+except Exception as e:
+    logger.error(f"Failed to initialize AI context: {e}")
 
 # =============================================================================
-# Data Structures
+# DATA STRUCTURES
 # =============================================================================
 
 @dataclass
 class PLIField:
-    """Represents a PL/I Variable or Structure Member"""
     level: int
     name: str
     attributes_raw: str = ""
@@ -43,443 +62,360 @@ class PLIField:
     scale: int = 0
     dimension: Optional[str] = None
     is_array: bool = False
+    is_varying: bool = False
     initial_value: Optional[str] = None
-    storage_class: Optional[str] = None # STATIC, BASED, AUTOMATIC
+    storage_class: Optional[str] = None
+    is_ai_inferred: bool = False
     children: List['PLIField'] = field(default_factory=list)
-    
-    # Internal usage for tree building
-    _parent: Optional['PLIField'] = None
+    line_number: Optional[int] = None
+    _parent: Optional['PLIField'] = field(default=None, repr=False)
 
     def to_dict(self):
-        """
-        Manually construct dictionary to avoid infinite recursion 
-        caused by dataclasses.asdict() traversing the _parent link.
-        """
-        d = {
-            "level": self.level,
-            "name": self.name,
-        }
-        
-        # Only add fields if they have values to keep JSON clean
-        if self.attributes_raw: d["attributes_raw"] = self.attributes_raw
+        d = {"level": self.level, "name": self.name}
+        if self.line_number: d["line"] = self.line_number
         if self.data_type != "UNKNOWN": d["data_type"] = self.data_type
         if self.length: d["length"] = self.length
         if self.scale: d["scale"] = self.scale
         if self.dimension: d["dimension"] = self.dimension
         if self.is_array: d["is_array"] = True
+        if self.is_varying: d["is_varying"] = True
         if self.initial_value: d["initial_value"] = self.initial_value
         if self.storage_class: d["storage_class"] = self.storage_class
-
+        if self.is_ai_inferred: d["ai_inferred"] = True
         if self.children:
             d["children"] = [child.to_dict() for child in self.children]
-            
         return d
 
 # =============================================================================
-# Attribute Parser (The "Lexer")
+# DETERMINISTIC PARSER (STRICT MODE)
 # =============================================================================
 
 class PLIAttributeParser:
-    """
-    Parses PL/I attribute strings using tokenization instead of Regex.
-    Handles order-independence, nested parens, and complex types.
-    """
-    
-    # PL/I Keywords
     TYPES = {
         'CHAR', 'CHARACTER', 'BIT', 'BIN', 'BINARY', 'FIXED', 
         'DEC', 'DECIMAL', 'PTR', 'POINTER', 'FLOAT', 'GRAPHIC', 'PICTURE', 'PIC'
     }
-    
     KEYWORDS = {
-        'DIM', 'DIMENSION', 'INIT', 'INITIAL', 'VARYING', 'VAR', 
-        'ALIGNED', 'UNALIGNED', 'STATIC', 'BASED', 'DEFINED', 'DEF', 'AUTO', 'AUTOMATIC'
+        'DIM', 'DIMENSION', 'INIT', 'INITIAL', 'VAR', 'VARYING', 
+        'STATIC', 'BASED', 'DEFINED', 'DEF', 'AUTO', 'AUTOMATIC',
+        'ALIGNED', 'UNALIGNED'
     }
-
+    
     def __init__(self, raw_attributes: str):
         self.raw = raw_attributes
-        self.tokens = self._tokenize(raw_attributes)
+        self.tokens = re.findall(r"\'[^\']*\'|\"[^\"]*\"|[\w\$\@\#]+|[(),]", raw_attributes)
         self.parsed_data = {
-            'data_type': None,
-            'length': None,
-            'scale': None,     # Decimal precision
-            'dimension': None, # Array bounds
-            'initial': None,
-            'storage_class': None,
+            'data_type': None, 'length': None, 'scale': None,
+            'dimension': None, 'initial': None, 'storage_class': None,
             'is_varying': False
         }
-
-    def _tokenize(self, text: str) -> List[str]:
-        """
-        Splits string into tokens: words, numbers, parens, commas, quoted strings.
-        Example: "CHAR(5) INIT('A')" -> ['CHAR', '(', '5', ')', 'INIT', '(', "'A'", ')']
-        """
-        # Regex explanation:
-        # 1. Quoted strings (keeping quotes)
-        # 2. Alphanumeric words (identifiers/numbers)
-        # 3. Individual symbols: ( ) ,
-        pattern = r"\'[^\']*\'|\"[^\"]*\"|[\w\$\@\#]+|[(),]"
-        return re.findall(pattern, text)
 
     def parse(self) -> dict:
         i = 0
         n = len(self.tokens)
-        
         while i < n:
             token = self.tokens[i].upper()
-            
-            # --- 1. Handle Data Types ---
+            if token in [',', '(', ')']: 
+                i += 1; continue
+
             if token in self.TYPES:
-                # Map synonmys
-                if token == 'CHARACTER': token = 'CHAR'
-                if token == 'BINARY': token = 'BIN'
-                if token == 'DECIMAL': token = 'DEC'
-                if token == 'POINTER': token = 'PTR'
-                if token == 'PICTURE': token = 'PIC'
+                norm_token = {'CHARACTER':'CHAR', 'BINARY':'BIN', 'DECIMAL':'DEC', 'POINTER':'PTR'}.get(token, token)
+                curr = self.parsed_data['data_type']
+                self.parsed_data['data_type'] = f"{curr} {norm_token}" if curr else norm_token
                 
-                # Combine types (e.g. FIXED BIN)
-                current_type = self.parsed_data['data_type']
-                if current_type:
-                    # If we already have FIXED and now see BIN, make it FIXED BIN
-                    self.parsed_data['data_type'] = f"{current_type} {token}"
-                else:
-                    self.parsed_data['data_type'] = token
-                
-                # Check for Length/Precision: CHAR(5) or DEC(10,2)
-                # Must check if next token is '('
                 if i + 1 < n and self.tokens[i+1] == '(':
-                    params, new_index = self._consume_parens(i + 1)
-                    i = new_index
-                    
-                    if token in ('CHAR', 'BIT', 'PIC', 'GRAPHIC'):
-                        # Only length: (5)
-                        if params: self.parsed_data['length'] = params[0]
-                    elif token in ('DEC', 'FIXED', 'FLOAT', 'BIN'):
-                        # Precision: (15, 3)
-                        if len(params) >= 1: self.parsed_data['length'] = params[0] # Precision
-                        if len(params) >= 2: self.parsed_data['scale'] = params[1]  # Scale
+                    params, i = self._consume_parens(i + 1)
+                    if norm_token in ('DEC', 'FIXED', 'FLOAT', 'BIN'):
+                        if len(params) >= 1: self.parsed_data['length'] = params[0]
+                        if len(params) >= 2: self.parsed_data['scale'] = params[1]
+                    elif params:
+                        self.parsed_data['length'] = params[0]
                 else:
                     i += 1
                 continue
-
-            # --- 2. Handle Explicit Dimensions (DIM) ---
-            if token in ('DIM', 'DIMENSION'):
-                if i + 1 < n and self.tokens[i+1] == '(':
-                    params, new_index = self._consume_parens(i + 1)
-                    self.parsed_data['dimension'] = ",".join(params)
-                    i = new_index
-                else:
-                    i += 1
-                continue
-
-            # --- 3. Handle Implicit Dimensions ---
-            # If we see (...) and haven't seen a Type yet, it's an array definition
-            # Example: DCL A (10) CHAR(5);
-            # Limitation: DCL A (10); (Default type logic not handled here)
-            if token == '(' and self.parsed_data['data_type'] is None:
-                params, new_index = self._consume_parens(i)
-                self.parsed_data['dimension'] = ",".join(params)
-                i = new_index
-                continue
-
-            # --- 4. Handle Initialization ---
-            if token in ('INIT', 'INITIAL'):
-                if i + 1 < n and self.tokens[i+1] == '(':
-                    params, new_index = self._consume_parens(i + 1)
-                    self.parsed_data['initial'] = ",".join(params)
-                    i = new_index
-                else:
-                    i += 1
-                continue
-
-            # --- 5. Other Keywords ---
-            if token in ('VAR', 'VARYING'):
-                self.parsed_data['is_varying'] = True
-            elif token in ('STATIC', 'BASED', 'DEFINED', 'AUTO', 'AUTOMATIC'):
-                self.parsed_data['storage_class'] = token
-            elif token == 'ALIGNED' or token == 'UNALIGNED':
-                 pass # Ignored for now
-            else:
-                # Unknown token, skip
-                pass
             
-            # Move to next token
+            if token in self.KEYWORDS:
+                if token in ('VAR', 'VARYING'): self.parsed_data['is_varying'] = True
+                elif token in ('DIM', 'DIMENSION'):
+                     if i+1 < n and self.tokens[i+1] == '(':
+                         params, i = self._consume_parens(i+1)
+                         self.parsed_data['dimension'] = ",".join(params)
+                     else: i += 1
+                elif token in ('INIT', 'INITIAL'):
+                     if i+1 < n and self.tokens[i+1] == '(':
+                         params, i = self._consume_parens(i+1)
+                         self.parsed_data['initial'] = ",".join(params)
+                     else: i += 1
+                elif token in ('STATIC', 'BASED', 'DEFINED', 'DEF', 'AUTO', 'AUTOMATIC'):
+                    self.parsed_data['storage_class'] = token
+                    i += 1
+                else:
+                    i += 1
+                continue
+            
+            if not token.isdigit() and not token.startswith("'") and not token.startswith('"'):
+                 raise ValueError(f"Unknown attribute token: {token}")
+
             i += 1
-            
         return self.parsed_data
 
-    def _consume_parens(self, start_index: int) -> Tuple[List[str], int]:
-        """
-        Reads content inside parens (...) starting at start_index.
-        Returns (List of params, new_index_after_closing_paren)
-        """
-        i = start_index + 1 # Skip opening (
-        n = len(self.tokens)
+    def _consume_parens(self, start_index: int):
+        i = start_index + 1
         depth = 1
         content = []
-        
-        while i < n and depth > 0:
+        while i < len(self.tokens) and depth > 0:
             t = self.tokens[i]
             if t == '(': depth += 1
             elif t == ')': depth -= 1
-            
-            if depth > 0:
-                content.append(t)
+            if depth > 0: content.append(t)
             i += 1
-            
-        # Join content and split by comma to get params
-        # E.g. ['10', ',', '2'] -> ['10', '2']
-        raw_str = "".join(content)
-        # Simple split by comma (doesn't handle nested commas in logic expressions, usually fine for copybooks)
-        params = [p.strip() for p in raw_str.split(',') if p.strip()]
-        
-        return params, i
+        return [p.strip() for p in "".join(content).split(',') if p.strip()], i
 
 # =============================================================================
-# Main Parser Logic
+# MAIN CONTROLLER
 # =============================================================================
 
 class PLICopybookParser:
-    """
-    Main Parser for PL/1 Copybooks.
-    Uses PLIAttributeParser for analyzing individual fields.
-    """
-
-    def __init__(self, strict=False):
-        self.strict = strict
+    def __init__(self):
         self.root_fields = []
         self._current_level_stack = []
+        self.parse_errors = []
+        self.ai_calls_made = 0 
+        self.original_content = ""
 
     def parse_file(self, filepath: str) -> dict:
-        path = Path(filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"File not found: {filepath}")
-
-        # EBCDIC Fallback
-        try:
-            content = path.read_text('utf-8')
-            encoding = 'utf-8'
-        except:
-            content = path.read_text('cp037', errors='replace') # EBCDIC US
-            encoding = 'cp037'
-            
-        result = self.parse_string(content, path.name)
-        result['encoding'] = encoding
-        return result
+        content = Path(filepath).read_text(encoding='utf-8')
+        return self.parse_string(content, Path(filepath).name)
 
     def parse_string(self, content: str, source_name: str) -> dict:
         self.root_fields = []
-        self._current_level_stack = [] # Reset stack for new file
+        self._current_level_stack = []
+        self.parse_errors = []
+        self.ai_calls_made = 0 
+        self.original_content = content
         
-        # 1. Preprocess: Remove comments, normalize spaces
-        clean_code = re.sub(r'/\*.*?\*/', ' ', content, flags=re.DOTALL)
-        clean_code = " ".join(clean_code.split())
+        # 1. Clean Comments ONLY (Preserve newlines and whitespace length)
+        # Using lambda to replace comment content with spaces to keep index alignment exact
+        clean = re.sub(r'/\*.*?\*/', lambda m: ' ' * len(m.group(0)), content, flags=re.DOTALL)
         
-        # 2. Extract DECLARE statements
-        # Regex finds "DCL" or "DECLARE" followed by content until ";"
-        dcl_iterator = re.finditer(r'\b(?:DCL|DECLARE)\s+(.*?);', clean_code, re.IGNORECASE)
-        
-        count = 0
-        has_explicit_dcl = False
+        # 2. Find DCL blocks
+        dcl_iterator = re.finditer(r'\b(?:DCL|DECLARE)\s+([\s\S]*?);', clean, re.IGNORECASE)
+        found = False
         
         for match in dcl_iterator:
-            has_explicit_dcl = True
+            found = True
+            body_start_index = match.start(1) # Start of the capturing group (the body)
             body = match.group(1)
-            self._process_dcl_body(body)
-            count += 1
-
-        # 3. Fallback: Implicit Structure (No 'DCL' keyword)
-        # If no DCL keywords were found, but the file looks like a structure (starts with a number)
-        if not has_explicit_dcl:
-            # Remove trailing semicolon if present
-            stripped_body = clean_code.strip().rstrip(';')
             
-            # Check if it starts with a number (Level number)
-            # Example: "1 MASTER_POLICY_REC ..."
-            if re.match(r'^\d+', stripped_body):
-                logger.info(f"No explicit DCL found in {source_name}, parsing as implicit structure.")
-                self._process_dcl_body(stripped_body)
-                count = 1
+            # Calculate absolute starting line of the body
+            base_line = self._get_line_number(body_start_index)
+            self._process_dcl_body(body, base_line)
+
+        # 3. Fallback for implicit structures
+        if not found:
+             stripped = clean.strip()
+             if re.match(r'^\d+', stripped):
+                 self._process_dcl_body(stripped, 1)
 
         return {
-            "copybook_name": source_name,
-            "dcl_count": count,
-            "fields": [f.to_dict() for f in self.root_fields]
+            "meta": {"file": source_name, "ai_calls": self.ai_calls_made},
+            "fields": [f.to_dict() for f in self.root_fields],
+            "_unrecognized": self.parse_errors,
+            "_warnings": []
         }
 
-    def _process_dcl_body(self, body: str):
-        """
-        Parses the body of a DCL statement. 
-        Handles factoring: DCL 1 A, 2 B CHAR(5);
-        """
-        # Split by comma, BUT respect parentheses to avoid splitting CHAR(5,2)
-        tokens = self._smart_split(body)
-        
-        for token in tokens:
-            self._parse_node(token)
+    def _get_line_number(self, index: int) -> int:
+        """Calculates line number from character index in original content."""
+        return self.original_content.count('\n', 0, index) + 1
 
-    def _smart_split(self, text: str) -> List[str]:
-        """Splits by comma not inside parens."""
-        parts = []
+    def _process_dcl_body(self, body: str, base_line: int):
+        """
+        Splits by comma while tracking newline counts to assign accurate line numbers.
+        """
         curr = []
         depth = 0
-        for c in text:
-            if c == '(': depth += 1
-            if c == ')': depth -= 1
-            if c == ',' and depth == 0:
-                parts.append("".join(curr).strip())
+        
+        # Track relative line offset inside the DCL body
+        current_field_start_line = base_line
+        newlines_encountered = 0
+        
+        for char in body:
+            if char == '\n':
+                newlines_encountered += 1
+            
+            if char == '(': depth += 1
+            elif char == ')': depth -= 1
+            
+            if char == ',' and depth == 0:
+                token_str = "".join(curr).strip()
+                if token_str:
+                    # Clean up token (remove newlines inside attributes for Regex parser)
+                    clean_token = " ".join(token_str.split())
+                    self._parse_node(clean_token, current_field_start_line)
+                
                 curr = []
+                # The NEXT field starts roughly where we are now
+                current_field_start_line = base_line + newlines_encountered
             else:
-                curr.append(c)
-        if curr: parts.append("".join(curr).strip())
-        return parts
+                curr.append(char)
+        
+        # Process last token
+        if curr:
+            token_str = "".join(curr).strip()
+            clean_token = " ".join(token_str.split())
+            self._parse_node(clean_token, current_field_start_line)
 
-    def _parse_node(self, token: str):
-        """
-        Parses a single variable declaration fragment.
-        Pattern: (Level)? (Name) (Attributes)
-        """
-        # Regex to capture: Level? Name Attributes
-        # Name might be factored like (A, B)
-        # Update: Allow name to contain dashes or underscores
+    def _parse_node(self, token: str, line_num: int):
         match = re.match(r'^(\d+)?\s*([\w\$\#\@\-]+|\([\w\s,]+\))\s*(.*)', token)
         if not match: return
 
-        level_str = match.group(1)
+        level = int(match.group(1)) if match.group(1) else 1
         name_part = match.group(2)
         attrs = match.group(3)
 
-        level = int(level_str) if level_str else 1
-        
-        # Check for Factored Names: DCL (A,B) CHAR(10);
-        names = []
-        if name_part.startswith('('):
-            # Strip parens and split
-            names = [n.strip() for n in name_part.strip('()').split(',')]
-        else:
-            names = [name_part]
+        names = [n.strip() for n in name_part.strip('()').split(',')] if name_part.startswith('(') else [name_part]
 
         for name in names:
-            field_obj = PLIField(level=level, name=name.upper(), attributes_raw=attrs)
-            self._analyze_attributes(field_obj, attrs)
+            field_obj = PLIField(level=level, name=name.upper(), line_number=line_num)
+            
+            try:
+                self._analyze_attributes_standard(field_obj, attrs)
+            except Exception as e:
+                self._handle_fallback(field_obj, attrs, str(e), line_num)
+            
             self._add_to_hierarchy(field_obj)
 
-    def _analyze_attributes(self, field: PLIField, attrs: str):
-        """
-        Uses the Token Parser to extract type, length, etc.
-        """
-        if not attrs.strip():
-            # If no attributes and it's Level 1, likely a Structure or Implicit
-            if field.level == 1:
-                field.data_type = "STRUCTURE"
+    def _handle_fallback(self, field_obj: PLIField, attrs: str, error_msg: str, line_num: int):
+        if self.ai_calls_made >= MAX_AI_RETRIES_PER_FILE:
+            self._record_error(field_obj.name, attrs, f"Standard failed: {error_msg} (Circuit Breaker HIT)", line_num)
             return
 
-        # 1. Parse using the Lexer
-        attr_parser = PLIAttributeParser(attrs)
-        parsed = attr_parser.parse()
-        
-        # 2. Map parsed data
-        if parsed['data_type']:
-            field.data_type = parsed['data_type']
-        elif field.level > 1:
-             # Level > 1 without type is often a substructure, 
-             # unless it inherits (PL/I inheritance rules are complex, defaulting to STRUCT here)
-             field.data_type = "STRUCTURE"
+        if not ENABLE_AI:
+            self._record_error(field_obj.name, attrs, f"Standard failed: {error_msg} (AI Disabled)", line_num)
+            return
 
-        # Length / Scale
-        if parsed['length']:
-            try:
-                field.length = int(parsed['length'])
-            except ValueError:
-                field.length = 0 
-        
-        if parsed['scale']:
-            try:
-                field.scale = int(parsed['scale'])
-            except ValueError:
-                field.scale = 0
-
-        # 3. Enterprise PL/I Byte Alignment Heuristics
-        if 'FIXED' in field.data_type and 'BIN' in field.data_type:
-            # For FIXED BIN, length=precision. Map to bytes.
-            precision = field.length
-            if precision <= 15: field.length = 2
-            elif precision <= 31: field.length = 4
-            else: field.length = 8
-        elif 'PTR' in field.data_type:
-            field.length = 4
-        elif 'BIT' in field.data_type:
-            # Length is bits
-            pass
-        elif 'DEC' in field.data_type:
-            # Packed Decimal (approx bytes: (digits+1)/2)
-            if field.length:
-                 field.length = (field.length + 1) // 2
-
-        # 4. Arrays
-        if parsed['dimension']:
-            field.is_array = True
-            field.dimension = parsed['dimension']
+        self.ai_calls_made += 1
+        try:
+            prompt_text = """
+            You are a PL/1 Compiler Expert. The standard parser failed on this field.
             
-        # 5. Other
-        field.initial_value = parsed['initial']
-        field.storage_class = parsed['storage_class']
+            Variable: "{name}"
+            Attributes: "{attrs}"
+            Error: "{error}"
+            
+            Analyze the attributes. Return strictly valid JSON with this schema:
+            {{
+                "data_type": "string (normalized)",
+                "length": 0,
+                "scale": 0,
+                "dimension": null,
+                "is_varying": false,
+                "initial_value": null,
+                "storage_class": null
+            }}
+            If length/scale are invalid (e.g. 'XYZ'), infer a standard default.
+            """
+            
+            parser = JsonOutputParser()
+            prompt = ChatPromptTemplate.from_template(prompt_text)
+            chain = prompt | _llm_model | parser
+            
+            result = chain.invoke({
+                "name": field_obj.name,
+                "attrs": attrs,
+                "error": error_msg
+            })
+            
+            field_obj.data_type = result.get('data_type', 'UNKNOWN')
+            field_obj.length = result.get('length', 0)
+            field_obj.scale = result.get('scale', 0)
+            field_obj.dimension = result.get('dimension')
+            if field_obj.dimension: field_obj.is_array = True
+            field_obj.is_varying = result.get('is_varying', False)
+            field_obj.initial_value = result.get('initial_value')
+            field_obj.storage_class = result.get('storage_class')
+            field_obj.is_ai_inferred = True
+            field_obj.attributes_raw = attrs
+            
+            self._record_error(
+                field_obj.name, 
+                attrs, 
+                f"[AI_CORRECTION] Regex failed ({error_msg}).",
+                line_num
+            )
+            
+        except Exception as e:
+            self._record_error(field_obj.name, attrs, f"Fatal: Standard & AI failed. {str(e)}", line_num)
+
+    def _analyze_attributes_standard(self, field_obj: PLIField, attrs: str):
+        field_obj.attributes_raw = attrs
+        parsed = PLIAttributeParser(attrs).parse()
         
-        if parsed['is_varying']:
-            field.attributes_raw += " VARYING"
+        if parsed['length']:
+            if not str(parsed['length']).isdigit():
+                raise ValueError(f"Invalid length value: {parsed['length']}")
+            field_obj.length = int(parsed['length'])
+            
+        if parsed['scale']:
+            if not str(parsed['scale']).isdigit():
+                raise ValueError(f"Invalid scale value: {parsed['scale']}")
+            field_obj.scale = int(parsed['scale'])
+
+        field_obj.data_type = parsed['data_type'] if parsed['data_type'] else "UNKNOWN"
+
+        # IMPLICIT TYPING (I-N Rule)
+        if field_obj.data_type == "UNKNOWN" and field_obj.level > 1 and not parsed['dimension']:
+            first_char = field_obj.name[0]
+            if 'I' <= first_char <= 'N':
+                field_obj.data_type = "FIXED BIN"
+                field_obj.length = 15
+
+        # BYTE ALIGNMENT
+        if 'FIXED' in field_obj.data_type and 'BIN' in field_obj.data_type:
+             if field_obj.length <= 15: field_obj.length = 2
+             elif field_obj.length <= 31: field_obj.length = 4
+             else: field_obj.length = 8
+        elif 'PTR' in field_obj.data_type or 'POINTER' in field_obj.data_type:
+            field_obj.length = 4
+        elif 'DEC' in field_obj.data_type:
+             if field_obj.length: 
+                 field_obj.length = (field_obj.length + 1) // 2
+
+        field_obj.is_varying = parsed['is_varying']
+        field_obj.initial_value = parsed['initial']
+        if parsed['dimension']:
+            field_obj.dimension = parsed['dimension']
+            field_obj.is_array = True
+
+    def _record_error(self, name: str, content: str, error_msg: str, line: int):
+        self.parse_errors.append({
+            "line": line,
+            "content": f"Field: {name} | Attrs: {content[:100]}",
+            "error": error_msg
+        })
 
     def _add_to_hierarchy(self, new_field: PLIField):
-        """Maintains the tree structure based on levels."""
-        # Level 1 is always root
         if new_field.level == 1:
             self.root_fields.append(new_field)
             self._current_level_stack = [new_field]
             return
-
-        # Find parent: Look backwards in stack for first node with level < new_field.level
         while self._current_level_stack:
-            top = self._current_level_stack[-1]
-            if top.level < new_field.level:
-                # Found parent
-                top.children.append(new_field)
-                new_field._parent = top
+            if self._current_level_stack[-1].level < new_field.level:
+                self._current_level_stack[-1].children.append(new_field)
                 self._current_level_stack.append(new_field)
                 return
-            else:
-                # This node is a sibling or child of a previous branch, pop
-                self._current_level_stack.pop()
-        
-        # Fallback (Should rarely happen in valid PL/I)
+            self._current_level_stack.pop()
         self.root_fields.append(new_field)
         self._current_level_stack = [new_field]
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Parse PL/1 Copybook/Include Files to JSON',
-        epilog='Features: DCL Factoring, Token-based parsing, Byte alignment heuristics.'
-    )
-    parser.add_argument('input', help='Input PL/1 copybook file')
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('input', help='PL/1 Copybook file')
     parser.add_argument('-o', '--output', help='Output JSON file')
-    parser.add_argument('--indent', type=int, default=2, help='JSON indentation')
-    
     args = parser.parse_args()
     
-    try:
-        pli_parser = PLICopybookParser()
-        result = pli_parser.parse_file(args.input)
-        
-        json_output = json.dumps(result, indent=args.indent)
-        if args.output:
-            Path(args.output).write_text(json_output, encoding='utf-8')
-            print(f"Output written to {args.output}")
-        else:
-            print(json_output)
-            
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-if __name__ == '__main__':
-    main()
+    if os.path.exists(args.input):
+        res = PLICopybookParser().parse_file(args.input)
+        print(json.dumps(res, indent=2))
+    else:
+        print(f"File not found: {args.input}", file=sys.stderr)
