@@ -20,3 +20,4 @@ class SourceFileType(str, Enum):
     CSV = "csv"
     FIXED_LENGTH = "fixed_length"
     PARMLIB = "parmlib"
+    ASSEMBLY = "assembly"

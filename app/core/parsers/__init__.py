@@ -13,6 +13,8 @@ from app.core.parsers.bind_parser import BindParser
 from app.core.parsers.parmlib_parser import PARMLIBParser
 from app.core.parsers.rexx_parser import REXXParser
 from app.core.parsers.flatfile_parser import CSVParser, FixedLengthParser
+from app.core.parsers.assembly_parser import AssemblyParser # <--- 1. Import
+
 
 # Registry mapping file types to parser classes
 PARSER_REGISTRY: dict[str, type[BaseParser]] = {
@@ -29,6 +31,7 @@ PARSER_REGISTRY: dict[str, type[BaseParser]] = {
     SourceFileType.FIXED_LENGTH.value: FixedLengthParser,
     SourceFileType.PARMLIB.value: PARMLIBParser,
     SourceFileType.REXX.value: REXXParser,
+    SourceFileType.ASSEMBLY.value: AssemblyParser, 
 }
 
 def get_parser(file_type: str) -> BaseParser:
@@ -67,4 +70,6 @@ __all__ = [
     "CA7Parser",
     "BindParser",
     "PARMLIBParser",
+    "AssemblyParser",
+    "DclgenParser",
 ]
