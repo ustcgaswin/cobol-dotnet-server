@@ -173,44 +173,59 @@ class JCLParser(BaseParser):
                 "parser_instance": self
             }
 
+            keywords = ['JOB', 'PROC', 'PEND', 'EXEC', 'DD', 'SET', 'INCLUDE', 'IF', 'ELSE', 'ENDIF', 'THEN']
+
             for line in lines:
                 line = self._resolve_symbols(line)
-                is_concatenation = line.startswith(' ')
-                parts = re.split(r'\s+', line.strip(), maxsplit=2)
-                
-                if not parts: continue
-                
-                # Identify Statement Components
+
+                raw_parts = re.split(r'\s+', line.strip(), maxsplit=2)
+                if not raw_parts or not raw_parts[0]: continue
+
                 label = ""
                 op = ""
                 params = ""
 
-                if is_concatenation:
-                    op = "DD"
-                    params = parts[1] if len(parts) > 1 else parts[0]
-                elif len(parts) == 1:
-                    op = parts[0]
+                if len(raw_parts) >= 2 and raw_parts[1].upper() in keywords:
+                    label, op, params = (raw_parts[0], raw_parts[1].upper(), raw_parts[2] if len(raw_parts) > 2 else "")
+                
+                # Case: // OP PARAMS (No label)
+                elif raw_parts[0].upper() in keywords:
+                    op = raw_parts[0].upper()
+                    params = raw_parts[1] if len(raw_parts) > 1 else ""
+                
                 else:
-                    label, op, params = (parts[0], parts[1], parts[2] if len(parts) > 2 else "")
+                    op = "DD"
+                    label = ""
+                    params = line.strip()
 
-                # Handle PROC/PEND State directly (affects logic flow)
-                if op == 'PROC' and label != "":
-                    context["result"]["type"] = "PROC"
-                    context["in_proc_def"] = True
-                    context["current_proc_name"] = label
-                    context["result"]["definitions"][label] = {"steps": []}
-                    continue
+                if op == 'JOB':
+                    context["result"]["type"] = "JCL"
+                    context["result"]["job_name"] = label
+
+                elif op == 'PROC':
+                    if context["result"]["type"] != "JCL":
+                        context["result"]["type"] = "PROC"
+                    
+                    if label:
+                        context["in_proc_def"] = True
+                        context["current_proc_name"] = label
+                        context["result"]["definitions"][label] = {"steps": []}
+                        continue
+
                 elif op == 'PEND':
                     context["in_proc_def"] = False
+                    context["current_proc_name"] = ""
                     continue
 
-                # Execute Registered Parser
+                elif op in ['IF', 'ELSE', 'ENDIF', 'THEN']:
+                    continue
+
                 stmt_parser_class = StatementRegistry.get_parser(op)
                 if stmt_parser_class:
                     stmt_parser_class().parse(label, params, context)
                 else:
                     self._unrecognized.append({"line": line, "reason": f"Unknown Op: {op}"})
-            
+
             context["result"]["_unrecognized"] = self._unrecognized
             return context["result"]
 
