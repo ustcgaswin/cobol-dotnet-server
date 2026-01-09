@@ -22,6 +22,7 @@ PARSER_REGISTRY: dict[str, type[BaseParser]] = {
     SourceFileType.PLI_COPYBOOK.value: PLICopybookParser,
     SourceFileType.DCLGEN.value: DclgenParser,  
     SourceFileType.JCL.value: JCLParser,
+    SourceFileType.PROC.value: JCLParser,
     SourceFileType.CA7.value: CA7Parser,
     SourceFileType.BIND.value: BindParser,
     SourceFileType.CSV.value: CSVParser,
