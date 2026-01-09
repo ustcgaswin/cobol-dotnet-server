@@ -28,6 +28,17 @@ from app.core.exceptions.parser import (
     SchemaInferenceError,
     UnrecognizedClauseError,
     UnsupportedFeatureError,
+    # ParmlibParseError,
+    # InvalidParmlibStatementError,
+    # UnrecognizedParmlibParameterError,
+    # UtilityCommandParseError,
+    PARMLIBParseError,
+    InvalidStatementError,
+    SectionParseError,
+    UtilityCommandError,
+    REXXParseError,
+    InvalidREXXSyntaxError,
+    UnsupportedREXXFeatureError,
 )
 from app.core.exceptions.project import (
     ProjectCreationError,
@@ -76,6 +87,15 @@ __all__ = [
     "SchemaInferenceError",
     "InvalidLayoutError",
     "EncodingDetectionError",
+    # ParmLib Parser
+    "PARMLIBParseError",
+    "InvalidStatementError",
+    "SectionParseError",
+    "UtilityCommandError",
+    # REXX Parser
+    "REXXParseError",
+    "InvalidREXXSyntaxError",
+    "UnsupportedREXXFeatureError",
     # Project
     "ProjectException",
     "ProjectNotFoundException",
