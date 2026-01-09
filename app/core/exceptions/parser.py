@@ -104,3 +104,55 @@ class InvalidLayoutError(FlatFileParseError):
 class EncodingDetectionError(FlatFileParseError):
     """Raised when encoding cannot be determined."""
     pass
+
+# class ParmlibParseError(ParseError):
+#     """Base exception for PARMLIB parsing errors."""
+#     pass
+
+
+# class InvalidParmlibStatementError(ParmlibParseError):
+#     """Raised when a PARMLIB statement has invalid syntax or format."""
+#     pass
+
+
+# class UnrecognizedParmlibParameterError(ParmlibParseError):
+#     """Raised when an unknown or unsupported parameter is encountered."""
+#     pass
+
+
+# class UtilityCommandParseError(ParmlibParseError):
+#     """Raised when parsing a utility command (e.g., IDCAMS, SORT) fails."""
+    # pass
+
+class PARMLIBParseError(ParseError):
+    """Base exception for PARMLIB parsing failures."""
+    pass
+
+
+class InvalidStatementError(PARMLIBParseError):
+    """Raised when a PARMLIB statement has invalid syntax."""
+    pass
+
+
+class SectionParseError(PARMLIBParseError):
+    """Raised when section parsing fails."""
+    pass
+
+
+class UtilityCommandError(PARMLIBParseError):
+    """Raised when utility command parsing fails."""
+    pass
+
+class REXXParseError(ParseError):
+    """Raised when REXX parsing fails."""
+    pass
+
+
+class InvalidREXXSyntaxError(ParseError):
+    """Raised when invalid REXX syntax is encountered."""
+    pass
+
+
+class UnsupportedREXXFeatureError(ParseError):
+    """Raised when an unsupported REXX feature is encountered."""
+    pass
