@@ -24,6 +24,7 @@ dependencies = [
     "legacylens-cobol-parser>=0.1.20",
     "pypdf>=6.5.0",
     "mlflow>=3.8.1",
+    "ebcdic>=1.1.1",
 ]
 
 [dependency-groups]
