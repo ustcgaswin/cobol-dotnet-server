@@ -19,3 +19,4 @@ class SourceFileType(str, Enum):
     BIND = "bind"
     CSV = "csv"
     FIXED_LENGTH = "fixed_length"
+    PARMLIB = "parmlib"
