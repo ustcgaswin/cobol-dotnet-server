@@ -105,24 +105,6 @@ class EncodingDetectionError(FlatFileParseError):
     """Raised when encoding cannot be determined."""
     pass
 
-# class ParmlibParseError(ParseError):
-#     """Base exception for PARMLIB parsing errors."""
-#     pass
-
-
-# class InvalidParmlibStatementError(ParmlibParseError):
-#     """Raised when a PARMLIB statement has invalid syntax or format."""
-#     pass
-
-
-# class UnrecognizedParmlibParameterError(ParmlibParseError):
-#     """Raised when an unknown or unsupported parameter is encountered."""
-#     pass
-
-
-# class UtilityCommandParseError(ParmlibParseError):
-#     """Raised when parsing a utility command (e.g., IDCAMS, SORT) fails."""
-    # pass
 
 class PARMLIBParseError(ParseError):
     """Base exception for PARMLIB parsing failures."""
@@ -156,3 +138,72 @@ class InvalidREXXSyntaxError(ParseError):
 class UnsupportedREXXFeatureError(ParseError):
     """Raised when an unsupported REXX feature is encountered."""
     pass
+
+class EmptyFileError(ParseError):
+    """Exception raised when a file is empty or contains no valid data.
+    
+    Attributes:
+        message: Description of the error
+        filename: Path to the file being parsed
+    """
+    
+    def __init__(self, message: str, filename: str = None):
+        super().__init__(message, filename)
+
+
+class InvalidLayoutError(ParseError):
+    """Exception raised when a fixed-length file layout is invalid.
+    
+    Attributes:
+        message: Description of the error
+        filename: Path to the file being parsed
+    """
+    
+    def __init__(self, message: str, filename: str = None):
+        super().__init__(message, filename)
+
+
+class SchemaInferenceError(ParseError):
+    """Exception raised when schema inference fails.
+    
+    Attributes:
+        message: Description of the error
+        filename: Path to the file being parsed
+        column_name: Column where inference failed
+    """
+    
+    def __init__(self, message: str, filename: str = None, column_name: str = None):
+        super().__init__(message, filename)
+        self.column_name = column_name
+
+
+class LLMAugmentationError(ParseError):
+    """Exception raised when LLM augmentation fails.
+    
+    Attributes:
+        message: Description of the error
+        filename: File being augmented
+        retry_count: Number of retries attempted
+        llm_error: Original error from LLM call
+    """
+    
+    def __init__(
+        self,
+        message: str,
+        filename: str = None,
+        retry_count: int = None,
+        llm_error: Exception = None
+    ):
+        super().__init__(message, filename)
+        self.retry_count = retry_count
+        self.llm_error = llm_error
+    
+    def __str__(self):
+        parts = [self.args[0]]
+        if self.filename:
+            parts.append(f"File: {self.filename}")
+        if self.retry_count:
+            parts.append(f"Retries: {self.retry_count}")
+        if self.llm_error:
+            parts.append(f"LLM Error: {str(self.llm_error)[:100]}")
+        return " | ".join(parts)
