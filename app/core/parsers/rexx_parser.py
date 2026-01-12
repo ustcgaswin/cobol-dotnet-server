@@ -15,15 +15,19 @@ Enhanced with:
 - EBCDIC encoding support
 - Unrecognized content tracking
 - Parse error reporting
+- LLM-powered file analysis and documentation
+- RAG-enhanced understanding of REXX patterns
 """
 
 import json
 import logging
 import re
+import asyncio
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.exceptions.parser import (
     InvalidREXXSyntaxError,
@@ -225,6 +229,9 @@ class REXXParser(BaseParser):
         'LMOPEN', 'LMCLOSE', 'LMFREE', 'LMMOVE', 'LMCOPY'
     }
     
+    AUGMENTATION_MAX_RETRIES = 3
+    AUGMENTATION_TIMEOUT = 60  # seconds per LLM call
+
     def __init__(self):
         """Initialize REXX parser"""
         self.lines: List[str] = []
@@ -239,6 +246,7 @@ class REXXParser(BaseParser):
         self.file_name: str = ""
         self._unrecognized: List[Dict[str, Any]] = []
         self._warnings: List[str] = []
+        self._source: str = ""
         
         logger.info("Initialized REXXParser")
     
@@ -306,6 +314,7 @@ class REXXParser(BaseParser):
         """
         self.file_name = file_name
         self.lines = content.split('\n')
+        self._source = content  # NEW: Store raw source
         self._reset_state()
         
         logger.debug(f"Parsing REXX content: {len(self.lines)} lines")
@@ -340,6 +349,240 @@ class REXXParser(BaseParser):
                 message=f"REXX parsing failed: {e}",
                 filename=file_name
             )
+
+    def _create_augmentation_agent(self):
+        """Create LangGraph ReAct agent with REXX RAG tool access.
+        
+        The agent can decide when to search REXX documentation for context.
+        """
+        from langgraph.prebuilt import create_react_agent
+        from app.config.llm_config import llm
+        from app.core.tools.rag_tools import search_rexx_docs
+        
+        return create_react_agent(model=llm, tools=[search_rexx_docs])
+    
+    async def augment(self, parsed_data: dict) -> dict:
+        """Augment parsed REXX data with LLM-generated metadata.
+        
+        Adds:
+        - description: Script-level description of the REXX script's purpose
+        - llm_summary: Procedure-level summaries
+        - llm_orchestration_pattern: Overall orchestration pattern analysis
+        
+        Args:
+            parsed_data: The parsed REXX JSON structure
+            
+        Returns:
+            The augmented parsed data with LLM-generated fields
+        """
+        agent = self._create_augmentation_agent()
+        
+        # 1. Add script-level description
+        try:
+            parsed_data["description"] = await self._augment_rexx_script(agent, parsed_data)
+        except Exception as e:
+            logger.error(f"Failed to augment script description: {e}")
+            parsed_data["description"] = None
+            parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
+            parsed_data["_augmentation_errors"].append(f"Script description failed: {e}")
+        
+        # 2. Add procedure summaries
+        for proc in parsed_data.get('procedures', []):
+            try:
+                # Extract procedure code
+                proc_code = self._extract_procedure_code(
+                    proc.get("name", ""),
+                    proc.get("startLine", 0),
+                    proc.get("endLine", 0)
+                )
+                
+                proc["llm_summary"] = await self._augment_procedure(
+                    agent, proc, parsed_data, proc_code
+                )
+            except Exception as e:
+                logger.error(f"Failed to augment procedure {proc.get('name')}: {e}")
+                proc["llm_summary"] = None
+                parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
+                parsed_data["_augmentation_errors"].append(
+                    f"Procedure {proc.get('name')} failed: {e}"
+                )
+        
+        # 3. Add orchestration pattern analysis (if external calls exist)
+        external_calls = parsed_data.get('externalCalls', {}).get('calls', [])
+        if external_calls and len(external_calls) > 0:
+            try:
+                parsed_data["llm_orchestration_pattern"] = await self._analyze_orchestration(
+                    agent, parsed_data
+                )
+            except Exception as e:
+                logger.error(f"Failed to analyze orchestration pattern: {e}")
+                parsed_data["llm_orchestration_pattern"] = None
+                parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
+                parsed_data["_augmentation_errors"].append(f"Orchestration analysis failed: {e}")
+        
+        return parsed_data
+    
+    async def _augment_rexx_script(self, agent, parsed_data: dict) -> str:
+        """Generate script-level description using LangGraph agent.
+        
+        The agent may use RAG tool to understand REXX constructs.
+        """
+        file_name = parsed_data.get("fileName", "UNKNOWN")
+        metadata = parsed_data.get("metadata", {})
+        deps = parsed_data.get("dependencies", {})
+        
+        # Build context from parsed data
+        total_lines = metadata.get("totalLines", 0)
+        total_procs = metadata.get("totalProcedures", 0)
+        
+        # Extract key dependencies
+        cobol_programs = deps.get("cobolPrograms", [])[:5]
+        jcl_jobs = deps.get("jclJobs", [])[:3]
+        datasets = deps.get("datasets", [])[:5]
+        
+        prompt = f"""Analyze this REXX script and provide a concise business description.
+
+Script: {file_name}
+Total Lines: {total_lines}
+Procedures: {total_procs}
+COBOL Programs Called: {', '.join(cobol_programs) if cobol_programs else 'None'}
+JCL Jobs Submitted: {', '.join(jcl_jobs) if jcl_jobs else 'None'}
+Datasets Accessed: {', '.join(datasets) if datasets else 'None'}
+
+If you need to understand specific REXX constructs or commands, use the search tool.
+
+Provide a 1-2 sentence description of what this script does and its business purpose.
+Return ONLY the description, no additional text."""
+
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            return result["messages"][-1].content.strip()
+        
+        return await invoke_with_retry()
+    
+    def _extract_procedure_code(
+        self, proc_name: str, start_line: int, end_line: int
+    ) -> str:
+        """Extract the code for a procedure from the stored source.
+        
+        Args:
+            proc_name: Name of the procedure to extract
+            start_line: Starting line number (1-indexed)
+            end_line: Ending line number (1-indexed)
+            
+        Returns:
+            The code content of the procedure
+        """
+        if not self._source or start_line == 0:
+            return ""
+        
+        lines = self._source.split('\n')
+        
+        # Adjust for 1-indexed line numbers
+        start_idx = max(0, start_line - 1)
+        end_idx = min(len(lines), end_line)
+        
+        if start_idx >= len(lines):
+            return ""
+        
+        proc_lines = lines[start_idx:end_idx]
+        return '\n'.join(proc_lines)
+    
+    async def _augment_procedure(
+        self, agent, procedure: dict, parsed_data: dict, proc_code: str
+    ) -> str:
+        """Generate procedure summary using LangGraph agent.
+        
+        The agent may use RAG tool for unfamiliar REXX statements.
+        """
+        proc_name = procedure.get("name", "UNKNOWN")
+        file_name = parsed_data.get("fileName", "UNKNOWN")
+        params = procedure.get("parameters", [])
+        
+        prompt = f"""Analyze this REXX procedure and provide a brief summary.
+
+Script: {file_name}
+Procedure: {proc_name}
+Parameters: {', '.join(params) if params else 'None'}
+
+Code:
+{proc_code if proc_code else "(Code not available)"}
+
+If you need to understand specific REXX statements or commands, use the search tool.
+
+Provide a 1-sentence summary of what this procedure does.
+This will be used for documentation, so be concise and action-oriented.
+Return ONLY the summary, no questions or additional text."""
+
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            return result["messages"][-1].content.strip()
+        
+        return await invoke_with_retry()
+    
+    async def _analyze_orchestration(
+        self, agent, parsed_data: dict
+    ) -> str:
+        """Analyze the orchestration pattern of external calls.
+        
+        The agent may use RAG tool for understanding orchestration patterns.
+        """
+        file_name = parsed_data.get("fileName", "UNKNOWN")
+        external_calls = parsed_data.get('externalCalls', {})
+        summary = external_calls.get('summary', {})
+        calls = external_calls.get('calls', [])
+        
+        # Build call sequence context
+        call_sequence = []
+        for call in calls[:10]:  # Limit to first 10 for context
+            call_sequence.append(
+                f"Line {call.get('lineNumber')}: {call.get('callType')} - {call.get('programName')}"
+            )
+        
+        prompt = f"""Analyze this REXX script's orchestration pattern and describe how it coordinates external programs.
+
+Script: {file_name}
+COBOL Programs: {summary.get('cobolPrograms', 0)}
+JCL Jobs: {summary.get('jclJobs', 0)}
+TSO Commands: {summary.get('tsoCommands', 0)}
+ISPF Commands: {summary.get('ispfCommands', 0)}
+
+Call Sequence:
+{chr(10).join(call_sequence) if call_sequence else "(No external calls)"}
+
+If you need to understand orchestration patterns or command sequences, use the search tool.
+
+Provide a 1-sentence description of the orchestration pattern this script follows.
+Focus on the workflow: what gets executed in what order and why.
+Return ONLY the pattern description, no additional text."""
+
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            return result["messages"][-1].content.strip()
+        
+        return await invoke_with_retry()
+  
     
     def _detect_and_decode(self, raw_bytes: bytes) -> Tuple[str, str]:
         """Detect encoding with mainframe EBCDIC support.
