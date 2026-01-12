@@ -1,22 +1,25 @@
 """
 Enterprise-grade flat file parsers for CSV and Fixed-Length files.
-Integrated with the mainframe modernization parser framework.
+Integrated with mainframe modernization parser framework.
 
-Enhanced with:
-- Structured exception handling
-- Comprehensive logging
+Features:
+- Comprehensive logging and error tracking
 - EBCDIC encoding support
-- Unrecognized content tracking
-- Parse error reporting
+- LLM-powered file analysis and documentation
+- RAG-enhanced understanding of flat file patterns
 """
 
+import asyncio
 import csv
 import io
+import json
 import logging
 import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.exceptions.parser import (
     CSVParseError,
@@ -24,11 +27,12 @@ from app.core.exceptions.parser import (
     EncodingDetectionError,
     FixedLengthParseError,
     InvalidLayoutError,
+    LLMAugmentationError,
     SchemaInferenceError,
 )
 from app.core.parsers.base import BaseParser
 
-#configure logging
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -41,16 +45,21 @@ logger = logging.getLogger('flatfile_parser')
 # ============================================================================
 
 class CSVParser(BaseParser):
-    """Enterprise-grade CSV file parser with deep analysis capabilities."""
+    """Enterprise-grade CSV file parser with LLM-powered analysis."""
     
     FILE_TYPE = "csv"
     EBCDIC_CODEPAGES = ['cp1047', 'cp037', 'cp500', 'cp875']
+    
+    # LLM Augmentation Configuration
+    AUGMENTATION_MAX_RETRIES = 3
+    AUGMENTATION_TIMEOUT = 45  # seconds
     
     def __init__(
         self, 
         max_records: int = 100,
         return_all_records: bool = False,
-        skip_invalid_rows: bool = True
+        skip_invalid_rows: bool = True,
+        llm_sample_size: int = 15
     ):
         """Initialize CSV parser.
         
@@ -58,17 +67,19 @@ class CSVParser(BaseParser):
             max_records: Maximum number of records to return (default: 100)
             return_all_records: If True, return all records regardless of max_records
             skip_invalid_rows: If True, skip invalid rows and track them as warnings
+            llm_sample_size: Number of sample records to send to LLM (default: 15)
         """
         self.max_records = max_records
         self.return_all_records = return_all_records
         self.skip_invalid_rows = skip_invalid_rows
+        self.llm_sample_size = llm_sample_size
         self.max_sample_records = None if return_all_records else max_records
         self._unrecognized = []
         self._warnings = []
         
         logger.info(
             f"Initialized CSVParser: max_records={max_records}, "
-            f"return_all={return_all_records}, skip_invalid={skip_invalid_rows}"
+            f"return_all={return_all_records}, llm_sample_size={llm_sample_size}"
         )
     
     def parse_file(self, filepath: str, **kwargs) -> dict:
@@ -79,23 +90,7 @@ class CSVParser(BaseParser):
             **kwargs: Additional parameters (max_records, return_all_records)
             
         Returns:
-            Dictionary containing parsed data with structure:
-            {
-                "file_type": "csv",
-                "source_file": filename,
-                "encoding": detected encoding,
-                "fileType": "CSV",
-                "fileName": filename,
-                "delimiter": detected delimiter,
-                "hasHeader": boolean,
-                "totalRecords": count,
-                "schema": [...],
-                "records": [...],
-                "dataQuality": {...},
-                "migrationInsights": {...},
-                "_warnings": [...],
-                "_unrecognized": [...]
-            }
+            Dictionary containing parsed data
             
         Raises:
             FileNotFoundError: If file doesn't exist
@@ -109,7 +104,7 @@ class CSVParser(BaseParser):
         
         logger.info(f"Parsing CSV file: {filepath} (size: {path.stat().st_size} bytes)")
         
-        # Reset tracking lists for each parse
+        # Reset tracking lists
         self._unrecognized = []
         self._warnings = []
         
@@ -119,30 +114,28 @@ class CSVParser(BaseParser):
         effective_max_records = None if return_all_records else max_records
         
         try:
-            # Read file with encoding detection
+            # Read and decode file
             raw_bytes = path.read_bytes()
             content, encoding = self._detect_and_decode(raw_bytes)
             logger.info(f"Detected encoding: {encoding}")
             
-            # Parse using string parsing logic
+            # Parse content
             result = self._parse_content(
                 content, 
                 filename=path.name,
                 max_sample_records=effective_max_records if effective_max_records else 999999999
             )
             
-            # Add framework-required fields
+            # Add framework fields
             result['encoding'] = encoding
             result['file_type'] = self.FILE_TYPE
             result['source_file'] = path.name
-            
-            # Add error tracking fields
             result['_warnings'] = self._warnings
             result['_unrecognized'] = self._unrecognized
             
             logger.info(
                 f"Successfully parsed {filepath}: {result['totalRecords']} records, "
-                f"{len(self._warnings)} warnings, {len(self._unrecognized)} unrecognized patterns"
+                f"{len(self._warnings)} warnings, {len(self._unrecognized)} unrecognized"
             )
             
             return result
@@ -157,6 +150,188 @@ class CSVParser(BaseParser):
                 filename=path.name
             )
     
+    async def augment(self, parsed_data: dict) -> dict:
+        """Augment parsed CSV data with LLM-generated insights.
+        
+        Adds comprehensive analysis including:
+        - File description and business purpose
+        - Business domain classification
+        - Per-column analysis and significance
+        - Data quality assessment
+        - Migration considerations
+        
+        Args:
+            parsed_data: The parsed CSV JSON structure
+            
+        Returns:
+            The augmented parsed data with LLM insights in 'llm_analysis' key
+            
+        Raises:
+            LLMAugmentationError: If LLM analysis fails after retries
+        """
+        filename = parsed_data.get('source_file', 'unknown')
+        logger.info(f"Starting LLM augmentation for: {filename}")
+        
+        try:
+            agent = self._create_augmentation_agent()
+            llm_insights = await self._augment_file(agent, parsed_data)
+            
+            # Validate response structure
+            required_keys = ["file_description", "business_domain", "column_analysis"]
+            missing_keys = [k for k in required_keys if k not in llm_insights]
+            
+            if missing_keys:
+                logger.warning(f"LLM response missing keys: {missing_keys}")
+                self._warnings.append(
+                    f"LLM analysis incomplete: missing {', '.join(missing_keys)}"
+                )
+            
+            parsed_data["llm_analysis"] = llm_insights
+            logger.info(f"Successfully augmented {filename} with LLM insights")
+            
+            return parsed_data
+            
+        except json.JSONDecodeError as e:
+            error_msg = f"LLM returned invalid JSON: {e}"
+            logger.error(error_msg)
+            
+            # Continue with partial data
+            parsed_data["llm_analysis"] = None
+            parsed_data.setdefault("_augmentation_errors", []).append(error_msg)
+            logger.warning(f"Continuing without LLM analysis for {filename}")
+            
+            return parsed_data
+            
+        except Exception as e:
+            error_msg = f"LLM augmentation failed: {e}"
+            logger.error(error_msg, exc_info=True)
+            
+            # Continue with partial data
+            parsed_data["llm_analysis"] = None
+            parsed_data.setdefault("_augmentation_errors", []).append(str(e))
+            logger.warning(f"Continuing without LLM analysis for {filename}")
+            
+            return parsed_data
+    
+    def _create_augmentation_agent(self):
+        """Create LangGraph ReAct agent with RAG tool access."""
+        from langgraph.prebuilt import create_react_agent
+        from app.config.llm_config import llm
+        from app.core.tools.rag_tools import search_flatfile_docs
+        
+        return create_react_agent(model=llm, tools=[search_flatfile_docs])
+    
+    async def _augment_file(self, agent, parsed_data: dict) -> dict:
+        """Generate comprehensive file analysis using LLM.
+        
+        Args:
+            agent: LangGraph agent with RAG tool access
+            parsed_data: Parsed file data
+            
+        Returns:
+            Dict with comprehensive analysis
+        """
+        prompt = self._build_file_analysis_prompt(parsed_data)
+        
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            response_text = result["messages"][-1].content.strip()
+            
+            # Extract JSON from markdown if present
+            if "```json" in response_text:
+                json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+            elif "```" in response_text:
+                response_text = response_text.replace("```", "").strip()
+            
+            return json.loads(response_text)
+        
+        return await invoke_with_retry()
+    
+    def _build_file_analysis_prompt(self, parsed_data: dict) -> str:
+        """Build comprehensive prompt for CSV analysis."""
+        filename = parsed_data.get("fileName", "unknown")
+        delimiter = parsed_data.get("delimiter", ",")
+        total_records = parsed_data.get("totalRecords", 0)
+        has_header = parsed_data.get("hasHeader", False)
+        schema = parsed_data.get("schema", [])
+        records = parsed_data.get("records", [])[:self.llm_sample_size]
+        data_quality = parsed_data.get("dataQuality", {})
+        
+        column_info = []
+        for col in schema:
+            column_info.append({
+                "name": col["columnName"],
+                "type": col["dataType"],
+                "nullable": col["nullable"],
+                "dotnet_type": col["suggestedDotNetType"]
+            })
+        
+        return f"""You are analyzing a CSV flat file from a mainframe modernization project.
+
+FILE METADATA:
+- Filename: {filename}
+- Delimiter: '{delimiter}'
+- Total Records: {total_records:,}
+- Has Header Row: {has_header}
+- Encoding: {parsed_data.get('encoding', 'unknown')}
+
+COLUMN SCHEMA ({len(schema)} columns):
+{json.dumps(column_info, indent=2)}
+
+DATA QUALITY METRICS:
+- Missing Values: {data_quality.get('missingValues', 0)}
+- Invalid Rows: {data_quality.get('invalidRows', 0)}
+- Inconsistent Columns: {data_quality.get('inconsistentColumnRows', 0)}
+
+SAMPLE DATA (first {len(records)} of {total_records} records):
+{json.dumps(records, indent=2)}
+
+If you need information about CSV formats, data patterns, or mainframe file structures, use the search_flatfile_docs tool.
+
+PROVIDE A COMPREHENSIVE ANALYSIS with the following JSON structure:
+{{
+  "file_description": "2-3 sentence description of what this file contains and its business purpose",
+  
+  "business_domain": "The business area (e.g., 'Customer Master Data', 'Financial Transactions', 'Product Inventory')",
+  
+  "column_analysis": [
+    {{
+      "column_name": "exact column name from schema",
+      "purpose": "What this column represents",
+      "data_pattern": "Observed pattern (e.g., 'Sequential numeric IDs', 'Email addresses', 'ISO dates')",
+      "business_significance": "Why this column matters for business operations"
+    }}
+    // IMPORTANT: Include one entry for EVERY column in the schema above
+  ],
+  
+  "data_quality_assessment": {{
+    "overall_quality": "Excellent/Good/Fair/Poor",
+    "issues_found": ["Specific quality issues observed in the data"],
+    "recommendations": ["Specific recommendations for data cleansing or validation"]
+  }},
+  
+  "migration_considerations": {{
+    "complexity": "Low/Medium/High",
+    "key_challenges": ["Specific challenges for migrating this file to .NET"],
+    "suggested_dotnet_structure": "Recommended .NET class or database table structure"
+  }},
+  
+  "notable_patterns": [
+    "Any interesting patterns, relationships, or anomalies discovered in the data"
+  ]
+}}
+
+CRITICAL: Return ONLY the JSON object, no markdown formatting, no additional text, no code blocks."""
+        
     def _detect_and_decode(self, raw_bytes: bytes) -> tuple[str, str]:
         """Detect encoding with mainframe EBCDIC support.
         
@@ -169,7 +344,7 @@ class CSVParser(BaseParser):
         Raises:
             EncodingDetectionError: If encoding cannot be determined
         """
-        # Try UTF-8 first (most common)
+        # Try UTF-8 first
         try:
             content = raw_bytes.decode('utf-8')
             logger.debug("Encoding detected: utf-8")
@@ -185,11 +360,10 @@ class CSVParser(BaseParser):
         except UnicodeDecodeError:
             pass
         
-        # Try EBCDIC codepages (mainframe files)
+        # Try EBCDIC
         for codepage in self.EBCDIC_CODEPAGES:
             try:
                 content = raw_bytes.decode(codepage)
-                # Heuristic: Check if content looks reasonable for CSV
                 if any(c in content for c in [',', ';', '\t', '|', '\n']):
                     logger.debug(f"Encoding detected: {codepage} (EBCDIC)")
                     return content, codepage
@@ -203,10 +377,7 @@ class CSVParser(BaseParser):
             encoding = detected.get('encoding', 'utf-8')
             confidence = detected.get('confidence', 0)
             
-            logger.warning(
-                f"Using chardet fallback: {encoding} (confidence: {confidence:.2%})"
-            )
-            
+            logger.warning(f"Using chardet fallback: {encoding} (confidence: {confidence:.2%})")
             content = raw_bytes.decode(encoding, errors='replace')
             return content, encoding
         except Exception as e:
@@ -236,6 +407,7 @@ class CSVParser(BaseParser):
             EmptyFileError: If file is empty
             CSVParseError: If parsing fails
         """
+        # [Implementation from previous flatfile_parser.py remains the same]
         # Normalize line endings
         content = content.replace('\r\n', '\n').replace('\r', '\n')
         
@@ -244,7 +416,6 @@ class CSVParser(BaseParser):
             content = content[1:]
             logger.debug("Stripped BOM from file content")
         
-        # Split into lines and filter empty
         lines = [line for line in content.split('\n') if line.strip()]
         
         if not lines:
@@ -255,11 +426,9 @@ class CSVParser(BaseParser):
         
         logger.debug(f"File contains {len(lines)} non-empty lines")
         
-        # Detect delimiter
         delimiter = self._detect_delimiter(content)
         logger.info(f"Detected delimiter: {repr(delimiter)}")
         
-        # Parse CSV using the csv module
         try:
             reader = csv.reader(io.StringIO(content), delimiter=delimiter)
             rows = []
@@ -281,11 +450,9 @@ class CSVParser(BaseParser):
         
         logger.debug(f"Parsed {len(rows)} data rows")
         
-        # Determine if header exists
         has_header = self._detect_header(rows)
         logger.info(f"Header detection: {has_header}")
         
-        # Extract headers
         if has_header:
             headers = [h.strip() for h in rows[0]]
             data_rows = rows[1:]
@@ -301,16 +468,9 @@ class CSVParser(BaseParser):
         
         logger.debug(f"Schema: {len(headers)} columns, {len(data_rows)} data rows")
         
-        # Analyze schema
         schema = self._analyze_schema(headers, data_rows)
-        
-        # Parse records (with error tracking)
         parsed_records = self._parse_records(headers, data_rows)
-        
-        # Analyze data quality
         data_quality = self._analyze_data_quality(data_rows, headers)
-        
-        # Generate migration insights
         migration_insights = self._generate_migration_insights(schema, data_quality)
         
         return {
@@ -326,7 +486,6 @@ class CSVParser(BaseParser):
         }
     
     def _detect_delimiter(self, content: str) -> str:
-        """Detect the delimiter used in the CSV file."""
         lines = content.split('\n')[:5]
         sample = '\n'.join(lines)
         
@@ -350,7 +509,6 @@ class CSVParser(BaseParser):
         return ','
     
     def _detect_header(self, rows: List[List[str]]) -> bool:
-        """Detect if the first row is a header."""
         if len(rows) < 2:
             return True
         
@@ -374,7 +532,6 @@ class CSVParser(BaseParser):
         return False
     
     def _analyze_schema(self, headers: List[str], data_rows: List[List[str]]) -> List[Dict[str, Any]]:
-        """Analyze and infer schema for each column."""
         schema = []
         
         for idx, header in enumerate(headers):
@@ -403,7 +560,6 @@ class CSVParser(BaseParser):
         return schema
     
     def _infer_data_type(self, values: List[str]) -> tuple:
-        """Infer data type from column values."""
         non_empty_values = [v.strip() for v in values if v.strip()]
         
         if not non_empty_values:
@@ -427,7 +583,6 @@ class CSVParser(BaseParser):
         return "STRING", nullable
     
     def _is_numeric(self, value: str) -> bool:
-        """Check if value is numeric."""
         try:
             float(value.strip())
             return True
@@ -435,7 +590,6 @@ class CSVParser(BaseParser):
             return False
     
     def _is_integer(self, value: str) -> bool:
-        """Check if value is an integer."""
         try:
             val = value.strip()
             int(val)
@@ -444,7 +598,6 @@ class CSVParser(BaseParser):
             return False
     
     def _is_decimal(self, value: str) -> bool:
-        """Check if value is a decimal number."""
         try:
             Decimal(value.strip())
             return True
@@ -452,7 +605,6 @@ class CSVParser(BaseParser):
             return False
     
     def _is_date(self, value: str) -> bool:
-        """Check if value matches common date patterns."""
         date_patterns = [
             r'^\d{4}-\d{2}-\d{2}$',
             r'^\d{2}/\d{2}/\d{4}$',
@@ -462,7 +614,6 @@ class CSVParser(BaseParser):
         return any(re.match(pattern, value.strip()) for pattern in date_patterns)
     
     def _map_to_dotnet_type(self, data_type: str) -> str:
-        """Map inferred data type to .NET type."""
         type_mapping = {
             "STRING": "string",
             "INTEGER": "long",
@@ -473,17 +624,13 @@ class CSVParser(BaseParser):
         return type_mapping.get(data_type, "string")
     
     def _parse_records(self, headers: List[str], data_rows: List[List[str]]) -> List[Dict[str, Any]]:
-        """Parse data rows into structured records with error tracking."""
         records = []
         expected_columns = len(headers)
         
         for row_num, row in enumerate(data_rows, 1):
             try:
-                # Check for column count mismatch
                 if len(row) != expected_columns:
-                    error_msg = (
-                        f"Column count mismatch: expected {expected_columns}, got {len(row)}"
-                    )
+                    error_msg = f"Column count mismatch: expected {expected_columns}, got {len(row)}"
                     self._unrecognized.append({
                         "line": row_num,
                         "content": str(row)[:100],
@@ -501,7 +648,6 @@ class CSVParser(BaseParser):
                     if value == '':
                         record[header] = None
                     else:
-                        # Type conversion with error handling
                         try:
                             if self._is_integer(value):
                                 record[header] = int(value)
@@ -511,7 +657,7 @@ class CSVParser(BaseParser):
                                 record[header] = value
                         except Exception as e:
                             logger.debug(f"Row {row_num}, Column '{header}': Type conversion failed - {e}")
-                            record[header] = value  # Keep as string
+                            record[header] = value
                 
                 records.append(record)
                 
@@ -535,7 +681,6 @@ class CSVParser(BaseParser):
         return records
     
     def _analyze_data_quality(self, data_rows: List[List[str]], headers: List[str]) -> Dict[str, Any]:
-        """Analyze data quality issues."""
         missing_values = 0
         invalid_rows = 0
         inconsistent_column_rows = 0
@@ -556,7 +701,6 @@ class CSVParser(BaseParser):
         }
     
     def _generate_migration_insights(self, schema: List[Dict], data_quality: Dict) -> Dict[str, Any]:
-        """Generate migration-relevant insights."""
         fields_needing_cleansing = []
         recommendations = []
         
@@ -580,23 +724,27 @@ class CSVParser(BaseParser):
             "recommendedTransformations": recommendations
         }
 
-
 # ============================================================================
 # Fixed-Length Parser Implementation
 # ============================================================================
 
 class FixedLengthParser(BaseParser):
-    """Enterprise-grade fixed-length flat file parser with deep analysis."""
+    """Enterprise-grade fixed-length flat file parser with LLM-powered analysis."""
     
     FILE_TYPE = "fixed_length"
     EBCDIC_CODEPAGES = ['cp1047', 'cp037', 'cp500', 'cp875']
+    
+    # LLM Augmentation Configuration
+    AUGMENTATION_MAX_RETRIES = 3
+    AUGMENTATION_TIMEOUT = 45  # seconds
     
     def __init__(
         self,
         max_records: int = 100,
         return_all_records: bool = False,
         layout: Optional[List[Dict[str, Any]]] = None,
-        skip_invalid_rows: bool = True
+        skip_invalid_rows: bool = True,
+        llm_sample_size: int = 15
     ):
         """Initialize Fixed-Length parser.
         
@@ -605,19 +753,21 @@ class FixedLengthParser(BaseParser):
             return_all_records: If True, return all records regardless of max_records
             layout: Optional field layout specification
             skip_invalid_rows: If True, skip invalid rows and track them as warnings
+            llm_sample_size: Number of sample records to send to LLM (default: 15)
         """
         self.max_records = max_records
         self.return_all_records = return_all_records
         self.layout = layout
         self.skip_invalid_rows = skip_invalid_rows
+        self.llm_sample_size = llm_sample_size
         self.max_sample_records = None if return_all_records else max_records
         self._unrecognized = []
         self._warnings = []
         
         logger.info(
             f"Initialized FixedLengthParser: max_records={max_records}, "
-            f"return_all={return_all_records}, layout_provided={layout is not None}, "
-            f"skip_invalid={skip_invalid_rows}"
+            f"return_all={return_all_records}, llm_sample_size={llm_sample_size}, "
+            f"layout_provided={layout is not None}"
         )
     
     def parse_file(self, filepath: str, **kwargs) -> dict:
@@ -707,6 +857,198 @@ class FixedLengthParser(BaseParser):
                 message=f"Fixed-length parsing failed: {e}",
                 filename=path.name
             )
+
+
+    async def augment(self, parsed_data: dict) -> dict:
+        """Augment parsed fixed-length data with LLM-generated insights.
+        
+        Adds comprehensive analysis including:
+        - File description and business purpose
+        - Business domain classification
+        - Per-field analysis and significance
+        - Layout quality assessment
+        - Data quality assessment
+        - Migration considerations
+        
+        Args:
+            parsed_data: The parsed fixed-length JSON structure
+            
+        Returns:
+            The augmented parsed data with LLM insights in 'llm_analysis' key
+        """
+        filename = parsed_data.get('source_file', 'unknown')
+        logger.info(f"Starting LLM augmentation for: {filename}")
+        
+        try:
+            agent = self._create_augmentation_agent()
+            llm_insights = await self._augment_file(agent, parsed_data)
+            
+            # Validate response structure
+            required_keys = ["file_description", "business_domain", "field_analysis"]
+            missing_keys = [k for k in required_keys if k not in llm_insights]
+            
+            if missing_keys:
+                logger.warning(f"LLM response missing keys: {missing_keys}")
+                self._warnings.append(
+                    f"LLM analysis incomplete: missing {', '.join(missing_keys)}"
+                )
+            
+            parsed_data["llm_analysis"] = llm_insights
+            logger.info(f"Successfully augmented {filename} with LLM insights")
+            
+            return parsed_data
+            
+        except json.JSONDecodeError as e:
+            error_msg = f"LLM returned invalid JSON: {e}"
+            logger.error(error_msg)
+            
+            # Continue with partial data (resilient mode)
+            parsed_data["llm_analysis"] = None
+            parsed_data.setdefault("_augmentation_errors", []).append(error_msg)
+            logger.warning(f"Continuing without LLM analysis for {filename}")
+            
+            return parsed_data
+            
+        except Exception as e:
+            error_msg = f"LLM augmentation failed: {e}"
+            logger.error(error_msg, exc_info=True)
+            
+            # Continue with partial data (resilient mode)
+            parsed_data["llm_analysis"] = None
+            parsed_data.setdefault("_augmentation_errors", []).append(str(e))
+            logger.warning(f"Continuing without LLM analysis for {filename}")
+            
+            return parsed_data
+    
+    def _create_augmentation_agent(self):
+        """Create LangGraph ReAct agent with RAG tool access."""
+        from langgraph.prebuilt import create_react_agent
+        from app.config.llm_config import llm
+        from app.core.tools.rag_tools import search_flatfile_docs
+        
+        return create_react_agent(model=llm, tools=[search_flatfile_docs])
+    
+    async def _augment_file(self, agent, parsed_data: dict) -> dict:
+        """Generate comprehensive file analysis using LLM.
+        
+        Args:
+            agent: LangGraph agent with RAG tool access
+            parsed_data: Parsed file data
+            
+        Returns:
+            Dict with comprehensive analysis
+        """
+        prompt = self._build_file_analysis_prompt(parsed_data)
+        
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            response_text = result["messages"][-1].content.strip()
+            
+            # Extract JSON from markdown if present
+            if "```json" in response_text:
+                json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+            elif "```" in response_text:
+                response_text = response_text.replace("```", "").strip()
+            
+            return json.loads(response_text)
+        
+        return await invoke_with_retry()
+    
+    def _build_file_analysis_prompt(self, parsed_data: dict) -> str:
+        """Build comprehensive prompt for fixed-length file analysis."""
+        filename = parsed_data.get("fileName", "unknown")
+        record_length = parsed_data.get("recordLength", 0)
+        total_records = parsed_data.get("totalRecords", 0)
+        schema = parsed_data.get("schema", [])
+        records = parsed_data.get("records", [])[:self.llm_sample_size]
+        data_quality = parsed_data.get("dataQuality", {})
+        
+        # Extract field details for prompt
+        field_info = []
+        for field in schema:
+            field_info.append({
+                "name": field["fieldName"],
+                "position": f"{field['startPosition']}-{field['startPosition'] + field['length'] - 1}",
+                "length": field["length"],
+                "type": field["dataType"],
+                "padding": field.get("padding", "SPACE"),
+                "dotnet_type": field["suggestedDotNetType"]
+            })
+        
+        return f"""You are analyzing a fixed-length flat file from a mainframe modernization project.
+
+FILE METADATA:
+- Filename: {filename}
+- Record Length: {record_length} bytes
+- Total Records: {total_records:,}
+- Encoding: {parsed_data.get('encoding', 'unknown')}
+- Layout: {"User-provided" if self.layout else "Auto-inferred"}
+
+FIELD LAYOUT ({len(schema)} fields):
+{json.dumps(field_info, indent=2)}
+
+DATA QUALITY METRICS:
+- Invalid Records: {data_quality.get('invalidRecords', 0)}
+- Inconsistent Length Records: {data_quality.get('inconsistentLengthRecords', 0)}
+- Truncated Records: {data_quality.get('truncatedRecords', 0)}
+
+SAMPLE DATA (first {len(records)} of {total_records} records):
+{json.dumps(records, indent=2)}
+
+If you need information about mainframe fixed-length formats, COBOL copybooks, or EBCDIC encoding, use the search_flatfile_docs tool.
+
+PROVIDE A COMPREHENSIVE ANALYSIS with the following JSON structure:
+{{
+  "file_description": "2-3 sentence description of what this file contains and its business purpose",
+  
+  "business_domain": "The business area (e.g., 'Banking Transactions', 'Employee Payroll', 'Inventory Records')",
+  
+  "field_analysis": [
+    {{
+      "field_name": "exact field name from schema",
+      "position": "start-end position",
+      "purpose": "What this field represents",
+      "data_pattern": "Observed pattern (e.g., 'Zero-padded account numbers', 'YYYYMMDD dates', 'Space-padded names')",
+      "business_significance": "Why this field matters for business operations"
+    }}
+    // IMPORTANT: Include one entry for EVERY field in the schema above
+  ],
+  
+  "layout_assessment": {{
+    "layout_quality": "Well-structured/Partially structured/Unstructured",
+    "confidence": "High/Medium/Low confidence in field boundaries",
+    "issues": ["List of layout issues if auto-inferred or if data doesn't match layout"],
+    "recommendations": ["Recommendations for layout improvement or copybook creation"]
+  }},
+  
+  "data_quality_assessment": {{
+    "overall_quality": "Excellent/Good/Fair/Poor",
+    "issues_found": ["Specific quality issues observed in the data"],
+    "recommendations": ["Specific recommendations for data cleansing or validation"]
+  }},
+  
+  "migration_considerations": {{
+    "complexity": "Low/Medium/High",
+    "copybook_needed": true/false,
+    "key_challenges": ["Specific challenges for migrating this file to .NET"],
+    "suggested_dotnet_structure": "Recommended .NET class or database table structure with field mappings"
+  }},
+  
+  "notable_patterns": [
+    "Any interesting patterns, relationships, dependencies, or anomalies discovered in the data"
+  ]
+}}
+
+CRITICAL: Return ONLY the JSON object, no markdown code blocks, no additional text, no explanations."""
     
     def _detect_and_decode(self, raw_bytes: bytes) -> tuple[str, str]:
         """Detect encoding with mainframe EBCDIC support.
