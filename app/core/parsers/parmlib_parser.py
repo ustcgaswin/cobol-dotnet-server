@@ -1,364 +1,3 @@
-# """
-# PARMLIB Parser - Final Integrated Version
-# Fully aligned with project architecture, supports real-world application PARMLIB members.
-# """
-
-# from __future__ import annotations
-
-# import re
-# from dataclasses import dataclass, field
-# from datetime import datetime
-# from enum import Enum
-# from pathlib import Path
-# from typing import Any, Dict, List
-
-# from loguru import logger
-
-# from app.core.exceptions.parser import (
-#     EncodingDetectionError,
-#     InvalidParmlibStatementError,
-#     ParmlibParseError,
-#     UnrecognizedParmlibParameterError,
-#     UtilityCommandParseError,
-# )
-# from app.core.parsers.base import BaseParser
-
-
-# class StatementType(Enum):
-#     PARAMETER = "parameter"
-#     UTILITY = "utility"
-#     CONDITIONAL_START = "conditional_start"
-#     CONDITIONAL_END = "conditional_end"
-#     DATASET_REFERENCE = "dataset_reference"
-#     PROGRAM_REFERENCE = "program_reference"
-#     COMMENT = "comment"
-#     BLANK = "blank"
-#     UNKNOWN = "unknown"
-
-
-# @dataclass
-# class ParsedStatement:
-#     line_number: int
-#     raw_text: str
-#     type: str
-#     details: Dict[str, Any] = field(default_factory=dict)
-#     referenced_datasets: List[str] = field(default_factory=list)
-#     referenced_programs: List[str] = field(default_factory=list)
-#     contains_dataset: bool = False
-
-
-# class ParmlibParser(BaseParser):
-#     """Enterprise-grade PARMLIB member parser with continuation and conditional support."""
-
-#     FILE_TYPE = "parmlib"
-
-#     EBCDIC_CODEPAGES = ["cp1047", "cp037", "cp500", "cp875"]
-
-#     # Optional: soft warning for likely misspelled system parameters
-#     KNOWN_SYSTEM_PARAMS = {"IEASYS", "IEASYM", "CLOCK", "CON", "MAXUSER", "RSU", "IPLINFO"}
-
-#     # Patterns
-#     DATASET_PATTERN = re.compile(r"[A-Z0-9$#@]{1,44}(\.[A-Z0-9$#@]{1,44}){0,21}")
-#     DATASET_KEYWORDS = {"DSN", "DSNAME", "DATASET", "DD", "FILE"}
-#     PROGRAM_PATTERNS = [
-#         re.compile(r"\bPGM=([A-Z0-9$#@]{1,8})\b", re.IGNORECASE),
-#         re.compile(r"\bPROGRAM=([A-Z0-9$#@]{1,8})\b", re.IGNORECASE),
-#         re.compile(r"\bCALL\s+([A-Z0-9$#@]{1,8})\b", re.IGNORECASE),
-#     ]
-
-#     # Broader utility patterns to catch continuations
-#     IDCAMS_PATTERN = re.compile(r"^\s*(DELETE|DEFINE|REPRO|PRINT|LISTCAT)\b", re.IGNORECASE)
-#     SORT_PATTERN = re.compile(r"^\s*(SORT|INREC|OUTREC|INCLUDE|OMIT|MERGE)\s+", re.IGNORECASE)
-
-#     def __init__(self) -> None:
-#         self._warnings: List[str] = []
-#         self._unrecognized: List[Dict[str, Any]] = []
-#         self.current_utility: Dict[str, Any] | None = None
-#         self.in_conditional: bool = False
-
-#     def parse_file(self, filepath: str) -> dict:
-#         """Parse a PARMLIB member file."""
-#         path = Path(filepath)
-#         if not path.exists():
-#             raise FileNotFoundError(f"File not found: {filepath}")
-
-#         logger.info(f"Starting PARMLIB parse: {path.name}")
-
-#         raw_bytes = path.read_bytes()
-#         content, encoding = self._detect_and_decode(raw_bytes)
-
-#         result = {
-#             "file_type": self.FILE_TYPE,
-#             "source_file": path.name,
-#             "encoding": encoding,
-#             "parse_timestamp": datetime.utcnow().isoformat() + "Z",
-#             "parameters": [],
-#             "control_statements": [],
-#             "dependencies": [],
-#             "raw_statements": [],
-#             "_warnings": self._warnings,
-#             "_unrecognized": self._unrecognized,
-#         }
-
-#         lines = [line.rstrip() for line in content.splitlines()]
-#         parsed_statements = self._parse_content(lines)
-
-#         # Populate structured output
-#         for stmt in parsed_statements:
-#             result["raw_statements"].append({
-#                 "line_number": stmt.line_number,
-#                 "raw_text": stmt.raw_text,
-#                 "type": stmt.type,
-#                 "details": stmt.details,
-#             })
-
-#             if stmt.type == StatementType.PARAMETER.value:
-#                 result["parameters"].append(stmt.details)
-#             elif stmt.type == StatementType.UTILITY.value:
-#                 result["control_statements"].append(stmt.details)
-#             # Conditional blocks can be kept in raw_statements only if desired
-
-#         # Extract dependencies
-#         result["dependencies"] = self._extract_dependencies(parsed_statements)
-
-#         logger.info(f"PARMLIB parse completed: {path.name} | "
-#                     f"{len(result['parameters'])} parameters | "
-#                     f"{len(result['control_statements'])} control statements")
-
-#         return result
-
-#     def _detect_and_decode(self, raw: bytes) -> tuple[str, str]:
-#         """Detect encoding with EBCDIC fallback."""
-#         try:
-#             return raw.decode("utf-8"), "utf-8"
-#         except UnicodeDecodeError:
-#             pass
-
-#         for cp in self.EBCDIC_CODEPAGES:
-#             try:
-#                 text = raw.decode(cp)
-#                 if any(kw in text.upper() for kw in ["PARM=", "IEASYS", "SORT", "IDCAMS"]):
-#                     return text, cp
-#             except UnicodeDecodeError:
-#                 continue
-
-#         raise EncodingDetectionError(
-#             message="Could not detect valid encoding for PARMLIB file",
-#             filename=None,
-#         )
-
-#     def _parse_content(self, lines: List[str]) -> List[ParsedStatement]:
-#         statements: List[ParsedStatement] = []
-
-#         for idx, line in enumerate(lines, start=1):
-#             original = line
-#             cleaned = line.strip()
-#             indented = len(line) > len(cleaned) and (line.startswith(" ") or line.startswith("\t"))
-
-#             if not cleaned or cleaned.startswith("*"):
-#                 stmt_type = StatementType.COMMENT.value if cleaned.startswith("*") else StatementType.BLANK.value
-#                 statements.append(ParsedStatement(
-#                     line_number=idx,
-#                     raw_text=original,
-#                     type=stmt_type,
-#                 ))
-#                 continue
-
-#             # Handle continuation of current utility
-#             if self.current_utility and indented:
-#                 self.current_utility["full_command"] += " " + cleaned
-#                 self.current_utility["raw_lines"].append(original)
-#                 continue
-
-#             try:
-#                 stmt = self._parse_statement(idx, original, cleaned, indented)
-#                 statements.append(stmt)
-
-#                 # Start new utility context
-#                 if stmt.type == StatementType.UTILITY.value:
-#                     self.current_utility = {
-#                         **stmt.details,
-#                         "full_command": cleaned,
-#                         "raw_lines": [original],
-#                     }
-
-#                 # Finalize previous utility when non-indented line appears
-#                 elif self.current_utility and not indented:
-#                     if statements and statements[-1].type == StatementType.UTILITY.value:
-#                         statements[-1].details.update(self.current_utility)
-#                     self.current_utility = None
-
-#             except (ParmlibParseError, InvalidParmlibStatementError) as e:
-#                 self._unrecognized.append({
-#                     "line": idx,
-#                     "content": original[:100],
-#                     "error": str(e),
-#                 })
-#                 statements.append(ParsedStatement(
-#                     line_number=idx,
-#                     raw_text=original,
-#                     type=StatementType.UNKNOWN.value,
-#                     details={"error": str(e)},
-#                 ))
-#                 self.current_utility = None  # reset on error
-
-#         # Finalize any pending utility at EOF
-#         if self.current_utility and statements:
-#             if statements[-1].type == StatementType.UTILITY.value:
-#                 statements[-1].details.update(self.current_utility)
-
-#         return statements
-
-#     def _parse_statement(
-#         self,
-#         line_num: int,
-#         original: str,
-#         cleaned: str,
-#         indented: bool = False,
-#     ) -> ParsedStatement:
-#         upper = cleaned.upper()
-
-#         # Conditional blocks
-#         if upper.startswith("IF "):
-#             self.in_conditional = True
-#             return ParsedStatement(
-#                 line_number=line_num,
-#                 raw_text=original,
-#                 type=StatementType.CONDITIONAL_START.value,
-#                 details={"condition": cleaned[3:].strip()},
-#             )
-
-#         if upper == "ENDIF":
-#             self.in_conditional = False
-#             return ParsedStatement(
-#                 line_number=line_num,
-#                 raw_text=original,
-#                 type=StatementType.CONDITIONAL_END.value,
-#                 details={},
-#             )
-
-#         # Utility commands
-#         if self.IDCAMS_PATTERN.match(cleaned) or self.SORT_PATTERN.match(cleaned):
-#             try:
-#                 details = self._parse_utility_command(cleaned, upper)
-#                 return ParsedStatement(
-#                     line_number=line_num,
-#                     raw_text=original,
-#                     type=StatementType.UTILITY.value,
-#                     details=details,
-#                     referenced_datasets=self._extract_datasets(cleaned),
-#                     contains_dataset=True,
-#                 )
-#             except Exception:
-#                 raise UtilityCommandParseError(
-#                     message="Failed to parse utility command",
-#                     line_number=line_num,
-#                     content=original,
-#                 )
-
-#         # Parameters: very permissive
-#         param_match = re.match(r"^([\w._-]+)=(.+)$", cleaned, re.IGNORECASE)
-#         if param_match:
-#             name, value = param_match.groups()
-#             name_upper = name.upper()
-
-#             if name_upper.startswith("IEA") and name_upper not in self.KNOWN_SYSTEM_PARAMS:
-#                 self._warnings.append(f"Possible unrecognized system parameter: {name_upper}")
-
-#             return ParsedStatement(
-#                 line_number=line_num,
-#                 raw_text=original,
-#                 type=StatementType.PARAMETER.value,
-#                 details={"parameter": name_upper, "value": value.strip()},
-#                 referenced_datasets=self._extract_datasets(value),
-#             )
-
-#         # Fallback for unexpected indented lines
-#         if indented:
-#             raise InvalidParmlibStatementError(
-#                 message="Indented line not attached to utility or conditional block",
-#                 line_number=line_num,
-#                 content=original,
-#             )
-
-#         raise InvalidParmlibStatementError(
-#             message="Invalid or unrecognized PARMLIB statement format",
-#             line_number=line_num,
-#             content=original,
-#         )
-
-#     def _parse_utility_command(self, text: str, upper: str) -> Dict[str, Any]:
-#         details: Dict[str, Any] = {"raw_command": text}
-
-#         if self.IDCAMS_PATTERN.match(text):
-#             details["utility"] = "IDCAMS"
-#             match = self.IDCAMS_PATTERN.match(text)
-#             if match:
-#                 details["idcams_command"] = match.group(1).upper()
-
-#             obj_match = re.search(r"([A-Z0-9.$#@]+)\s*(?:\(|\bPURGE\b|\bCLUSTER\b)", text, re.IGNORECASE)
-#             if obj_match:
-#                 details["object_name"] = obj_match.group(1).upper()
-
-#         elif self.SORT_PATTERN.match(text):
-#             details["utility"] = "SORT"
-#             if "FIELDS=" in upper:
-#                 details["sort_type"] = "FIELDS"
-#             elif "COPY" in upper:
-#                 details["sort_type"] = "COPY"
-
-#         return details
-
-#     def _extract_datasets(self, text: str) -> List[str]:
-#         datasets = set()
-#         matches = self.DATASET_PATTERN.findall(text.upper())
-#         for match in matches:
-#             if match not in {"SORT", "FIELDS", "OUTREC", "INREC", "INCLUDE", "OMIT"}:
-#                 datasets.add(match)
-#         if any(kw in text.upper() for kw in self.DATASET_KEYWORDS):
-#             datasets.update(matches)
-#         return list(datasets)
-
-#     def _extract_program_references(self, text: str) -> List[str]:
-#         programs = set()
-#         for pattern in self.PROGRAM_PATTERNS:
-#             programs.update(p.upper() for p in pattern.findall(text))
-#         return list(programs)
-
-#     def _extract_dependencies(self, statements: List[ParsedStatement]) -> List[Dict[str, Any]]:
-#         deps: List[Dict[str, Any]] = []
-
-#         for stmt in statements:
-#             for ds in stmt.referenced_datasets:
-#                 deps.append({
-#                     "type": "DATASET",
-#                     "name": ds,
-#                     "line_number": stmt.line_number,
-#                     "context": stmt.raw_text[:100],
-#                 })
-
-#             programs = self._extract_program_references(stmt.raw_text)
-#             for prog in programs:
-#                 deps.append({
-#                     "type": "PROGRAM",
-#                     "name": prog,
-#                     "line_number": stmt.line_number,
-#                     "context": stmt.raw_text[:100],
-#                 })
-
-#             if stmt.type == StatementType.UTILITY.value:
-#                 deps.append({
-#                     "type": "UTILITY",
-#                     "name": stmt.details.get("utility", "UNKNOWN"),
-#                     "line_number": stmt.line_number,
-#                     "command": stmt.details.get("raw_command", "")[:100],
-#                 })
-
-#         return deps
-
-
-
-
 """
 PARMLIB Parser - Mainframe Control Member Parser
 Integrated with the mainframe modernization parser framework.
@@ -376,12 +15,15 @@ Enhanced with:
 - EBCDIC encoding support
 - Unrecognized content tracking
 - Parse error reporting
+- LLM-powered file analysis and documentation
+- RAG-enhanced understanding of PARMLIB
 
 Usage:
     python parmlib_parser.py <parmlib_file> [-o output.json]
 """
 
 import argparse
+import asyncio
 import json
 import logging
 import re
@@ -389,6 +31,7 @@ import sys
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.exceptions import (
     EmptyFileError,
@@ -451,6 +94,9 @@ class PARMLIBParser(BaseParser):
     
     FILE_TYPE = "parmlib"
     EBCDIC_CODEPAGES = ['cp1047', 'cp037', 'cp500', 'cp875']
+
+    AUGMENTATION_MAX_RETRIES = 3
+    AUGMENTATION_TIMEOUT = 60  # seconds per LLM call
     
     # Regex Patterns
     DATASET_PATTERN = re.compile(r'\b([A-Z0-9$#@]{1,8}(?:\.[A-Z0-9$#@]{1,8}){0,21})\b')
@@ -574,6 +220,240 @@ class PARMLIBParser(BaseParser):
                 f"PARMLIB parsing failed: {str(e)}",
                 filename=path.name
             ) from e
+
+    def _create_augmentation_agent(self):
+        """Create LangGraph ReAct agent with PARMLIB RAG tool access.
+        
+        The agent can decide when to search PARMLIB documentation for context.
+        """
+        from langgraph.prebuilt import create_react_agent
+        from app.config.llm_config import llm
+        from app.core.tools.rag_tools import search_parmlib_docs
+        
+        return create_react_agent(model=llm, tools=[search_parmlib_docs])
+    
+    async def augment(self, parsed_data: dict) -> dict:
+        """Augment parsed PARMLIB data with LLM-generated metadata.
+        
+        Adds:
+        - description: File-level description of the control member's purpose
+        - llm_summary: Section-level summaries (for non-MAIN sections)
+        - llm_explanation: Utility command explanations
+        
+        Args:
+            parsed_data: The parsed PARMLIB JSON structure
+            
+        Returns:
+            The augmented parsed data with LLM-generated fields
+        """
+        agent = self._create_augmentation_agent()
+        
+        # 1. Add file-level description
+        try:
+            parsed_data["description"] = await self._augment_parmlib_file(agent, parsed_data)
+        except Exception as e:
+            logger.error(f"Failed to augment file description: {e}")
+            parsed_data["description"] = None
+            parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
+            parsed_data["_augmentation_errors"].append(f"File description failed: {e}")
+        
+        # 2. Add section summaries (only for non-MAIN sections with content)
+        if "sections" in parsed_data:
+            for section_name, section_stmts in parsed_data['sections'].items():
+                if section_name != "MAIN" and len(section_stmts) > 0:
+                    try:
+                        # Extract section code
+                        section_code = self._extract_section_code(section_name, section_stmts)
+                        
+                        section_summary = await self._augment_section(
+                            agent, section_name, section_stmts, parsed_data, section_code
+                        )
+                        
+                        # Transform section to dict with summary
+                        parsed_data['sections'][section_name] = {
+                            'statements': section_stmts,
+                            'llm_summary': section_summary
+                        }
+                    except Exception as e:
+                        logger.error(f"Failed to augment section {section_name}: {e}")
+                        parsed_data['sections'][section_name] = {
+                            'statements': section_stmts,
+                            'llm_summary': None
+                        }
+                        parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
+                        parsed_data["_augmentation_errors"].append(
+                            f"Section {section_name} failed: {e}"
+                        )
+        
+        # 3. Add utility command explanations
+        for stmt in parsed_data.get('control_statements', []):
+            if stmt.get('utility'):
+                try:
+                    stmt["llm_explanation"] = await self._augment_utility_command(
+                        agent, stmt, parsed_data
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to augment utility {stmt.get('utility')}: {e}")
+                    stmt["llm_explanation"] = None
+                    parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
+                    parsed_data["_augmentation_errors"].append(
+                        f"Utility {stmt.get('utility')} at line {stmt.get('line_number')} failed: {e}"
+                    )
+        
+        return parsed_data
+    
+    async def _augment_parmlib_file(self, agent, parsed_data: dict) -> str:
+        """Generate file-level description using LangGraph agent.
+        
+        The agent may use RAG tool to understand PARMLIB constructs.
+        """
+        source_file = parsed_data.get("source_file", "UNKNOWN")
+        metadata = parsed_data.get("metadata", {})
+        deps = parsed_data.get("dependencies", [])
+        
+        # Build context from parsed data
+        param_count = len(parsed_data.get("parameters", []))
+        control_count = len(parsed_data.get("control_statements", []))
+        
+        # Extract utilities used
+        utilities = list(set([
+            stmt.get("utility") for stmt in parsed_data.get("control_statements", [])
+            if stmt.get("utility")
+        ]))
+        
+        # Extract datasets referenced
+        datasets = list(set([
+            dep.get("name") for dep in deps if dep.get("type") == "DATASET"
+        ]))[:5]  # Limit to first 5
+        
+        # Extract programs referenced
+        programs = list(set([
+            dep.get("name") for dep in deps if dep.get("type") == "PROGRAM"
+        ]))[:5]  # Limit to first 5
+        
+        prompt = f"""Analyze this PARMLIB control member and provide a concise business description.
+
+File: {source_file}
+Parameters: {param_count}
+Control Statements: {control_count}
+Utilities Used: {', '.join(utilities) if utilities else 'None'}
+Datasets Referenced: {', '.join(datasets) if datasets else 'None'}
+Programs Referenced: {', '.join(programs) if programs else 'None'}
+
+If you need to understand specific PARMLIB constructs or utility commands, use the search tool.
+
+Provide a 1-2 sentence description of what this control member does and its business purpose.
+Return ONLY the description, no additional text."""
+
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            return result["messages"][-1].content.strip()
+        
+        return await invoke_with_retry()
+    
+    def _extract_section_code(
+        self, section_name: str, section_stmts: list
+    ) -> str:
+        """Extract the code for a section from section statements.
+        
+        Args:
+            section_name: Name of the section
+            section_stmts: List of statement dictionaries in the section
+            
+        Returns:
+            The code content of the section as text
+        """
+        if not section_stmts:
+            return ""
+        
+        # Combine raw_text from all statements
+        code_lines = []
+        for stmt in section_stmts:
+            raw_text = stmt.get("raw_text", "")
+            if raw_text:
+                code_lines.append(raw_text)
+        
+        return '\n'.join(code_lines)
+    
+    async def _augment_section(
+        self, agent, section_name: str, section_stmts: list, 
+        parsed_data: dict, section_code: str
+    ) -> str:
+        """Generate section summary using LangGraph agent.
+        
+        The agent may use RAG tool for unfamiliar PARMLIB constructs.
+        """
+        source_file = parsed_data.get("source_file", "UNKNOWN")
+        
+        prompt = f"""Analyze this PARMLIB section and provide a brief summary.
+
+File: {source_file}
+Section: {section_name}
+Statements: {len(section_stmts)}
+
+Code:
+{section_code if section_code else "(Code not available)"}
+
+If you need to understand specific PARMLIB parameters or commands, use the search tool.
+
+Provide a 1-sentence summary of what this section accomplishes.
+Return ONLY the summary, no questions or additional text."""
+
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            return result["messages"][-1].content.strip()
+        
+        return await invoke_with_retry()
+    
+    async def _augment_utility_command(
+        self, agent, stmt: dict, parsed_data: dict
+    ) -> str:
+        """Generate utility command explanation using LangGraph agent.
+        
+        The agent may use RAG tool for utility-specific documentation.
+        """
+        utility = stmt.get("utility", "UNKNOWN")
+        command = stmt.get("command", "")
+        line_number = stmt.get("line_number", 0)
+        
+        prompt = f"""Analyze this {utility} utility command and explain its purpose.
+
+Utility: {utility}
+Line: {line_number}
+Command:
+{command}
+
+If you need to understand specific {utility} syntax or parameters, use the search tool.
+
+Provide a 1-sentence explanation of what this command does.
+Return ONLY the explanation, no questions or additional text."""
+
+        @retry(
+            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+        )
+        async def invoke_with_retry():
+            result = await asyncio.wait_for(
+                agent.ainvoke({"messages": [("user", prompt)]}),
+                timeout=self.AUGMENTATION_TIMEOUT,
+            )
+            return result["messages"][-1].content.strip()
+        
+        return await invoke_with_retry()
     
     def _detect_and_decode(self, raw_bytes: bytes, filename: str) -> Tuple[str, str]:
         """Mainframe-aware encoding detection with EBCDIC support.
