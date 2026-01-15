@@ -11,11 +11,10 @@ from app.config.settings import settings
 from app.services.dependency_extractor.extractors import (
     extract_cobol_dependencies,
     extract_copybook_dependencies,
+    extract_jcl_dependencies
 )
 from app.services.dependency_extractor.generator import generate_dependency_graph_md
 
-
-# File types we expect to find and their descriptions
 EXPECTED_FILE_TYPES = {
     'cobol': 'COBOL programs',
     'copybook': 'Copybooks',
@@ -24,7 +23,6 @@ EXPECTED_FILE_TYPES = {
     'pli': 'PL/I programs',
     'rexx': 'REXX scripts',
 }
-
 
 class DependencyExtractorService:
     """Service for generating dependency graphs from parsed outputs."""
@@ -64,6 +62,8 @@ class DependencyExtractorService:
                       'copybooks': [], 'sql_tables': [], 
                       'file_definitions': [], 'file_io': []}
         copybook_deps = {'copybook_to_copybook': []}
+        jcl_deps = {'jcl_program_calls': [], 'jcl_proc_calls': [], 
+                    'jcl_includes': [], 'jcl_files': []}
         
         if 'cobol' in available_types:
             cobol_data = self._read_consolidated(available_types['cobol'])
@@ -77,12 +77,19 @@ class DependencyExtractorService:
             if copybook_data:
                 copybook_deps = extract_copybook_dependencies(copybook_data)
                 logger.info(f"Extracted {len(copybook_deps['copybook_to_copybook'])} nested copybook refs")
+
+        if 'jcl' in available_types:
+            jcl_data = self._read_consolidated(available_types['jcl'])
+            if jcl_data:
+                jcl_deps = extract_jcl_dependencies(jcl_data)
+                logger.info(f"Extracted {len(jcl_deps['jcl_program_calls'])} JCL-to-Program calls")
         
         # Generate markdown
         markdown_content = generate_dependency_graph_md(
             project_id=str(self.project_id),
             cobol_deps=cobol_deps,
             copybook_deps=copybook_deps,
+            jcl_deps=jcl_deps,
             missing_file_types=missing_types,
         )
         
@@ -100,6 +107,9 @@ class DependencyExtractorService:
             'program_to_table': len(cobol_deps['sql_tables']),
             'program_to_file_definition': len(cobol_deps['file_definitions']),
             'program_to_file_io': len(cobol_deps['file_io']),
+            'jcl_to_program': len(jcl_deps['jcl_program_calls']),
+            'jcl_to_proc': len(jcl_deps['jcl_proc_calls']),
+            'jcl_to_file': len(jcl_deps['jcl_files']),
             'copybook_to_copybook': len(copybook_deps['copybook_to_copybook']),
             'unresolved_calls': len(cobol_deps['unresolved_calls']),
         }

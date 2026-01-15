@@ -194,3 +194,49 @@ def extract_copybook_dependencies(consolidated_data: list[dict]) -> dict:
     return {
         'copybook_to_copybook': copybook_to_copybook,
     }
+
+def extract_jcl_dependencies(consolidated_data: list[dict]) -> dict:
+    program_calls = []      # EXEC PGM
+    proc_calls = []         # EXEC PROC
+    include_groups = []     # INCLUDE
+    file_references = []    # DD Statements
+    
+    for jcl in consolidated_data:
+        source_name = jcl.get('job_name') or jcl.get('file_name', 'UNKNOWN')
+        
+        # Categorize calls based on Type
+        for dep in jcl.get('dependencies', []):
+            entry = {'source': source_name, 'target': dep.get('name')}
+            
+            if dep.get('type') == 'PROGRAM':
+                program_calls.append(entry)
+            elif dep.get('type') == 'PROCEDURE':
+                proc_calls.append(entry)
+            elif dep.get('type') == 'INCLUDE_GROUP':
+                include_groups.append(entry)
+
+        # Detailed File References (Similar to COBOL File I/O)
+        for step in jcl.get('steps', []):
+            step_name = step.get('step_name', 'STEP??')
+            for dd in step.get('dd_statements', []):
+                dsn = dd.get('dsn')
+                if dsn:
+                    # Determine "Mode" based on JCL Disposition
+                    disp = dd.get('disp', 'SHR')
+                    mode = "OUTPUT/CREATE" if disp in ['NEW', 'MOD'] else "INPUT/READ"
+                    
+                    file_references.append({
+                        'source': source_name,
+                        'step': step_name,
+                        'dd_name': dd.get('dd_name'),
+                        'dsn': dsn,
+                        'mode': mode,
+                        'disposition': disp
+                    })
+                    
+    return {
+        'jcl_program_calls': program_calls,
+        'jcl_proc_calls': proc_calls,
+        'jcl_includes': include_groups,
+        'jcl_files': file_references,
+    }
