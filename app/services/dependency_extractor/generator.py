@@ -6,23 +6,30 @@ from typing import Any
 
 def generate_dependency_graph_md(
     project_id: str,
-    cobol_deps: dict,
-    copybook_deps: dict,
-    jcl_deps: dict,
-    missing_file_types: list[str],
+    cobol_deps: dict | None = None,
+    copybook_deps: dict | None = None,
+    jcl_deps: dict | None = None,
+    missing_file_types: list[str] | None = None,
 ) -> str:
     """Generate dependency_graph.md content.
     
     Args:
         project_id: Project UUID string
-        cobol_deps: Dependencies extracted from COBOL files
-        copybook_deps: Dependencies extracted from copybook files
-        missing_file_types: File types that weren't parsed
+        cobol_deps: Dependencies extracted from COBOL files (optional)
+        copybook_deps: Dependencies extracted from copybook files (optional)
+        jcl_deps: Dependencies extracted from JCL files (optional)
+        missing_file_types: File types that weren't parsed (optional)
         
     Returns:
         Markdown content for dependency_graph.md
     """
     lines = []
+    
+    # Initialize defaults
+    cobol_deps = cobol_deps or {}
+    copybook_deps = copybook_deps or {}
+    jcl_deps = jcl_deps or {}
+    missing_file_types = missing_types = missing_file_types or []
     
     # Header
     lines.append("# Dependency Graph")

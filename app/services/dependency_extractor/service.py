@@ -67,6 +67,8 @@ class DependencyExtractorService:
                           'copybooks': [], 'sql_tables': [], 
                           'file_definitions': [], 'file_io': []}
             copybook_deps = {'copybook_to_copybook': []}
+            jcl_deps = {'jcl_program_calls': [], 'jcl_proc_calls': [], 
+                        'jcl_includes': [], 'jcl_files': []}
             
             if 'cobol' in available_types:
                 cobol_data = self._read_consolidated(available_types['cobol'])
@@ -80,12 +82,19 @@ class DependencyExtractorService:
                 if copybook_data:
                     copybook_deps = extract_copybook_dependencies(copybook_data)
                     logger.info(f"Extracted {len(copybook_deps['copybook_to_copybook'])} nested copybook refs")
+
+            if 'jcl' in available_types:
+                jcl_data = self._read_consolidated(available_types['jcl'])
+                if jcl_data:
+                    jcl_deps = extract_jcl_dependencies(jcl_data)
+                    logger.info(f"Extracted {len(jcl_deps['jcl_program_calls'])} JCL program calls")
             
             # Generate markdown
             markdown_content = generate_dependency_graph_md(
                 project_id=str(self.project_id),
                 cobol_deps=cobol_deps,
                 copybook_deps=copybook_deps,
+                jcl_deps=jcl_deps,
                 missing_file_types=missing_types,
             )
             
