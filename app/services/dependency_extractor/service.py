@@ -12,11 +12,10 @@ from app.core.exceptions import DependencyExtractionError
 from app.services.dependency_extractor.extractors import (
     extract_cobol_dependencies,
     extract_copybook_dependencies,
+    extract_jcl_dependencies
 )
 from app.services.dependency_extractor.generator import generate_dependency_graph_md
 
-
-# File types we expect to find and their descriptions
 EXPECTED_FILE_TYPES = {
     'cobol': 'COBOL programs',
     'copybook': 'Copybooks',
@@ -25,7 +24,6 @@ EXPECTED_FILE_TYPES = {
     'pli': 'PL/I programs',
     'rexx': 'REXX scripts',
 }
-
 
 class DependencyExtractorService:
     """Service for generating dependency graphs from parsed outputs."""
