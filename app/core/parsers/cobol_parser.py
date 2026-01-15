@@ -58,7 +58,7 @@ try:
     HAS_LEGACYLENS = True
 except ImportError:
     HAS_LEGACYLENS = False
-    logger.warning("legacylens-cobol-parser not available, dependency extraction limited")
+    logger.info("legacylens-cobol-parser not available, using custom dependency extraction")
 
 
 # =============================================================================
@@ -539,19 +539,30 @@ class DependenciesParser(BaseDivisionParser):
                 legacylens_result = legacylens_parse(source)
                 if legacylens_result:
                     if legacylens_result.get('calls'):
-                        result['calls'] = legacylens_result['calls']
+                        # Post-process to add call_type classification
+                        result['calls'] = self._classify_calls(
+                            legacylens_result['calls'], source
+                        )
                     if legacylens_result.get('performs'):
                         result['performs'] = legacylens_result['performs']
                     if legacylens_result.get('sql_queries'):
                         result['sql_queries'] = legacylens_result['sql_queries']
                     if legacylens_result.get('io_files'):
-                        result['file_operations'] = legacylens_result['io_files']
+                        result['file_operations'] = self._fix_file_operations(
+                            legacylens_result['io_files']
+                        )
                     if legacylens_result.get('copybooks'):
                         result['copybooks'] = legacylens_result['copybooks']
             except Exception as e:
                 self._unrecognized.append({'error': f'legacylens error: {str(e)}'})
         
         # Custom extraction for items legacylens might miss
+        
+        # Extract CALL statements (fallback if legacylens didn't provide)
+        if 'calls' not in result:
+            calls = self._extract_calls(source)
+            if calls:
+                result['calls'] = calls
         
         # Extract COPY statements
         if 'copybooks' not in result:
@@ -564,6 +575,12 @@ class DependenciesParser(BaseDivisionParser):
             sql = self._extract_sql(source)
             if sql:
                 result['sql_queries'] = sql
+        
+        # Extract file operations (fallback if legacylens didn't provide)
+        if 'file_operations' not in result:
+            file_ops = self._extract_file_operations(source)
+            if file_ops:
+                result['file_operations'] = file_ops
         
         # Extract EXEC CICS statements
         cics = self._extract_cics(source)
@@ -601,6 +618,311 @@ class DependenciesParser(BaseDivisionParser):
             result['declaratives'] = declaratives
         
         return result
+    
+    def _classify_calls(self, calls: list, source: str) -> list[dict]:
+        """Post-process calls to add call_type classification (static/dynamic).
+        
+        Static calls: CALL 'PROGRAM-NAME'
+        Dynamic calls: CALL variable-name
+        """
+        classified = []
+        for call in calls:
+            call_copy = dict(call) if isinstance(call, dict) else {'raw': call}
+            
+            # Check if program_name exists and is a literal (static)
+            program_name = call_copy.get('program_name', '')
+            
+            if program_name and not program_name.startswith("'"):
+                # Check if the match contains a quoted literal
+                match_text = call_copy.get('match', '')
+                if "'" in match_text or '"' in match_text:
+                    call_copy['call_type'] = 'static'
+                else:
+                    # This is a dynamic call - variable name
+                    call_copy['call_type'] = 'dynamic'
+                    call_copy['variable'] = program_name
+                    call_copy['program_name'] = None
+                    
+                    # Try to resolve the dynamic call
+                    resolved, possible_values = self._resolve_dynamic_call(
+                        program_name, source
+                    )
+                    call_copy['resolved'] = resolved
+                    if possible_values:
+                        call_copy['possible_values'] = possible_values
+                        if len(possible_values) == 1:
+                            call_copy['program_name'] = possible_values[0]
+            else:
+                call_copy['call_type'] = 'static'
+            
+            classified.append(call_copy)
+        
+        return classified
+    
+    def _extract_calls(self, source: str) -> list[dict]:
+        """Extract CALL statements with static/dynamic classification.
+        
+        This is a fallback when legacylens is not available.
+        """
+        calls = []
+        
+        # Pattern for CALL statements
+        # Matches both: CALL 'PROG-NAME' and CALL WS-PROG-VAR
+        call_pattern = re.compile(
+            r"CALL\s+(['\"][A-Za-z][A-Za-z0-9_-]*['\"]|[A-Za-z][A-Za-z0-9_-]*)"
+            r"(?:\s+USING\s+(.+?))?(?:\s*\.|(?:\s+END-CALL))",
+            re.IGNORECASE | re.DOTALL
+        )
+        
+        # Find line numbers for matches
+        lines = source.split('\n')
+        line_offset = 0
+        
+        for match in call_pattern.finditer(source):
+            target = match.group(1)
+            using_clause = match.group(2)
+            
+            # Calculate line number
+            pos = match.start()
+            line_num = source[:pos].count('\n') + 1
+            
+            call_entry = {
+                'match': match.group(0).strip(),
+                'line': line_num,
+            }
+            
+            # Determine if static or dynamic
+            if target.startswith("'") or target.startswith('"'):
+                # Static call
+                call_entry['call_type'] = 'static'
+                call_entry['program_name'] = target.strip("'\"").upper()
+            else:
+                # Dynamic call
+                call_entry['call_type'] = 'dynamic'
+                call_entry['variable'] = target.upper()
+                call_entry['program_name'] = None
+                
+                # Try to resolve
+                resolved, possible_values = self._resolve_dynamic_call(target, source)
+                call_entry['resolved'] = resolved
+                if possible_values:
+                    call_entry['possible_values'] = possible_values
+                    if len(possible_values) == 1:
+                        call_entry['program_name'] = possible_values[0]
+            
+            # Extract parameters
+            if using_clause:
+                params = re.findall(r'([A-Za-z][A-Za-z0-9_-]*)', using_clause)
+                call_entry['parameters'] = [p.upper() for p in params]
+            
+            calls.append(call_entry)
+        
+        return calls
+    
+    def _resolve_dynamic_call(
+        self, variable_name: str, source: str
+    ) -> tuple[bool, list[str]]:
+        """Attempt to resolve a dynamic CALL target by searching for assignments.
+        
+        Searches for:
+        - MOVE 'VALUE' TO variable-name
+        - VALUE 'LITERAL' in variable definition
+        
+        Returns:
+            (resolved: bool, possible_values: list[str])
+        """
+        possible_values = []
+        var_upper = variable_name.upper()
+        
+        # Pattern 1: MOVE 'LITERAL' TO variable
+        move_pattern = re.compile(
+            rf"MOVE\s+['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]"
+            rf"\s+TO\s+{re.escape(var_upper)}",
+            re.IGNORECASE
+        )
+        
+        for match in move_pattern.finditer(source):
+            value = match.group(1).upper()
+            if value not in possible_values:
+                possible_values.append(value)
+        
+        # Pattern 2: VALUE 'LITERAL' in variable definition
+        # e.g., 05 WS-PROG PIC X(8) VALUE 'MYPROG'.
+        value_pattern = re.compile(
+            rf"\d{{2}}\s+{re.escape(var_upper)}[^.]*"
+            rf"VALUE\s+['\"]([A-Za-z][A-Za-z0-9_-]*)['\"]",
+            re.IGNORECASE
+        )
+        
+        for match in value_pattern.finditer(source):
+            value = match.group(1).upper()
+            if value not in possible_values:
+                possible_values.append(value)
+        
+        resolved = len(possible_values) > 0
+        return resolved, possible_values
+    
+    def _fix_file_operations(self, file_ops: list) -> list[dict]:
+        """Fix common issues in file operations extraction from legacylens.
+        
+        Known issues:
+        - 'files' list may contain non-file entries like 'EXIT'
+        - OPEN operations may capture unrelated tokens
+        """
+        fixed = []
+        
+        # Known non-file keywords that may be incorrectly captured
+        non_file_keywords = {
+            'EXIT', 'END', 'PERFORM', 'CALL', 'MOVE', 'IF', 'ELSE',
+            'END-IF', 'END-PERFORM', 'END-READ', 'END-WRITE', 'STOP',
+            'GOBACK', 'CONTINUE', 'AT', 'NOT', 'INTO', 'FROM'
+        }
+        
+        for op in file_ops:
+            op_copy = dict(op) if isinstance(op, dict) else {'raw': op}
+            
+            # Fix 'files' list
+            if 'files' in op_copy and isinstance(op_copy['files'], list):
+                cleaned_files = [
+                    f for f in op_copy['files']
+                    if f.upper() not in non_file_keywords
+                    and not f.isdigit()
+                    and len(f) > 1
+                ]
+                op_copy['files'] = cleaned_files if cleaned_files else op_copy['files']
+            
+            fixed.append(op_copy)
+        
+        return fixed
+    
+    def _extract_file_operations(self, source: str) -> list[dict]:
+        """Extract file operations when legacylens is unavailable.
+        
+        Extracts:
+        - SELECT statements (file definitions)
+        - OPEN/CLOSE/READ/WRITE/DELETE/REWRITE operations
+        """
+        operations = []
+        
+        # Pattern for SELECT statements (file definitions)
+        select_pattern = re.compile(
+            r'SELECT\s+([A-Za-z][A-Za-z0-9_-]*)\s+'
+            r'ASSIGN\s+(?:TO\s+)?([A-Za-z][A-Za-z0-9_-]*)'
+            r'(?:.*?ORGANIZATION\s+(?:IS\s+)?([A-Za-z]+))?'
+            r'(?:.*?ACCESS\s+(?:MODE\s+)?(?:IS\s+)?([A-Za-z]+))?',
+            re.IGNORECASE | re.DOTALL
+        )
+        
+        for match in select_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            operations.append({
+                'operation': 'SELECT',
+                'file_name': match.group(1).upper(),
+                'assign_to': match.group(2).upper(),
+                'organization': match.group(3).upper() if match.group(3) else None,
+                'access_mode': match.group(4).upper() if match.group(4) else None,
+                'line': line_num,
+            })
+        
+        # Pattern for OPEN statements
+        open_pattern = re.compile(
+            r'OPEN\s+(INPUT|OUTPUT|I-O|EXTEND)\s+([A-Za-z][A-Za-z0-9_-]*)',
+            re.IGNORECASE
+        )
+        
+        for match in open_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            operations.append({
+                'operation': 'OPEN',
+                'mode': match.group(1).upper(),
+                'files': [match.group(2).upper()],
+                'line': line_num,
+            })
+        
+        # Pattern for CLOSE statements
+        close_pattern = re.compile(
+            r'CLOSE\s+([A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z][A-Za-z0-9_-]*)*)',
+            re.IGNORECASE
+        )
+        
+        for match in close_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            files = [f.strip().upper() for f in match.group(1).split()]
+            # Filter out keywords
+            files = [f for f in files if f not in ('WITH', 'LOCK', 'NO', 'REWIND')]
+            if files:
+                operations.append({
+                    'operation': 'CLOSE',
+                    'files': files,
+                    'line': line_num,
+                })
+        
+        # Pattern for READ statements
+        read_pattern = re.compile(
+            r'READ\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+INTO\s+([A-Za-z][A-Za-z0-9_-]*))?',
+            re.IGNORECASE
+        )
+        
+        for match in read_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            file_name = match.group(1).upper()
+            # Skip if it matches a keyword
+            if file_name not in ('EXIT', 'END', 'NEXT'):
+                operations.append({
+                    'operation': 'READ',
+                    'files': [file_name],
+                    'into': match.group(2).upper() if match.group(2) else None,
+                    'line': line_num,
+                })
+        
+        # Pattern for WRITE statements
+        write_pattern = re.compile(
+            r'WRITE\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+FROM\s+([A-Za-z][A-Za-z0-9_-]*))?',
+            re.IGNORECASE
+        )
+        
+        for match in write_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            operations.append({
+                'operation': 'WRITE',
+                'files': [match.group(1).upper()],
+                'from': match.group(2).upper() if match.group(2) else None,
+                'line': line_num,
+            })
+        
+        # Pattern for DELETE statements
+        delete_pattern = re.compile(
+            r'DELETE\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+RECORD)?',
+            re.IGNORECASE
+        )
+        
+        for match in delete_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            file_name = match.group(1).upper()
+            if file_name not in ('FROM',):
+                operations.append({
+                    'operation': 'DELETE',
+                    'files': [file_name],
+                    'line': line_num,
+                })
+        
+        # Pattern for REWRITE statements
+        rewrite_pattern = re.compile(
+            r'REWRITE\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+FROM\s+([A-Za-z][A-Za-z0-9_-]*))?',
+            re.IGNORECASE
+        )
+        
+        for match in rewrite_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            operations.append({
+                'operation': 'REWRITE',
+                'files': [match.group(1).upper()],
+                'from': match.group(2).upper() if match.group(2) else None,
+                'line': line_num,
+            })
+        
+        return operations
+    
     
     def _extract_copybooks(self, source: str) -> list[dict]:
         """Extract COPY statements"""
@@ -824,10 +1146,6 @@ class CobolParser(BaseParser):
     # Limits
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (COBOL programs can be large)
     
-    # Augmentation configuration
-    AUGMENTATION_MAX_RETRIES = 3
-    AUGMENTATION_TIMEOUT = 60  # seconds per LLM call
-    
     def __init__(self, strict: bool = False):
         self.strict = strict
         self._source: str = ""
@@ -909,7 +1227,7 @@ class CobolParser(BaseParser):
                 continue
         
         # Fallback
-        logger.warning("Could not detect encoding, falling back to UTF-8")
+        logger.info("Could not detect encoding, falling back to UTF-8")
         return raw_bytes.decode('utf-8', errors='replace'), 'utf-8-fallback'
     
     def _looks_like_cobol(self, text: str) -> bool:
@@ -972,210 +1290,6 @@ class CobolParser(BaseParser):
             result['_unrecognized'] = self._unrecognized
         
         return result
-    
-    # =========================================================================
-    # LLM AUGMENTATION
-    # =========================================================================
-    
-    def _create_augmentation_agent(self):
-        """Create LangGraph ReAct agent with RAG tool access.
-        
-        The agent can decide when to search COBOL documentation for context.
-        """
-        from langgraph.prebuilt import create_react_agent
-        from app.config.llm_config import llm
-        from app.core.tools.rag_tools import search_cobol_docs
-        
-        return create_react_agent(model=llm, tools=[search_cobol_docs])
-    
-    async def augment(self, parsed_data: dict) -> dict:
-        """Augment parsed COBOL data with LLM-generated metadata.
-        
-        Adds:
-        - description: Program-level description for C# service class naming
-        - summary: Paragraph-level summary for C# method naming
-        
-        Args:
-            parsed_data: The parsed COBOL JSON structure
-            
-        Returns:
-            The augmented parsed data with description and summary fields
-        """
-        import asyncio
-        from tenacity import retry, stop_after_attempt, wait_exponential
-        
-        agent = self._create_augmentation_agent()
-        
-        # Add program description
-        try:
-            parsed_data["description"] = await self._augment_program(agent, parsed_data)
-        except Exception as e:
-            logger.error(f"Failed to augment program description: {e}")
-            parsed_data["description"] = None
-            parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
-            parsed_data["_augmentation_errors"].append(f"Program description failed: {e}")
-        
-        # Add paragraph summaries (sequential within file)
-        if "procedure_division" in parsed_data:
-            paragraphs = parsed_data["procedure_division"].get("paragraphs", [])
-            # Get list of paragraph names for code extraction
-            para_names = [p.get("name", "") for p in paragraphs]
-            
-            for i, para in enumerate(paragraphs):
-                try:
-                    # Extract code for this paragraph
-                    para_code = self._extract_paragraph_code(
-                        para.get("name", ""),
-                        para_names[i + 1] if i + 1 < len(para_names) else None
-                    )
-                    para["summary"] = await self._augment_paragraph(
-                        agent, para, parsed_data, para_code
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to augment paragraph {para.get('name')}: {e}")
-                    para["summary"] = None
-                    parsed_data["_augmentation_errors"] = parsed_data.get("_augmentation_errors", [])
-                    parsed_data["_augmentation_errors"].append(
-                        f"Paragraph {para.get('name')} failed: {e}"
-                    )
-        
-        return parsed_data
-    
-    async def _augment_program(self, agent, parsed_data: dict) -> str:
-        """Generate program description using LangGraph agent.
-        
-        The agent may use RAG tool to understand COBOL constructs.
-        """
-        import asyncio
-        from tenacity import retry, stop_after_attempt, wait_exponential
-        
-        program_name = parsed_data.get("program_name", "UNKNOWN")
-        id_div = parsed_data.get("identification_division", {})
-        deps = parsed_data.get("dependencies", {})
-        
-        # Build context from parsed data
-        copybooks = [c.get("copybook_name", "") for c in deps.get("copybooks", [])]
-        calls = [c.get("program", "") if isinstance(c, dict) else c for c in deps.get("calls", [])]
-        
-        prompt = f"""Analyze this COBOL program and provide a concise business description.
-
-Program ID: {program_name}
-Author: {id_div.get('author', 'Unknown')}
-Copybooks used: {', '.join(copybooks) if copybooks else 'None'}
-Programs called: {', '.join(calls) if calls else 'None'}
-
-If you need to understand specific COBOL constructs, use the search tool.
-
-Provide a 1-2 sentence description of what this program does, suitable for naming a C# service class.
-Return ONLY the description, no additional text."""
-
-        @retry(
-            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
-            wait=wait_exponential(multiplier=1, min=2, max=10),
-        )
-        async def invoke_with_retry():
-            result = await asyncio.wait_for(
-                agent.ainvoke({"messages": [("user", prompt)]}),
-                timeout=self.AUGMENTATION_TIMEOUT,
-            )
-            return result["messages"][-1].content.strip()
-        
-        return await invoke_with_retry()
-    
-    def _extract_paragraph_code(
-        self, para_name: str, next_para_name: str | None
-    ) -> str:
-        """Extract the code for a paragraph from the stored source.
-        
-        Args:
-            para_name: Name of the paragraph to extract
-            next_para_name: Name of the next paragraph (to know where to stop)
-            
-        Returns:
-            The code content of the paragraph
-        """
-        if not self._source:
-            return ""
-        
-        lines = self._source.split('\n')
-        in_paragraph = False
-        para_lines = []
-        
-        # Pattern to match paragraph start
-        para_start_pattern = re.compile(
-            rf'^\s{{0,7}}{re.escape(para_name)}\s*\.',
-            re.IGNORECASE
-        )
-        
-        # Pattern to match next paragraph or end markers
-        if next_para_name:
-            next_para_pattern = re.compile(
-                rf'^\s{{0,7}}{re.escape(next_para_name)}\s*\.',
-                re.IGNORECASE
-            )
-        else:
-            next_para_pattern = None
-        
-        for line in lines:
-            # Check if this line starts our paragraph
-            if not in_paragraph and para_start_pattern.search(line):
-                in_paragraph = True
-                para_lines.append(line)
-                continue
-            
-            if in_paragraph:
-                # Check if we've hit the next paragraph
-                if next_para_pattern and next_para_pattern.search(line):
-                    break
-                # Check for end of procedure division or another division
-                if re.match(r'^\s{0,7}[A-Za-z0-9]+-', line.strip()):
-                    # Might be another paragraph without us knowing
-                    if len(para_lines) > 2:  # We have some content
-                        break
-                
-                para_lines.append(line)
-        
-        return '\n'.join(para_lines)
-    
-    async def _augment_paragraph(
-        self, agent, paragraph: dict, parsed_data: dict, para_code: str
-    ) -> str:
-        """Generate paragraph summary using LangGraph agent.
-        
-        The agent may use RAG tool for unfamiliar COBOL statements.
-        """
-        import asyncio
-        from tenacity import retry, stop_after_attempt, wait_exponential
-        
-        para_name = paragraph.get("name", "UNKNOWN")
-        program_name = parsed_data.get("program_name", "UNKNOWN")
-        
-        prompt = f"""Analyze this COBOL paragraph and provide a brief summary.
-
-Program: {program_name}
-Paragraph: {para_name}
-
-Code:
-{para_code if para_code else "(Code not available)"}
-
-If you need to understand specific COBOL statements, use the search tool.
-
-Provide a 1-sentence summary of what this paragraph does.
-This will be used to name a C# method, so be concise and action-oriented.
-Return ONLY the summary, no questions or additional text."""
-
-        @retry(
-            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
-            wait=wait_exponential(multiplier=1, min=2, max=10),
-        )
-        async def invoke_with_retry():
-            result = await asyncio.wait_for(
-                agent.ainvoke({"messages": [("user", prompt)]}),
-                timeout=self.AUGMENTATION_TIMEOUT,
-            )
-            return result["messages"][-1].content.strip()
-        
-        return await invoke_with_retry()
     
     def _preprocess(self, content: str) -> list[tuple]:
         """Preprocess COBOL source into (line_number, text, original) tuples"""

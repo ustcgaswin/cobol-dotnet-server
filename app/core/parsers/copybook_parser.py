@@ -267,10 +267,6 @@ class CopybookParser(BaseParser):
     
     # Limits
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-    
-    # Augmentation configuration
-    AUGMENTATION_MAX_RETRIES = 3
-    AUGMENTATION_TIMEOUT = 60  # seconds per LLM call
         
     def parse_file(self, filepath: str) -> dict:
         """Parse a copybook file and return structured JSON"""
@@ -350,7 +346,7 @@ class CopybookParser(BaseParser):
                 continue
         
         # Fallback: force UTF-8 with error replacement
-        logger.warning("Could not detect encoding, falling back to UTF-8 with replacement")
+        logger.info("Could not detect encoding, falling back to UTF-8 with replacement")
         return raw_bytes.decode('utf-8', errors='replace'), 'utf-8-fallback'
     
     def _looks_like_cobol(self, text: str) -> bool:
@@ -431,100 +427,6 @@ class CopybookParser(BaseParser):
             result["_warnings"] = self._warnings
             
         return result
-    
-    # =========================================================================
-    # LLM AUGMENTATION
-    # =========================================================================
-    
-    def _create_augmentation_agent(self):
-        """Create LangGraph ReAct agent with RAG tool access."""
-        from langgraph.prebuilt import create_react_agent
-        from app.config.llm_config import llm
-        from app.core.tools.rag_tools import search_cobol_docs
-        
-        return create_react_agent(model=llm, tools=[search_cobol_docs])
-    
-    async def augment(self, parsed_data: dict) -> dict:
-        """Augment parsed copybook data with LLM-generated purpose.
-        
-        Adds:
-        - purpose: Business entity meaning for C# entity class naming
-        
-        Args:
-            parsed_data: The parsed copybook JSON structure
-            
-        Returns:
-            The augmented parsed data with purpose field
-        """
-        import asyncio
-        from tenacity import retry, stop_after_attempt, wait_exponential
-        
-        agent = self._create_augmentation_agent()
-        
-        try:
-            parsed_data["purpose"] = await self._augment_purpose(agent, parsed_data)
-        except Exception as e:
-            logger.error(f"Failed to augment copybook purpose: {e}")
-            parsed_data["purpose"] = None
-            parsed_data["_augmentation_errors"] = [f"Copybook purpose failed: {e}"]
-        
-        return parsed_data
-    
-    async def _augment_purpose(self, agent, parsed_data: dict) -> str:
-        """Generate copybook purpose using LangGraph agent."""
-        import asyncio
-        from tenacity import retry, stop_after_attempt, wait_exponential
-        
-        copybook_name = parsed_data.get("copybook_name", "UNKNOWN")
-        record_layouts = parsed_data.get("record_layouts", [])
-        
-        # Build full summary of fields (no limits)
-        def format_field(field, indent=0):
-            """Recursively format field info."""
-            lines = []
-            prefix = "  " * indent
-            name = field.get("name", "")
-            pic = field.get("pic", "")
-            usage = field.get("usage", "")
-            
-            field_info = f"{prefix}{name}"
-            if pic:
-                field_info += f" PIC {pic}"
-            if usage:
-                field_info += f" {usage}"
-            lines.append(field_info)
-            
-            for child in field.get("children", []):
-                lines.extend(format_field(child, indent + 1))
-            return lines
-        
-        field_lines = []
-        for layout in record_layouts:
-            field_lines.extend(format_field(layout))
-        
-        prompt = f"""Analyze this COBOL copybook and explain its business purpose.
-
-Copybook: {copybook_name}
-Fields:
-{chr(10).join(field_lines) if field_lines else 'None'}
-
-If you need to understand specific COBOL data types, use the search tool.
-
-Provide a 1-2 sentence description of what business entity this copybook represents.
-Return ONLY the description, no additional text."""
-
-        @retry(
-            stop=stop_after_attempt(self.AUGMENTATION_MAX_RETRIES),
-            wait=wait_exponential(multiplier=1, min=2, max=10),
-        )
-        async def invoke_with_retry():
-            result = await asyncio.wait_for(
-                agent.ainvoke({"messages": [("user", prompt)]}),
-                timeout=self.AUGMENTATION_TIMEOUT,
-            )
-            return result["messages"][-1].content.strip()
-        
-        return await invoke_with_retry()
     
     def _preprocess(self, content: str) -> list[tuple]:
         """Preprocess COBOL source: handle columns, continuations, comments"""
@@ -626,6 +528,28 @@ Return ONLY the description, no additional text."""
         """Parse a single COBOL statement"""
         text = stmt_info['text']
         line_num = stmt_info['line']
+        
+        # Check for COPY statement (nested copybook reference)
+        copy_match = re.match(
+            r'COPY\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+(?:OF|IN)\s+([A-Za-z][A-Za-z0-9_-]*))?',
+            text,
+            re.IGNORECASE
+        )
+        if copy_match:
+            copy_ref = {
+                'copybook_name': copy_match.group(1).upper(),
+                'line': line_num,
+            }
+            if copy_match.group(2):
+                copy_ref['library'] = copy_match.group(2).upper()
+            
+            # Check for REPLACING clause
+            replacing_match = re.search(r'REPLACING\s+(.+?)(?:\.|$)', text, re.IGNORECASE)
+            if replacing_match:
+                copy_ref['replacing'] = self._parse_replacing_clause(replacing_match.group(1))
+            
+            self._copy_references.append(copy_ref)
+            return
         
         # Check for level number
         level_match = re.match(self.PATTERNS['level'], text)
