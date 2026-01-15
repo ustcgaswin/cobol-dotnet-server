@@ -529,6 +529,28 @@ class CopybookParser(BaseParser):
         text = stmt_info['text']
         line_num = stmt_info['line']
         
+        # Check for COPY statement (nested copybook reference)
+        copy_match = re.match(
+            r'COPY\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+(?:OF|IN)\s+([A-Za-z][A-Za-z0-9_-]*))?',
+            text,
+            re.IGNORECASE
+        )
+        if copy_match:
+            copy_ref = {
+                'copybook_name': copy_match.group(1).upper(),
+                'line': line_num,
+            }
+            if copy_match.group(2):
+                copy_ref['library'] = copy_match.group(2).upper()
+            
+            # Check for REPLACING clause
+            replacing_match = re.search(r'REPLACING\s+(.+?)(?:\.|$)', text, re.IGNORECASE)
+            if replacing_match:
+                copy_ref['replacing'] = self._parse_replacing_clause(replacing_match.group(1))
+            
+            self._copy_references.append(copy_ref)
+            return
+        
         # Check for level number
         level_match = re.match(self.PATTERNS['level'], text)
         if not level_match:

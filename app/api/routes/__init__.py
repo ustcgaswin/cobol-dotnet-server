@@ -1,5 +1,6 @@
 """API routes module."""
 
+from app.api.routes.dependency import router as dependency_router
 from app.api.routes.health import router as health_router
 from app.api.routes.parsers import router as parsers_router
 from app.api.routes.parsers import parsers_metadata_router
@@ -8,6 +9,7 @@ from app.api.routes.rag import router as rag_router
 from app.api.routes.source_files import router as source_files_router
 
 __all__ = [
+    "dependency_router",
     "health_router",
     "parsers_router",
     "parsers_metadata_router",
@@ -15,6 +17,3 @@ __all__ = [
     "rag_router",
     "source_files_router",
 ]
-
-
-

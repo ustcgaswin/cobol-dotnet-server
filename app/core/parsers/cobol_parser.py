@@ -576,6 +576,12 @@ class DependenciesParser(BaseDivisionParser):
             if sql:
                 result['sql_queries'] = sql
         
+        # Extract file operations (fallback if legacylens didn't provide)
+        if 'file_operations' not in result:
+            file_ops = self._extract_file_operations(source)
+            if file_ops:
+                result['file_operations'] = file_ops
+        
         # Extract EXEC CICS statements
         cics = self._extract_cics(source)
         if cics:
@@ -788,6 +794,134 @@ class DependenciesParser(BaseDivisionParser):
             fixed.append(op_copy)
         
         return fixed
+    
+    def _extract_file_operations(self, source: str) -> list[dict]:
+        """Extract file operations when legacylens is unavailable.
+        
+        Extracts:
+        - SELECT statements (file definitions)
+        - OPEN/CLOSE/READ/WRITE/DELETE/REWRITE operations
+        """
+        operations = []
+        
+        # Pattern for SELECT statements (file definitions)
+        select_pattern = re.compile(
+            r'SELECT\s+([A-Za-z][A-Za-z0-9_-]*)\s+'
+            r'ASSIGN\s+(?:TO\s+)?([A-Za-z][A-Za-z0-9_-]*)'
+            r'(?:.*?ORGANIZATION\s+(?:IS\s+)?([A-Za-z]+))?'
+            r'(?:.*?ACCESS\s+(?:MODE\s+)?(?:IS\s+)?([A-Za-z]+))?',
+            re.IGNORECASE | re.DOTALL
+        )
+        
+        for match in select_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            operations.append({
+                'operation': 'SELECT',
+                'file_name': match.group(1).upper(),
+                'assign_to': match.group(2).upper(),
+                'organization': match.group(3).upper() if match.group(3) else None,
+                'access_mode': match.group(4).upper() if match.group(4) else None,
+                'line': line_num,
+            })
+        
+        # Pattern for OPEN statements
+        open_pattern = re.compile(
+            r'OPEN\s+(INPUT|OUTPUT|I-O|EXTEND)\s+([A-Za-z][A-Za-z0-9_-]*)',
+            re.IGNORECASE
+        )
+        
+        for match in open_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            operations.append({
+                'operation': 'OPEN',
+                'mode': match.group(1).upper(),
+                'files': [match.group(2).upper()],
+                'line': line_num,
+            })
+        
+        # Pattern for CLOSE statements
+        close_pattern = re.compile(
+            r'CLOSE\s+([A-Za-z][A-Za-z0-9_-]*(?:\s+[A-Za-z][A-Za-z0-9_-]*)*)',
+            re.IGNORECASE
+        )
+        
+        for match in close_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            files = [f.strip().upper() for f in match.group(1).split()]
+            # Filter out keywords
+            files = [f for f in files if f not in ('WITH', 'LOCK', 'NO', 'REWIND')]
+            if files:
+                operations.append({
+                    'operation': 'CLOSE',
+                    'files': files,
+                    'line': line_num,
+                })
+        
+        # Pattern for READ statements
+        read_pattern = re.compile(
+            r'READ\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+INTO\s+([A-Za-z][A-Za-z0-9_-]*))?',
+            re.IGNORECASE
+        )
+        
+        for match in read_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            file_name = match.group(1).upper()
+            # Skip if it matches a keyword
+            if file_name not in ('EXIT', 'END', 'NEXT'):
+                operations.append({
+                    'operation': 'READ',
+                    'files': [file_name],
+                    'into': match.group(2).upper() if match.group(2) else None,
+                    'line': line_num,
+                })
+        
+        # Pattern for WRITE statements
+        write_pattern = re.compile(
+            r'WRITE\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+FROM\s+([A-Za-z][A-Za-z0-9_-]*))?',
+            re.IGNORECASE
+        )
+        
+        for match in write_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            operations.append({
+                'operation': 'WRITE',
+                'files': [match.group(1).upper()],
+                'from': match.group(2).upper() if match.group(2) else None,
+                'line': line_num,
+            })
+        
+        # Pattern for DELETE statements
+        delete_pattern = re.compile(
+            r'DELETE\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+RECORD)?',
+            re.IGNORECASE
+        )
+        
+        for match in delete_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            file_name = match.group(1).upper()
+            if file_name not in ('FROM',):
+                operations.append({
+                    'operation': 'DELETE',
+                    'files': [file_name],
+                    'line': line_num,
+                })
+        
+        # Pattern for REWRITE statements
+        rewrite_pattern = re.compile(
+            r'REWRITE\s+([A-Za-z][A-Za-z0-9_-]*)(?:\s+FROM\s+([A-Za-z][A-Za-z0-9_-]*))?',
+            re.IGNORECASE
+        )
+        
+        for match in rewrite_pattern.finditer(source):
+            line_num = source[:match.start()].count('\n') + 1
+            operations.append({
+                'operation': 'REWRITE',
+                'files': [match.group(1).upper()],
+                'from': match.group(2).upper() if match.group(2) else None,
+                'line': line_num,
+            })
+        
+        return operations
     
     
     def _extract_copybooks(self, source: str) -> list[dict]:
