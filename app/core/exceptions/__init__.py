@@ -10,6 +10,10 @@ from app.core.exceptions.db_exceptions import (
     DatabaseException,
     DatabaseHealthCheckError,
 )
+from app.core.exceptions.dependency import (
+    DependencyExtractionError,
+    DependencyExtractionException,
+)
 from app.core.exceptions.parser import (
     CA7ParseError,
     BindParseError,
@@ -58,6 +62,11 @@ from app.core.exceptions.source_file import (
     InvalidFileTypeError,
     SourceFileException,
     SourceFileNotFoundException,
+)
+from app.core.exceptions.summarizer import (
+    LLMContextError,
+    SummarizationError,
+    SummarizationException,
 )
 
 __all__ = [
@@ -116,4 +125,11 @@ __all__ = [
     "FileSizeExceededError",
     "SourceFileNotFoundException",
     "FileUploadError",
+    # Summarizer
+    "SummarizationException",
+    "SummarizationError",
+    "LLMContextError",
+    # Dependency
+    "DependencyExtractionException",
+    "DependencyExtractionError",
 ]

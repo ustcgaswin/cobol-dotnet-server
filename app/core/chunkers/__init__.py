@@ -1,6 +1,8 @@
 """Chunker module for document chunking."""
 
 from app.core.chunkers.base import BaseChunker
+from app.core.chunkers.cobol import CobolChunker
+from app.core.chunkers.copybook import CopybookChunker
 from app.core.chunkers.markdown import MarkdownChunker
 from app.core.chunkers.pdf import PDFChunker
 
@@ -8,6 +10,11 @@ from app.core.chunkers.pdf import PDFChunker
 CHUNKER_REGISTRY: dict[str, type[BaseChunker]] = {
     ".pdf": PDFChunker,
     ".md": MarkdownChunker,
+    ".cbl": CobolChunker,
+    ".cob": CobolChunker,
+    ".cobol": CobolChunker,
+    ".cpy": CopybookChunker,
+    ".copy": CopybookChunker,
 }
 
 

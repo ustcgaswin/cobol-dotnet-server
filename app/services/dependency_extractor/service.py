@@ -8,6 +8,7 @@ from typing import Any
 from loguru import logger
 
 from app.config.settings import settings
+from app.core.exceptions import DependencyExtractionError
 from app.services.dependency_extractor.extractors import (
     extract_cobol_dependencies,
     extract_copybook_dependencies,
@@ -44,93 +45,85 @@ class DependencyExtractorService:
         
         Returns:
             Dictionary with output path and relationship counts
+            
+        Raises:
+            DependencyExtractionError: If generation fails
         """
         logger.info(f"Generating dependency graph for project {self.project_id}")
         
-        # Discover available parsed outputs
-        available_types = self._discover_available_types()
-        logger.info(f"Found parsed outputs for: {list(available_types.keys())}")
-        
-        # Track missing file types
-        missing_types = [
-            ft for ft in EXPECTED_FILE_TYPES.keys() 
-            if ft not in available_types
-        ]
-        
-        # Extract dependencies from each available type
-        cobol_deps = {'program_calls': [], 'unresolved_calls': [], 
-                      'copybooks': [], 'sql_tables': [], 
-                      'file_definitions': [], 'file_io': []}
-        copybook_deps = {'copybook_to_copybook': []}
-        jcl_deps = {'jcl_program_calls': [], 'jcl_proc_calls': [], 
-                    'jcl_includes': [], 'jcl_files': []}
-        
-        if 'cobol' in available_types:
-            cobol_data = self._read_consolidated(available_types['cobol'])
-            if cobol_data:
-                cobol_deps = extract_cobol_dependencies(cobol_data)
-                logger.info(f"Extracted {len(cobol_deps['program_calls'])} program calls, "
-                           f"{len(cobol_deps['copybooks'])} copybook refs")
-        
-        if 'copybook' in available_types:
-            copybook_data = self._read_consolidated(available_types['copybook'])
-            if copybook_data:
-                copybook_deps = extract_copybook_dependencies(copybook_data)
-                logger.info(f"Extracted {len(copybook_deps['copybook_to_copybook'])} nested copybook refs")
-
-        if 'jcl' in available_types:
-            jcl_data = self._read_consolidated(available_types['jcl'])
-            if jcl_data:
-                jcl_deps = extract_jcl_dependencies(jcl_data)
-                logger.info(f"Extracted {len(jcl_deps['jcl_program_calls'])} JCL-to-Program calls")
-        
-        # Generate markdown
-        markdown_content = generate_dependency_graph_md(
-            project_id=str(self.project_id),
-            cobol_deps=cobol_deps,
-            copybook_deps=copybook_deps,
-            jcl_deps=jcl_deps,
-            missing_file_types=missing_types,
-        )
-        
-        # Save to file
-        output_file = self.output_path / "dependency_graph.md"
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        output_file.write_text(markdown_content, encoding='utf-8')
-        
-        logger.info(f"Dependency graph saved to {output_file}")
-        
-        # Calculate counts for response
-        relationship_counts = {
-            'program_to_program': len(cobol_deps['program_calls']),
-            'program_to_copybook': len(cobol_deps['copybooks']),
-            'program_to_table': len(cobol_deps['sql_tables']),
-            'program_to_file_definition': len(cobol_deps['file_definitions']),
-            'program_to_file_io': len(cobol_deps['file_io']),
-            'jcl_to_program': len(jcl_deps['jcl_program_calls']),
-            'jcl_to_proc': len(jcl_deps['jcl_proc_calls']),
-            'jcl_to_file': len(jcl_deps['jcl_files']),
-            'copybook_to_copybook': len(copybook_deps['copybook_to_copybook']),
-            'unresolved_calls': len(cobol_deps['unresolved_calls']),
-        }
-        
-        return {
-            'output_path': str(output_file),
-            'relationship_counts': relationship_counts,
-            'missing_file_types': missing_types,
-        }
+        try:
+            # Discover available parsed outputs
+            available_types = self._discover_available_types()
+            logger.info(f"Found parsed outputs for: {list(available_types.keys())}")
+            
+            # Track missing file types
+            missing_types = [
+                ft for ft in EXPECTED_FILE_TYPES.keys() 
+                if ft not in available_types
+            ]
+            
+            # Extract dependencies from each available type
+            cobol_deps = {'program_calls': [], 'unresolved_calls': [], 
+                          'copybooks': [], 'sql_tables': [], 
+                          'file_definitions': [], 'file_io': []}
+            copybook_deps = {'copybook_to_copybook': []}
+            
+            if 'cobol' in available_types:
+                cobol_data = self._read_consolidated(available_types['cobol'])
+                if cobol_data:
+                    cobol_deps = extract_cobol_dependencies(cobol_data)
+                    logger.info(f"Extracted {len(cobol_deps['program_calls'])} program calls, "
+                               f"{len(cobol_deps['copybooks'])} copybook refs")
+            
+            if 'copybook' in available_types:
+                copybook_data = self._read_consolidated(available_types['copybook'])
+                if copybook_data:
+                    copybook_deps = extract_copybook_dependencies(copybook_data)
+                    logger.info(f"Extracted {len(copybook_deps['copybook_to_copybook'])} nested copybook refs")
+            
+            # Generate markdown
+            markdown_content = generate_dependency_graph_md(
+                project_id=str(self.project_id),
+                cobol_deps=cobol_deps,
+                copybook_deps=copybook_deps,
+                missing_file_types=missing_types,
+            )
+            
+            # Save to file
+            output_file = self.output_path / "dependency_graph.md"
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(markdown_content, encoding='utf-8')
+            
+            logger.info(f"Dependency graph saved to {output_file}")
+            
+            # Calculate counts for response
+            relationship_counts = {
+                'program_to_program': len(cobol_deps['program_calls']),
+                'program_to_copybook': len(cobol_deps['copybooks']),
+                'program_to_table': len(cobol_deps['sql_tables']),
+                'program_to_file_definition': len(cobol_deps['file_definitions']),
+                'program_to_file_io': len(cobol_deps['file_io']),
+                'copybook_to_copybook': len(copybook_deps['copybook_to_copybook']),
+                'unresolved_calls': len(cobol_deps['unresolved_calls']),
+            }
+            
+            return {
+                'output_path': str(output_file),
+                'relationship_counts': relationship_counts,
+                'missing_file_types': missing_types,
+            }
+            
+        except Exception as e:
+            logger.error(f"Dependency extraction failed: {e}")
+            raise DependencyExtractionError(f"Failed to generate dependency graph: {e}") from e
     
     def _discover_available_types(self) -> dict[str, Path]:
-        """Discover which file types have parsed outputs.
-        
-        Returns:
-            Dictionary mapping file type to consolidated JSON path
-        """
+        """Discover which file types have parsed outputs."""
         available = {}
         
         if not self.parsed_outputs_path.exists():
-            logger.warning(f"Parsed outputs directory not found: {self.parsed_outputs_path}")
-            return available
+            # This is critical - without parsed outputs we can't do anything
+            raise DependencyExtractionError(f"Parsed outputs directory not found: {self.parsed_outputs_path}")
         
         for type_dir in self.parsed_outputs_path.iterdir():
             if type_dir.is_dir():
@@ -141,14 +134,7 @@ class DependencyExtractorService:
         return available
     
     def _read_consolidated(self, path: Path) -> list[dict]:
-        """Read consolidated JSON file.
-        
-        Args:
-            path: Path to _consolidated.json
-            
-        Returns:
-            List of parsed file dictionaries
-        """
+        """Read consolidated JSON file."""
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -162,4 +148,4 @@ class DependencyExtractorService:
                     return []
         except Exception as e:
             logger.error(f"Failed to read {path}: {e}")
-            return []
+            raise DependencyExtractionError(f"Failed to read parsed output {path}: {e}") from e
