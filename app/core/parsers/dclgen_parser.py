@@ -1,3 +1,4 @@
+
 """
 DCLGEN Parser for IBM DB2 COBOL Declarations.
 
@@ -152,14 +153,18 @@ class DclgenParser(BaseParser):
         table_name = block_match.group(1).upper()
         col_content = block_match.group(2)
 
-        # Matches: COLUMN_NAME  TYPE(DIMS)  NOT NULL
-        col_re = re.compile(r"([A-Z0-9_-]+)\s+([A-Z0-9]+(?:\([\d\s,]+\))?)\s*(NOT\s+NULL)?", re.I)
+        # Improved: split by comma, parse each part
+        cols = [c.strip() for c in re.split(r'(?<!\d)\s*,\s*', col_content) if c.strip()]  # split on , not in (13,2)
         
-        for m in col_re.finditer(col_content):
-            name = m.group(1).upper()
-            db2_type = m.group(2).upper()
-            is_nullable = not bool(m.group(3))
-            self._sql_meta[name] = SqlMetadata(name, db2_type, is_nullable)
+        self._sql_meta = {}
+        for col in cols:
+            m = re.match(r"([A-Z0-9_-]+)\s+([A-Z0-9]+(?:\([\d\s,]+\))?)(\s+NOT\s+NULL(?:\s+WITH\s+DEFAULT.*)?)?", col, re.I)
+            if m:
+                name = m.group(1).upper()
+                db2_type = m.group(2).upper()
+                is_not_null = bool(m.group(3))
+                is_nullable = not is_not_null
+                self._sql_meta[name] = SqlMetadata(name, db2_type, is_nullable)
         
         return table_name
 
@@ -168,32 +173,53 @@ class DclgenParser(BaseParser):
         fields = []
         level_re = re.compile(r"^\s*(\d{2})\s+([\w-]+)", re.I)
         
-        # Capture PIC until a period (terminal COBOL statement)
+        # Capture PIC until a period
         pic_re = re.compile(r"PIC(?:TURE)?\s+(?:IS\s+)?([^\.]+)", re.I)
         usage_re = re.compile(r"USAGE\s+(?:IS\s+)?([\w-]+)", re.I)
 
-        for line_num, text, _ in lines:
+        i = 0
+        while i < len(lines):
+            line_num, text, _ = lines[i]
             m = level_re.search(text)
-            if not m: continue
+            if not m:
+                i += 1
+                continue
             
             level = int(m.group(1))
+            if level == 88:
+                i += 1
+                continue
+            
             name = m.group(2).upper()
-
-            # Fix for PIC Truncation
-            pic_match = pic_re.search(text)
+            
+            # Accumulate full text for this field
+            full_text = text
+            i += 1
+            while i < len(lines):
+                next_num, next_text, _ = lines[i]
+                next_m = level_re.search(next_text)
+                if next_m:
+                    break
+                full_text += ' ' + next_text
+                i += 1
+            
+            pic_match = pic_re.search(full_text)
             pic = pic_match.group(1).strip().upper() if pic_match else None
-
-            usage_match = usage_re.search(text)
+            
+            if pic and 'USAGE' in pic.upper():
+                pic = re.split(r'\s+USAGE\s+', pic, flags=re.I)[0].strip()
+            
+            usage_match = usage_re.search(full_text)
             usage = usage_match.group(1).upper() if usage_match else None
             
-            # Explicit COMP-3 detection for DCLGEN decimals
-            if not usage and pic and "COMP-3" in text.upper():
+            if not usage and pic and "COMP-3" in full_text.upper():
                 usage = "COMP-3"
-
+            
             fields.append(DclgenField(
                 level=level, name=name, line_number=line_num, 
                 picture=pic, usage=usage
             ))
+        
         return fields
 
     def _process_structure(self, raw_fields: List[DclgenField]) -> List[DclgenField]:
@@ -205,14 +231,12 @@ class DclgenParser(BaseParser):
             curr = raw_fields[i]
             
             # DB2 VARCHAR Logic: Group + Level 49 -LEN + Level 49 -TEXT
-            if i + 2 < len(raw_fields):
-                n1, n2 = raw_fields[i+1], raw_fields[i+2]
-                if n1.level == 49 and n2.level == 49 and "-LEN" in n1.name.upper():
-                    curr.is_varchar = True
-                    curr.picture = n2.picture # Use TEXT portion for length
-                    curr.usage = "DISPLAY"
-                    i += 2 # Consume child fields
-
+            if i + 2 < len(raw_fields) and raw_fields[i+1].level == 49 and raw_fields[i+2].level == 49 and "-LEN" in raw_fields[i+1].name.upper():
+                curr.is_varchar = True
+                curr.picture = raw_fields[i+2].picture  # Use TEXT portion for length
+                curr.usage = "DISPLAY"
+                i += 2  # Consume child fields
+            
             while stack and stack[-1].level >= curr.level:
                 stack.pop()
             
@@ -254,12 +278,14 @@ class DclgenParser(BaseParser):
         digits = len(clean)
 
         usage = (usage or "").upper()
+        if "NATIONAL" in usage:
+            return digits * 2
         # COMP-3: (n+1)//2
-        if "COMP-3" in usage:
+        if "COMP-3" in usage or "PACKED-DECIMAL" in usage:
             return (digits + 1) // 2
         
-        # BINARY / COMP: 2, 4, or 8 bytes
-        if "COMP" in usage or "BINARY" in usage:
+        # BINARY / COMP / COMP-5: 2, 4, or 8 bytes
+        if "COMP" in usage or "COMP-5" in usage or "BINARY" in usage:
             if digits <= 4: return 2
             if digits <= 9: return 4
             return 8
@@ -272,24 +298,59 @@ class DclgenParser(BaseParser):
         flat_map = {f.name: f for f in all_fields}
         
         def walk(f: DclgenField):
-            # 1. Link SQL Metadata
-            if f.name in self._sql_meta:
+            if "FILLER" in f.name:
+                for child in f.children:
+                    walk(child)
+                return
+            
+            # Normalize name for matching
+            norm_name = re.sub(r'^[A-Z0-9]{1,3}-', '', f.name).replace('-', '_')
+            
+            if norm_name in self._sql_meta:
+                meta = self._sql_meta[norm_name]
+                f.db2_type = meta.db2_type
+                f.is_nullable = meta.is_nullable
+                f.dotnet_type = self._map_to_dotnet(meta.db2_type, meta.is_nullable)
+            elif f.name in self._sql_meta:
                 meta = self._sql_meta[f.name]
                 f.db2_type = meta.db2_type
                 f.is_nullable = meta.is_nullable
                 f.dotnet_type = self._map_to_dotnet(meta.db2_type, meta.is_nullable)
 
-            # 2. Indicator Linking (Standard DCLGEN pattern: INDNULL-[NAME])
-            ind_name = f"INDNULL-{f.name}"
-            if ind_name in flat_map:
-                f.indicator_variable = ind_name
-                # Note: Presence of indicator implies nullability even if SQL says otherwise
-                f.is_nullable = True 
+            # Indicator Linking with common prefixes
+            prefixes = ["INDNULL-", "NULL-", "IND-", "N_"]
+            for prefix in prefixes:
+                ind_name = prefix + f.name
+                if ind_name in flat_map:
+                    f.indicator_variable = ind_name
+                    f.is_nullable = True 
+                    break
             
             for child in f.children:
                 walk(child)
 
         for r in roots: walk(r)
+        
+        # Sequential stitching if not all set
+        def get_leaves(nodes: List[DclgenField]) -> List[DclgenField]:
+            leaves = []
+            for node in nodes:
+                if not node.children:
+                    if "FILLER" not in node.name:
+                        leaves.append(node)
+                else:
+                    leaves.extend(get_leaves(node.children))
+            return leaves
+        
+        leaves = get_leaves(roots)
+        sql_list = list(self._sql_meta.values())
+        if len(leaves) == len(sql_list):
+            for i, leaf in enumerate(leaves):
+                if leaf.db2_type is None:
+                    meta = sql_list[i]
+                    leaf.db2_type = meta.db2_type
+                    leaf.is_nullable = meta.is_nullable
+                    leaf.dotnet_type = self._map_to_dotnet(meta.db2_type, meta.is_nullable)
 
     def _map_to_dotnet(self, db2_type_str: str, is_nullable: bool) -> str:
         """Determines the C# / .NET type based on DB2 column type."""
@@ -299,7 +360,8 @@ class DclgenParser(BaseParser):
             "CHAR": "string", "VARCHAR": "string", "DECIMAL": "decimal",
             "NUMERIC": "decimal", "INTEGER": "int", "SMALLINT": "short",
             "BIGINT": "long", "DATE": "DateTime", "TIME": "TimeSpan",
-            "TIMESTAMP": "DateTime", "FLOAT": "double", "REAL": "float"
+            "TIMESTAMP": "DateTime", "FLOAT": "double", "REAL": "float",
+            "GRAPHIC": "string", "VARGRAPHIC": "string"
         }
         
         dotnet_type = mapping.get(base_type, "object")
@@ -309,4 +371,3 @@ class DclgenParser(BaseParser):
             return dotnet_type + "?"
         
         return dotnet_type
-
