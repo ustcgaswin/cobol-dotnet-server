@@ -40,12 +40,7 @@ def generate_dependency_graph_md(
     lines.append(f"> Project: {project_id}")
     lines.append("")
     
-    # Summary
-    lines.append("## Summary")
-    lines.append("")
-    lines.append("| Relationship Type | Count |")
-    lines.append("|-------------------|-------|")
-    
+
     program_calls = cobol_deps.get('program_calls', [])
     unresolved_calls = cobol_deps.get('unresolved_calls', [])
     copybooks = cobol_deps.get('copybooks', [])
@@ -218,41 +213,47 @@ def generate_dependency_graph_md(
     lines.append("")
 
 
-    # ADD THIS: New Section for Assembly Dependencies
+     # --- ASSEMBLY SECTION ---
     lines.append("---")
-    lines.append("")
     lines.append("## Assembly Dependencies")
     lines.append("")
 
+    if asm_copy:
+        lines.append("### Assembly → Copybook References")
+        lines.append("")
+        lines.append("| Assembly Module | Copybook Name | Line |")
+        lines.append("| :--- | :--- | :--- |")
+        for copy in sorted(asm_copy, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            lines.append(f"| {copy['source']} | {copy['copybook']} | {copy.get('line', '')} |")
+        lines.append("")
+
     if asm_calls:
         lines.append("### Assembly → External Calls")
+        lines.append("")
         lines.append("| Source (ASM) | Target | Type | Line |")
-        lines.append("|--------------|--------|------|------|")
+        lines.append("| :--- | :--- | :--- | :--- |")
         for call in sorted(asm_calls, key=lambda x: (x.get('source', ''), x.get('line', 0))):
             lines.append(f"| {call['source']} | {call['target']} | {call['call_type']} | {call['line']} |")
-    else:
-        lines.append("*No Assembly subprogram calls found.*")
-    lines.append("")
+        lines.append("")
 
     if asm_io:
         lines.append("### Assembly → File I/O")
+        lines.append("")
         lines.append("| Source (ASM) | DD Name | Operation | Line |")
-        lines.append("|--------------|---------|-----------|------|")
+        lines.append("| :--- | :--- | :--- | :--- |")
         for io in sorted(asm_io, key=lambda x: (x.get('source', ''), x.get('line', 0))):
             lines.append(f"| {io['source']} | {io['file']} | {io['operation']} | {io['line']} |")
-    lines.append("")
+        lines.append("")
 
     if asm_db2:
         lines.append("### Assembly → DB2 Usage")
+        lines.append("")
         lines.append("| Source (ASM) | Access Type | Line |")
-        lines.append("|--------------|-------------|------|")
-        for db2 in asm_db2:
+        lines.append("| :--- | :--- | :--- |")
+        for db2 in sorted(asm_db2, key=lambda x: (x.get('source', ''), x.get('line', 0))):
             lines.append(f"| {db2['source']} | {db2['type']} | {db2['line']} |")
-    lines.append("")
-
-
-
-    
+        lines.append("")
+ 
     # Gaps section
     lines.append("---")
     lines.append("")
