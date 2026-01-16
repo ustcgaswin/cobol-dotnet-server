@@ -165,51 +165,69 @@ def grep_search(
 
 @tool("list_files")
 def list_files(
-    path: str = "",
-    extension: str | None = None,
+    file_type: str | None = None,
     runtime: ToolRuntime[ProjectContext] = None,
 ) -> str:
-    """List files in a project directory.
+    """List source files for the current project from the database.
     
-    Use this to explore the project structure and find available source files.
+    Use this to discover available source files and their types.
+    The file_type is the official type assigned during upload (e.g., cobol, copybook, jcl).
     
     Args:
-        path: Relative path within project (empty string for root)
-        extension: Optional file extension filter (e.g., ".cbl", ".cpy")
+        file_type: Optional filter by file type (e.g., "cobol", "copybook", "jcl", "assembly")
         
     Returns:
-        List of files and directories, or an error message
+        List of source files with their types and sizes
     """
+    import asyncio
+    from sqlalchemy import select
+    from app.db.base import async_session_factory
+    from app.db.models.source_file import SourceFile
+    
+    async def _query_files():
+        async with async_session_factory() as session:
+            query = select(SourceFile).where(
+                SourceFile.project_id == project_id
+            )
+            if file_type:
+                query = query.where(SourceFile.file_type == file_type)
+            
+            result = await session.execute(query)
+            return result.scalars().all()
+    
     try:
         project_id = runtime.context.project_id
-        target = _validate_path(project_id, path) if path else _get_project_path(project_id)
         
-        if not target.exists():
-            return f"Error: Path '{path}' not found"
+        # Run async query in sync context
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're in an async context, create a new task
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    files = pool.submit(asyncio.run, _query_files()).result()
+            else:
+                files = loop.run_until_complete(_query_files())
+        except RuntimeError:
+            files = asyncio.run(_query_files())
         
-        if not target.is_dir():
-            return f"Error: '{path}' is not a directory"
+        if not files:
+            msg = f"No source files found"
+            if file_type:
+                msg += f" with type '{file_type}'"
+            return msg
         
         items = []
-        for item in sorted(target.iterdir()):
-            if item.is_dir():
-                items.append(f"[DIR]  {item.name}/")
-            else:
-                if extension is None or item.suffix.lower() == extension.lower():
-                    size = item.stat().st_size
-                    items.append(f"[FILE] {item.name} ({size} bytes)")
+        for f in sorted(files, key=lambda x: (x.file_type, x.filename)):
+            items.append(f"[{f.file_type.upper()}] {f.filename} ({f.size_bytes} bytes)")
         
-        if not items:
-            return f"Directory '{path or '/'}' is empty"
+        header = "Source files"
+        if file_type:
+            header += f" (type: {file_type})"
         
-        header = f"Contents of '{path or '/'}'"
-        if extension:
-            header += f" (filtered: {extension})"
+        return header + f" ({len(files)} total):\n" + "\n".join(items)
         
-        return header + ":\n" + "\n".join(items)
-        
-    except ValueError as e:
-        return f"Error: {e}"
     except Exception as e:
         logger.error(f"list_files error: {e}")
         return f"Error listing files: {e}"
+
