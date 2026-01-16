@@ -9,6 +9,7 @@ def generate_dependency_graph_md(
     cobol_deps: dict | None = None,
     copybook_deps: dict | None = None,
     jcl_deps: dict | None = None,
+    assembly_deps: dict | None = None,
     missing_file_types: list[str] | None = None,
 ) -> str:
     """Generate dependency_graph.md content.
@@ -29,6 +30,7 @@ def generate_dependency_graph_md(
     cobol_deps = cobol_deps or {}
     copybook_deps = copybook_deps or {}
     jcl_deps = jcl_deps or {}
+    assembly_deps = assembly_deps or {}
     missing_file_types = missing_types = missing_file_types or []
     
     # Header
@@ -38,12 +40,7 @@ def generate_dependency_graph_md(
     lines.append(f"> Project: {project_id}")
     lines.append("")
     
-    # Summary
-    lines.append("## Summary")
-    lines.append("")
-    lines.append("| Relationship Type | Count |")
-    lines.append("|-------------------|-------|")
-    
+
     program_calls = cobol_deps.get('program_calls', [])
     unresolved_calls = cobol_deps.get('unresolved_calls', [])
     copybooks = cobol_deps.get('copybooks', [])
@@ -56,6 +53,15 @@ def generate_dependency_graph_md(
     jcl_inc = jcl_deps.get('jcl_includes', [])
     jcl_files = jcl_deps.get('jcl_files', [])
     
+
+    asm_calls = assembly_deps.get('program_calls', [])
+    asm_copy = assembly_deps.get('copybooks', [])
+    asm_db2 = assembly_deps.get('db2_usage', [])
+    asm_io = assembly_deps.get('file_io', [])
+    asm_ext = assembly_deps.get('externals', [])
+
+
+
     lines.append("## Summary")
     lines.append("")
     lines.append("| Relationship Type | Count |")
@@ -71,6 +77,10 @@ def generate_dependency_graph_md(
     lines.append(f"| JCL → Procedure | {len(jcl_proc)} |")
     lines.append(f"| JCL → Include Group | {len(jcl_inc)} |")
     lines.append(f"| JCL → Dataset (DSN) | {len(jcl_files)} |")
+    lines.append(f"| Assembly → Program (CALL) | {len(asm_calls)} |")
+    lines.append(f"| Assembly → Copybook | {len(asm_copy)} |")
+    lines.append(f"| Assembly → File (I/O) | {len(asm_io)} |")
+    lines.append(f"| Assembly → DB2 (DSNHLI) | {len(asm_db2)} |")
     lines.append("")
     
     # Program → Program (CALL)
@@ -201,7 +211,49 @@ def generate_dependency_graph_md(
     else:
         lines.append("*No INCLUDE statements found.*")
     lines.append("")
-    
+
+
+     # --- ASSEMBLY SECTION ---
+    lines.append("---")
+    lines.append("## Assembly Dependencies")
+    lines.append("")
+
+    if asm_copy:
+        lines.append("### Assembly → Copybook References")
+        lines.append("")
+        lines.append("| Assembly Module | Copybook Name | Line |")
+        lines.append("| :--- | :--- | :--- |")
+        for copy in sorted(asm_copy, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            lines.append(f"| {copy['source']} | {copy['copybook']} | {copy.get('line', '')} |")
+        lines.append("")
+
+    if asm_calls:
+        lines.append("### Assembly → External Calls")
+        lines.append("")
+        lines.append("| Source (ASM) | Target | Type | Line |")
+        lines.append("| :--- | :--- | :--- | :--- |")
+        for call in sorted(asm_calls, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            lines.append(f"| {call['source']} | {call['target']} | {call['call_type']} | {call['line']} |")
+        lines.append("")
+
+    if asm_io:
+        lines.append("### Assembly → File I/O")
+        lines.append("")
+        lines.append("| Source (ASM) | DD Name | Operation | Line |")
+        lines.append("| :--- | :--- | :--- | :--- |")
+        for io in sorted(asm_io, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            lines.append(f"| {io['source']} | {io['file']} | {io['operation']} | {io['line']} |")
+        lines.append("")
+
+    if asm_db2:
+        lines.append("### Assembly → DB2 Usage")
+        lines.append("")
+        lines.append("| Source (ASM) | Access Type | Line |")
+        lines.append("| :--- | :--- | :--- |")
+        for db2 in sorted(asm_db2, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            lines.append(f"| {db2['source']} | {db2['type']} | {db2['line']} |")
+        lines.append("")
+ 
     # Gaps section
     lines.append("---")
     lines.append("")

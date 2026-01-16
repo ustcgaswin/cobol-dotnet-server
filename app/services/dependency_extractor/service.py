@@ -12,7 +12,8 @@ from app.core.exceptions import DependencyExtractionError
 from app.services.dependency_extractor.extractors import (
     extract_cobol_dependencies,
     extract_copybook_dependencies,
-    extract_jcl_dependencies
+    extract_jcl_dependencies,
+    extract_assembly_dependencies,
 )
 from app.services.dependency_extractor.generator import generate_dependency_graph_md
 
@@ -69,7 +70,9 @@ class DependencyExtractorService:
             copybook_deps = {'copybook_to_copybook': []}
             jcl_deps = {'jcl_program_calls': [], 'jcl_proc_calls': [], 
                         'jcl_includes': [], 'jcl_files': []}
-            
+            assembly_deps = {'program_calls': [], 'copybooks': [], 'file_io': [], 
+                     'db2_usage': [], 'externals': []}
+
             if 'cobol' in available_types:
                 cobol_data = self._read_consolidated(available_types['cobol'])
                 if cobol_data:
@@ -89,12 +92,19 @@ class DependencyExtractorService:
                     jcl_deps = extract_jcl_dependencies(jcl_data)
                     logger.info(f"Extracted {len(jcl_deps['jcl_program_calls'])} JCL program calls")
             
-            # Generate markdown
+            if 'assembly' in available_types:
+                assembly_data = self._read_consolidated(available_types['assembly'])
+                if assembly_data:
+                    assembly_deps = extract_assembly_dependencies(assembly_data)
+                    logger.info(f"Extracted {len(assembly_deps['program_calls'])} Assembly program calls")
+
+            # UPDATE THIS: Pass assembly_deps to the generator
             markdown_content = generate_dependency_graph_md(
                 project_id=str(self.project_id),
                 cobol_deps=cobol_deps,
                 copybook_deps=copybook_deps,
                 jcl_deps=jcl_deps,
+                assembly_deps=assembly_deps, # <-- New parameter
                 missing_file_types=missing_types,
             )
             
@@ -114,6 +124,7 @@ class DependencyExtractorService:
                 'program_to_file_io': len(cobol_deps['file_io']),
                 'copybook_to_copybook': len(copybook_deps['copybook_to_copybook']),
                 'unresolved_calls': len(cobol_deps['unresolved_calls']),
+                'assembly_db2_calls': len(assembly_deps['db2_usage']),
             }
             
             return {

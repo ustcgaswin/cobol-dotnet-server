@@ -1,18 +1,18 @@
-"""
-HLASM Parser for IBM High Level Assembler for z/OS
 
-Parses HLASM source files and outputs comprehensive JSON including:
-- Assembly name (from TITLE or START)
-- Sections (CSECT, DSECT, etc. with instructions)
-- Symbols (labels, equates)
-- Literals
-- Dependencies (COPY files, macro calls, EXTRN symbols)
+"""
+HLASM Parser for IBM High Level Assembler for z/OS (Production Level)
+
+Features:
+- Assembly name (TITLE/START)
+- Sections (CSECT/DSECT) with instructions
+- Symbols, literals
+- Dependencies: COPY, macros, EXTRN/WXTRN
+- Enhanced: External subprogram calls (static + register-tracked indirect)
+- File I/O: VSAM/Sequential (OPEN/CLOSE/GET/PUT/READ/WRITE)
+- DB2 access: DSNHLI calls
 - USING/DROP scope tracking
 
-Handles fixed & free format, EBCDIC, continuations, comments.
-
-Usage:
-    python hlasm-parser.py <hlasm_file> [-o output.json]
+Handles fixed/free format, EBCDIC, continuations, comments.
 """
 
 import re
@@ -23,8 +23,7 @@ import argparse
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 from abc import ABC, abstractmethod
-from langchain_core.messages import SystemMessage, HumanMessage
-from app.config.llm_config import llm  # Import the initialized LLM from your config
+
 from app.core.parsers.base import BaseParser
 
 # Logging setup
@@ -36,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger('hlasm_parser')
 
 # =============================================================================
-# Known HLASM instructions & directives (used to distinguish labels from ops)
+# Known HLASM instructions/directives (expanded list)
 # =============================================================================
 KNOWN_OPS = {
     'A', 'AD', 'ADR', 'AE', 'AER', 'AH', 'AHI', 'AL', 'ALC', 'ALG', 'ALGR', 'ALR', 'ALY', 'AP', 'AR', 'AY',
@@ -58,7 +57,9 @@ KNOWN_OPS = {
     'UNPK',
     'X', 'XC', 'XI', 'XR',
     'ZAP',
-    # Common directives
+    # I/O macros (for file detection)
+    'OPEN', 'CLOSE', 'GET', 'PUT', 'READ', 'WRITE', 'CHECK', 'POINT',
+    # Directives
     'CSECT', 'DSECT', 'RSECT', 'COM', 'LOCTR', 'DC', 'DS', 'EQU', 'ORG', 'USING', 'DROP', 'LTORG',
     'MACRO', 'MEND', 'MEXIT', 'MNOTE', 'COPY', 'START', 'END', 'TITLE', 'EJECT', 'SPACE', 'PRINT',
     'AMODE', 'RMODE', 'XATTR', 'ENTRY', 'EXTRN', 'WXTRN'
@@ -110,23 +111,22 @@ class BaseSectionParser(ABC):
         return self._unrecognized
 
 # =============================================================================
-# Main Sections & Instructions Parser
+# Enhanced Sections Parser (with register tracking for calls)
 # =============================================================================
 
 @ParserRegistry.register("sections")
 class AssemblySectionsParser(BaseSectionParser):
-    """Handles control sections, instructions, USING/DROP tracking"""
+    """Handles control sections, instructions, USING/DROP, and register-tracked calls"""
 
     def parse(self, source: str, lines: List[Tuple[int, str, str]], is_free_format: bool) -> Dict[str, Any]:
         result = {'sections': []}
         current_section = {'name': 'UNNAMED', 'type': 'CSECT', 'instructions': [], 'usings': []}
         result['sections'].append(current_section)
 
-        active_usings: Dict[str, Dict[str, Any]] = {}  # register -> {'base': str, 'start_line': int}
+        active_usings: Dict[str, Dict[str, Any]] = {}  # reg -> {'base': str, 'start_line': int}
+        registers: Dict[str, Dict[str, Any]] = {}      # reg -> {'value': str (symbol or literal), 'last_set': int}
 
-        # Patterns
         section_pat = re.compile(r'^\s*([A-Z0-9_]{1,63})\s+(CSECT|DSECT|RSECT|COM|LOCTR)\b', re.I)
-        # Strict: optional label (1-8 chars), then mandatory operation, then operands
         inst_pat = re.compile(
             r'^\s{0,8}([A-Z0-9_]{1,8})?\s{1,}([A-Z][A-Z0-9]{0,7})\s{0,}(.*?)(?:\s{2,}.*)?$',
             re.I
@@ -135,13 +135,12 @@ class AssemblySectionsParser(BaseSectionParser):
         drop_pat   = re.compile(r'DROP\s+([0-9R, ]+)', re.I)
 
         for line_num, text, original in lines:
-            # Clean line - remove trailing comment
+            # Strip comment
+            comment = None
             if '*' in text:
                 text, cmt = re.split(r'\s*\*', text, maxsplit=1)
                 comment = cmt.strip() if cmt.strip() else None
-            else:
-                comment = None
-            text = text.rstrip()
+            text = text.rstrip().strip()
 
             # Section start
             m = section_pat.match(text)
@@ -152,6 +151,7 @@ class AssemblySectionsParser(BaseSectionParser):
                         'end_line': line_num - 1
                     })
                 active_usings.clear()
+                registers.clear()  # Reset register tracking per section
 
                 name = (m.group(1) or 'UNNAMED').upper()
                 typ  = m.group(2).upper()
@@ -159,7 +159,7 @@ class AssemblySectionsParser(BaseSectionParser):
                 result['sections'].append(current_section)
                 continue
 
-            # Instruction / Directive
+            # Instruction
             m = inst_pat.match(text)
             if m:
                 label = m.group(1).upper() if m.group(1) else None
@@ -179,7 +179,7 @@ class AssemblySectionsParser(BaseSectionParser):
                     'category': 'instruction' if is_known else 'macro_or_unknown'
                 }
 
-                # USING / DROP special handling
+                # === USING / DROP ===
                 if op == 'USING':
                     um = using_pat.search(text)
                     if um:
@@ -199,7 +199,6 @@ class AssemblySectionsParser(BaseSectionParser):
                     if dm:
                         regs_str = dm.group(1)
                         if not regs_str.strip():
-                            # DROP (all)
                             dropped = list(active_usings.keys())
                             active_usings.clear()
                         else:
@@ -212,55 +211,90 @@ class AssemblySectionsParser(BaseSectionParser):
                             'line': line_num
                         })
 
+                # === Register Tracking for Calls (R15 is common for program address) ===
+                if op == 'L' and len(operands) >= 2:
+                    reg = operands[0]['raw'].upper()
+                    value = operands[1]['raw'].upper()
+                    if value.startswith('=V('):
+                        symbol = re.sub(r'^=V\((.+?)\)$', r'\1', value).upper()
+                        registers[reg] = {'type': 'V-constant', 'target': symbol, 'line': line_num}
+                    elif re.match(r'^[A-Z0-9_]+$', value):  # Direct symbol load
+                        registers[reg] = {'type': 'direct-symbol', 'target': value, 'line': line_num}
+
+                # Detect BALR/BASR 14,Rx as call
+                if op in ('BALR', 'BASR') and len(operands) >= 2:
+                    ret_reg = operands[0]['raw'].upper()
+                    target_reg = operands[1]['raw'].upper()
+                    if ret_reg == '14' and target_reg in registers:
+                        call_info = registers[target_reg]
+                        current_section.setdefault('external_calls', []).append({
+                            'target': call_info['target'],
+                            'via_register': target_reg,
+                            'load_type': call_info['type'],
+                            'load_line': call_info['line'],
+                            'call_line': line_num
+                        })
+
                 current_section['instructions'].append(inst)
             else:
                 self._unrecognized.append({'line': line_num, 'text': text})
 
-        # Final active usings
+        # Final usings
         if active_usings:
             current_section['usings'].append({
                 'active_at_end': list(active_usings.values()),
                 'end_line': lines[-1][0] if lines else 0
             })
 
-        # Clean up empty default section
         if len(result['sections']) > 1 and not result['sections'][0]['instructions']:
             result['sections'].pop(0)
 
         return result
 
+    # def _split_operands(self, s: str) -> List[Dict[str, Any]]:
+    #     if not s:
+    #         return []
+    #     operands = []
+    #     parts = []
+    #     current = []
+    #     paren = 0
+    #     for c in s + ',':
+    #         if c == ',' and paren == 0:
+    #             part = ''.join(current).strip()
+    #             if part:
+    #                 parts.append(part)
+    #             current = []
+    #         else:
+    #             current.append(c)
+    #             if c == '(': paren += 1
+    #             elif c == ')': paren = max(0, paren - 1)
+    #     for part in parts:
+    #         tokens = re.findall(
+    #             r"[A-Z0-9_]+|=[A-Z]?'[^']*?'|=[A-Z]\([^\)]+\)'[^']*?'|[\(\)\+\-\*/=']|[0-9A-F]+",
+    #             part, re.I
+    #         )
+    #         operands.append({'raw': part, 'tokens': tokens})
+    #     return operands
+
     def _split_operands(self, s: str) -> List[Dict[str, Any]]:
-        """Split operands considering parentheses and quotes"""
         if not s:
             return []
-
+        # Remove extra spaces around commas
+        s = re.sub(r'\s*,\s*', ',', s)
         operands = []
-        parts = []
-        current = []
-        paren = 0
-
-        for c in s + ',':
-            if c == ',' and paren == 0:
-                part = ''.join(current).strip()
-                if part:
-                    parts.append(part)
-                current = []
-            else:
-                current.append(c)
-                if c == '(': paren += 1
-                elif c == ')': paren = max(0, paren - 1)
-
-        for part in parts:
+        for part in s.split(','):
+            part = part.strip()
+            if not part:
+                continue
             tokens = re.findall(
                 r"[A-Z0-9_]+|=[A-Z]?'[^']*?'|=[A-Z]\([^\)]+\)'[^']*?'|[\(\)\+\-\*/=']|[0-9A-F]+",
                 part, re.I
             )
             operands.append({'raw': part, 'tokens': tokens})
-
         return operands
 
 # =============================================================================
-# Other Parsers (Symbols, Dependencies) - kept minimal for brevity
+# Symbols Parser (enhanced literal detection)
 # =============================================================================
 
 @ParserRegistry.register("symbols")
@@ -268,7 +302,7 @@ class SymbolsParser(BaseSectionParser):
     def parse(self, source: str, lines: List[Tuple[int, str, str]], is_free: bool) -> Dict:
         result = {'symbols': {}, 'literals': []}
         equ_pat = re.compile(r'^\s*([A-Z0-9_]+)\s+EQU\s+(.*)', re.I)
-        lit_pat = re.compile(r'=[A-Z0-9]\'[^\']*\'|=[A-Z]\([^\)]+\)\'[^\']*\'', re.I)
+        lit_pat = re.compile(r'=[A-Z0-9]\'[^\']*?\'|=[A-Z]\([^\)]+\)\'[^\']*?\'|=[V]\([A-Z0-9_]+\)', re.I)
 
         for ln, txt, _ in lines:
             no_cmt = re.sub(r'\s*\*.*$', '', txt).strip()
@@ -282,18 +316,40 @@ class SymbolsParser(BaseSectionParser):
 
         return result
 
+# =============================================================================
+# Enhanced Dependencies Parser (now includes file I/O & DB2)
+# =============================================================================
+
+
 @ParserRegistry.register("dependencies")
 class DependenciesParser(BaseSectionParser):
     def parse(self, source: str, lines: List[Tuple[int, str, str]], is_free: bool) -> Dict:
-        result = {'copy_files': [], 'macros_used': [], 'externals': []}
+        result = {
+            'copy_files': [],
+            'macros_used': [],
+            'externals': [],
+            'files_accessed': [],
+            'db2_access': [],
+            'subprograms_called': []  # New simple field for =V() calls
+        }
+
         copy_pat = re.compile(r'^\s*(?:[A-Z0-9_]+\s+)?COPY\s+([A-Z0-9_]+)', re.I)
         ext_pat = re.compile(r'^\s*(?:[A-Z0-9_]+\s+)?(EXTRN|WXTRN)\s+(.*)', re.I)
+        # Broader I/O pattern - matches both (ddname) and ddname alone
+        io_pat = re.compile(r'^\s*(OPEN|CLOSE|GET|PUT|READ|WRITE|CHECK|POINT)\b\s*(?:\(|,)?\s*([A-Z0-9_]+)?', re.I)
+        db2_pat = re.compile(r'\bCALL\s+[\'"]DSNHLI[\'"]', re.I)
+        # Simple =V() call detection (no register tracking needed)
+        vcall_pat = re.compile(r'=\s*V\s*\(\s*([A-Z0-9_]{1,8})\s*\)', re.I)
 
         for ln, txt, _ in lines:
             no_cmt = re.sub(r'\s*\*.*$', '', txt).strip()
+
+            # 1. COPY books
             m = copy_pat.search(no_cmt)
             if m:
                 result['copy_files'].append({'name': m.group(1).upper(), 'line': ln})
+
+            # 2. EXTRN/WXTRN (external symbols)
             m = ext_pat.search(no_cmt)
             if m:
                 typ = m.group(1).upper()
@@ -302,10 +358,38 @@ class DependenciesParser(BaseSectionParser):
                     if s:
                         result['externals'].append({'name': s, 'type': typ, 'line': ln})
 
+            # 3. File I/O (VSAM/Sequential)
+            m = io_pat.search(no_cmt)
+            if m:
+                op_name = m.group(1).upper()
+                ddname = m.group(2).upper() if m.group(2) else 'UNKNOWN'
+                result['files_accessed'].append({
+                    'operation': op_name,
+                    'ddname': ddname,
+                    'line': ln
+                })
+
+            # 4. DB2 access
+            if db2_pat.search(no_cmt):
+                result['db2_access'].append({
+                    'type': 'CALL DSNHLI',
+                    'line': ln
+                })
+
+            # Simple subprogram calls via =V()
+            for m in vcall_pat.finditer(no_cmt):
+                target = m.group(1).upper()
+                result['subprograms_called'].append({
+                    'target': target,
+                    'type': 'static_V_call',
+                    'line': ln
+                })
+
         return result
 
+
 # =============================================================================
-# Main Parser Class
+# Main Parser Class (unchanged structure, but now with all enhancements)
 # =============================================================================
 
 class AssemblyParser(BaseParser):
@@ -314,132 +398,44 @@ class AssemblyParser(BaseParser):
     EBCDIC_CODEPAGES = ['cp1047', 'cp037', 'cp500', 'cp875']
     MAX_FILE_SIZE = 50 * 1024 * 1024
 
-    # --- ADD THIS SYSTEM PROMPT ---
-    LLM_TECHNICAL_PROMPT = """
-    You are an expert IBM Mainframe Modernization Architect. 
-    Your task is to analyze HLASM (Assembly) code and extract Technical Requirements for .NET conversion.
-    
-    Focus on:
-    1. Business Logic Rules: Detailed conditions and calculations.
-    2. Register Usage: Identify which registers hold pointers to external data structures.
-    3. Memory Management: Identify GETMAIN/FREEMAIN or storage modification side effects.
-    4. Integration Requirements: How this module interacts with COBOL (Linkage).
-
-    Output MUST be a strict JSON object. No markdown.
-    Schema:
-    {
-        "technical_requirements": {
-            "logic_rules": ["string"],
-            "storage_analysis": "string",
-            "linkage_convention": "string",
-        }
-    }
-    """
-
     def __init__(self, strict: bool = False):
         self.strict = strict
         self._source = ""
         self._lines: List[Tuple[int, str, str]] = []
         self._unrecognized = []
 
-    # def parse_file(self, filepath: str) -> Dict:
-    #     path = Path(filepath)
-    #     if not path.is_file():
-    #         raise FileNotFoundError(f"File not found: {filepath}")
-
-    #     raw = path.read_bytes()
-
-    #     content, enc = self._detect_and_decode(raw)
-    #     self._source = content
-
-    #     lines_raw = content.splitlines()
-    #     is_free = self._detect_format(lines_raw)
-    #     self._lines = self._preprocess(lines_raw, is_free)
-
-    #     normalized = self._normalize_source(content, is_free)
-
-    #     result = {
-    #         'source_file': path.name,
-    #         'format': 'free' if is_free else 'fixed',
-    #         'detected_encoding': enc
-    #     }
-
-    #     for name, cls in ParserRegistry.all_parsers().items():
-    #         parser = cls()
-    #         data = parser.parse(normalized, self._lines, is_free)
-    #         if data:
-    #             result[name] = data
-
-            
-    #         if parser.unrecognized:
-    #             self._unrecognized.extend(parser.unrecognized)
-
-    #     name = self._extract_assembly_name(normalized)
-    #     if name:
-    #         result['assembly_name'] = name
-
-    #     if self._unrecognized:
-    #         result['unrecognized_lines'] = self._unrecognized
-
-    #     return result
-
     def parse_file(self, filepath: str) -> Dict:
         path = Path(filepath)
         if not path.is_file():
             raise FileNotFoundError(f"File not found: {filepath}")
 
-        # 1. Load and Decode
         raw = path.read_bytes()
         content, enc = self._detect_and_decode(raw)
         self._source = content
 
-        # 2. Preprocess
         lines_raw = content.splitlines()
         is_free = self._detect_format(lines_raw)
         self._lines = self._preprocess(lines_raw, is_free)
+
         normalized = self._normalize_source(content, is_free)
 
-        # 3. Initialize Result
         result = {
             'source_file': path.name,
             'format': 'free' if is_free else 'fixed',
             'detected_encoding': enc
         }
 
-        # 4. Run Logic-Based Parsers (Loop)
-        for parser_key, parser_cls in ParserRegistry.all_parsers().items():
-            parser_instance = parser_cls()
-            data = parser_instance.parse(normalized, self._lines, is_free)
-            
+        for name, cls in ParserRegistry.all_parsers().items():
+            parser = cls()
+            data = parser.parse(normalized, self._lines, is_free)
             if data:
-                result[parser_key] = data
-            
-            # COLLECT UNRECOGNIZED LINES (Must be inside the loop)
-            if parser_instance.unrecognized:
-                self._unrecognized.extend(parser_instance.unrecognized)
+                result[name] = data
+            if parser.unrecognized:
+                self._unrecognized.extend(parser.unrecognized)
 
-        # 5. NEW LLM CALL (After the loop finishes)
-        logger.info(f"Requesting LLM technical analysis for {path.name}")
-        try:
-            llm_response = llm.invoke([
-                SystemMessage(content=self.LLM_TECHNICAL_PROMPT),
-                HumanMessage(content=f"Analyze this HLASM source:\n\n{normalized}")
-            ])
-            
-            raw_json = llm_response.content.strip()
-            if "```json" in raw_json:
-                raw_json = raw_json.split("```json")[1].split("```")[0].strip()
-            
-            result['llm_analysis'] = json.loads(raw_json)
-            
-        except Exception as e:
-            logger.error(f"LLM Technical Analysis failed: {e}")
-            result['llm_analysis'] = {"error": "LLM analysis failed", "details": str(e)}
-
-        # 6. Final Metadata Extraction
-        asm_name = self._extract_assembly_name(normalized)
-        if asm_name:
-            result['assembly_name'] = asm_name
+        name = self._extract_assembly_name(normalized)
+        if name:
+            result['assembly_name'] = name
 
         if self._unrecognized:
             result['unrecognized_lines'] = self._unrecognized
@@ -493,20 +489,29 @@ class AssemblyParser(BaseParser):
         return '\n'.join(result)
 
     def _extract_assembly_name(self, source: str) -> Optional[str]:
-        m = re.search(r'^\s*([A-Z0-9_]+)\s+START\b', source, re.I | re.M)
+        # 1. TITLE is most reliable (usually at the top)
+        m = re.search(r'TITLE\s+[\'\"](.+?)[\'\"]', source, re.I | re.M)
+        if m:
+            title = m.group(1).strip()
+            # Optional: clean up common patterns like 'PROG001 - DESCRIPTION'
+            if ' - ' in title:
+                return title.split(' - ', 1)[0].strip()  # e.g., "PROG001"
+            return title
+
+        # 2. Fallback to START label
+        m = re.search(r'^\s*([A-Z0-9_]{1,8})\s+START\b', source, re.I | re.M)
         if m:
             return m.group(1).upper()
-        m = re.search(r'TITLE\s+[\'\"](.+?)[\'\"]', source, re.I)
+
+        # 3. Last resort: first CSECT name (if no TITLE/START)
+        m = re.search(r'^\s*([A-Z0-9_]{1,8})\s+CSECT\b', source, re.I | re.M)
         if m:
-            return m.group(1).strip()
+            return m.group(1).upper()
+
         return None
-
-# =============================================================================
-# CLI Entry Point
-# =============================================================================
-
+    
 def main():
-    parser = argparse.ArgumentParser(description='HLASM source parser')
+    parser = argparse.ArgumentParser(description='HLASM source parser (production)')
     parser.add_argument('input', help='Input HLASM file')
     parser.add_argument('-o', '--output', help='Output JSON file')
     parser.add_argument('--indent', type=int, default=2)
@@ -532,144 +537,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
-
-
-
-# """
-# LLM-based Assembly Parser for HLASM.
-# Uses Anthropic/Claude to extract business logic and technical intent.
-# Includes resilient EBCDIC/UTF-8 detection.
-# """
-
-# import re
-# import json
-# import logging
-# from pathlib import Path
-# from typing import Optional, List
-
-# # Import ebcdic to register mainframe codecs in the Python registry
-# try:
-#     import ebcdic
-#     HAS_EBCDIC = True
-# except ImportError:
-#     HAS_EBCDIC = False
-
-# from langchain_core.messages import SystemMessage, HumanMessage
-# from app.core.parsers.base import BaseParser
-# from app.config.llm_config import llm  # Your LLM configuration
-# from app.core.exceptions import ParseError
-
-# logger = logging.getLogger('assembly_parser')
-
-# class AssemblyParser(BaseParser):
-#     FILE_TYPE = "assembly"
-
-#     # Your Expert HLASM Prompt
-#     SYSTEM_PROMPT = """
-#     You are an expert in IBM z/OS High Level Assembler (HLASM), COBOL interoperability,
-#     and legacy mainframe systems.
-
-#     Your task is to analyze the assembler code and produce a STRICT JSON object
-#     that summarizes the business and technical intent of the module.
-
-#     IMPORTANT RULES (MUST FOLLOW):
-#     1. Output MUST be valid JSON only. No explanations, no markdown, no comments.
-#     2. Do NOT invent information. If something is unclear, mark it as "unknown".
-#     3. Use only information present or strongly implied by the code and comments.
-#     4. Do NOT include assembly syntax in the output unless required by the schema.
-#     5. Keep values concise and normalized (lowercase snake_case where applicable).
-
-#     JSON OUTPUT SCHEMA (FIXED — DO NOT CHANGE KEYS):
-#     {
-#       "module_name": "",
-#       "language": "hlasm",
-#       "module_type": "assembler_module",
-#       "entry_point": "",
-#       "callable_from": ["cobol", "assembler"],
-#       "technical_summary": "",
-#       "business_summary": "",
-#       "domain": "",
-#       "protocol_or_format": "",
-#       "data_elements": [],
-#       "operations": [],
-#       "constants": [],
-#       "offsets": {},
-#       "security_or_compliance": [],
-#       "side_effects": ""
-#     }
-#     """
-
-#     def parse_file(self, filepath: str) -> dict:
-#         """Main entry point for parsing Assembly files via LLM."""
-#         path = Path(filepath)
-#         logger.info(f"Initiating LLM parse for Assembly: {path.name}")
-
-#         # 1. Resilient Encoding Detection
-#         content = self._load_file(path)
-
-#         # 2. Call the LLM (Claude via Azure Anthropic)
-#         try:
-#             response = llm.invoke([
-#                 SystemMessage(content=self.SYSTEM_PROMPT),
-#                 HumanMessage(content=f"NOW ANALYZE THE FOLLOWING ASSEMBLER MODULE:\n\n{content}")
-#             ])
-
-#             # 3. Clean up the response (Remove Markdown JSON wrappers if present)
-#             raw_content = response.content.strip()
-#             if "```json" in raw_content:
-#                 raw_content = raw_content.split("```json")[1].split("```")[0].strip()
-#             elif "```" in raw_content:
-#                  raw_content = raw_content.split("```")[1].split("```")[0].strip()
-
-#             parsed_data = json.loads(raw_content)
-            
-#             # Add metadata for internal tracking
-#             parsed_data["_source_file"] = path.name
-#             parsed_data["_parsing_method"] = "llm_inference"
-            
-#             return parsed_data
-
-#         except json.JSONDecodeError as e:
-#             logger.error(f"LLM returned invalid JSON for {path.name}")
-#             return {
-#                 "error": "LLM output was not valid JSON",
-#                 "raw_output": response.content[:500]
-#             }
-#         except Exception as e:
-#             logger.exception(f"Unexpected error calling LLM for {path.name}")
-#             raise ParseError(f"Assembly LLM Parse failed: {str(e)}")
-
-#     def _load_file(self, path: Path) -> str:
-#         """
-#         Decodes file bytes into string. 
-#         Uses keyword-validation to ensure correct encoding (UTF-8 vs EBCDIC).
-#         """
-#         raw = path.read_bytes()
-        
-#         # HLASM Keywords to validate a successful decode
-#         keywords = ["CSECT", "USING", "START", "PRINT", "ENTRY", "DSECT", "DC", "DS"]
-        
-#         # Check UTF-8 first (most common for files already on a PC), then EBCDIC
-#         encodings = ['utf-8', 'cp1047', 'cp037', 'ascii']
-        
-#         for enc in encodings:
-#             try:
-#                 # Skip EBCDIC codecs if the package isn't installed
-#                 if (enc.startswith('cp') or enc == 'ebcdic') and not HAS_EBCDIC:
-#                     continue
-                    
-#                 text = raw.decode(enc)
-                
-#                 # Validation: Does the decoded text actually contain Assembly?
-#                 if any(kw in text.upper() for kw in keywords):
-#                     logger.info(f"Successfully decoded {path.name} using {enc}")
-#                     return text
-#             except (UnicodeDecodeError, LookupError):
-#                 continue
-
-#         # Final Fallback
-#         logger.warning(f"No HLASM keywords found in {path.name} with standard codecs. Falling back to UTF-8.")
-#         return raw.decode('utf-8', errors='replace')
