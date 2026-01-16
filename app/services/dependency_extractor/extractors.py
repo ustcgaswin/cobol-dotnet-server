@@ -315,3 +315,127 @@ def extract_assembly_dependencies(consolidated_data: list[dict]) -> dict:
         'db2_usage': db2_usage,
         'externals': externals
     }
+
+
+def extract_pli_dependencies(consolidated_data: list[dict]) -> dict:
+    """Extract dependencies from PL/I parsed data and normalize to the
+    same shape as COBOL extractor so the generator can reuse templates.
+    """
+    program_calls = []
+    unresolved_calls = []
+    copybooks = []
+    sql_tables = []
+    file_definitions = []
+    file_io = []
+
+    for program in consolidated_data:
+        # Program identification - prefer parser-provided program id
+        program_name = (
+            program.get('structure', {}).get('program_id')
+            or program.get('meta', {}).get('source_file')
+            or 'UNKNOWN'
+        )
+
+        deps = program.get('dependencies', {})
+
+        # Calls
+        for call in deps.get('calls', []):
+            target = call.get('target') or call.get('program_name')
+            ctype = call.get('type', '').upper()
+            # treat FETCH/DYNAMIC types as dynamic
+            call_type = 'dynamic' if 'DYNAMIC' in ctype or 'FETCH' in ctype else 'static'
+
+            entry = {
+                'source': program_name,
+                'target': target,
+                'call_type': call_type,
+                'line': call.get('line'),
+            }
+
+            if call_type == 'dynamic':
+                entry['variable'] = call.get('variable')
+                entry['resolved'] = call.get('resolved', False)
+                if not entry['resolved']:
+                    unresolved_calls.append(entry)
+                else:
+                    program_calls.append(entry)
+            else:
+                program_calls.append(entry)
+
+        # Includes / copybooks
+        for inc in deps.get('includes', []):
+            # include entries can be preprocessor/include or SQL includes
+            copybooks.append({
+                'source': program_name,
+                'copybook': inc.get('name') or inc.get('copybook_name', ''),
+                'line': inc.get('line'),
+                'library': inc.get('library'),
+                'replacing': inc.get('replacing'),
+            })
+
+        # SQL tables
+        for tbl in deps.get('sql_tables', []):
+            table_name = tbl.get('table')
+            if table_name:
+                existing = next((t for t in sql_tables if t['source'] == program_name and t['table'] == table_name), None)
+                operation = tbl.get('access') or tbl.get('operation') or 'UNKNOWN'
+                if existing:
+                    if operation not in existing['operations']:
+                        existing['operations'].append(operation)
+                else:
+                    sql_tables.append({
+                        'source': program_name,
+                        'table': table_name,
+                        'operations': [operation] if operation != 'UNKNOWN' else []
+                    })
+
+        # File definitions (from io.file_descriptors)
+        for fd in program.get('io', {}).get('file_descriptors', []):
+            file_definitions.append({
+                'source': program_name,
+                'logical_name': fd.get('internal_name') or fd.get('name'),
+                'dd_name': fd.get('ddname') or fd.get('internal_name'),
+                'organization': None,
+                'access_mode': None,
+                'line': fd.get('line'),
+            })
+
+        # File I/O operations
+        for op in program.get('io', {}).get('operations', []):
+            file_io.append({
+                'source': program_name,
+                'file': op.get('file') or op.get('file_name'),
+                'operation': op.get('op') or op.get('operation'),
+                'mode': None,
+                'line': op.get('line'),
+            })
+
+    return {
+        'program_calls': program_calls,
+        'unresolved_calls': unresolved_calls,
+        'copybooks': copybooks,
+        'sql_tables': sql_tables,
+        'file_definitions': file_definitions,
+        'file_io': file_io,
+    }
+
+
+def extract_pli_copybook_dependencies(consolidated_data: list[dict]) -> dict:
+    """Extract nested include references from PL/I copybook parsed data.
+    PL/I copybooks typically list includes under dependencies.includes.
+    Normalize to same shape as COBOL copybook extractor.
+    """
+    copybook_to_copybook = []
+
+    for cb in consolidated_data:
+        cb_name = cb.get('meta', {}).get('source_file') or cb.get('copybook_name') or 'UNKNOWN'
+        for inc in cb.get('dependencies', {}).get('includes', []):
+            copybook_to_copybook.append({
+                'source': cb_name,
+                'target': inc.get('name') or inc.get('copybook_name', ''),
+                'line': inc.get('line'),
+                'library': inc.get('library'),
+                'replacing': inc.get('replacing'),
+            })
+
+    return {'copybook_to_copybook': copybook_to_copybook}
