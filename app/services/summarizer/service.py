@@ -1,78 +1,139 @@
-"""File Summarization Service."""
-
 import asyncio
-import re
 import uuid
 from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import Type, Any, Optional
 
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.llm_config import get_llm
 from app.config.settings import settings
+from app.db.enums import SourceFileType
+from app.db.models.source_file import SourceFile
+from app.db.repositories.source_file import SourceFileRepository
+from app.core.exceptions import SummarizationError
+# Chunkers
 from app.core.chunkers.cobol import CobolChunker
 from app.core.chunkers.copybook import CopybookChunker
-from app.core.exceptions import SummarizationError
+from app.core.chunkers.pli import PliChunker
+from app.core.chunkers.pli_copybook import PliCopybookChunker
+
+# Prompts
+from app.services.summarizer.prompts import (
+    COBOL_CHUNK_PROMPT,
+    COPYBOOK_PROMPT,
+    PLI_CHUNK_PROMPT,
+    PLI_COPYBOOK_PROMPT,
+)
 from app.services.summarizer.generator import generate_file_summaries_md
-from app.services.summarizer.prompts import COBOL_CHUNK_PROMPT, COPYBOOK_PROMPT
+
+
+@dataclass
+class ProcessingStrategy:
+    """Configuration for handling specific file types."""
+    chunker_cls: Type[Any]
+    prompt_template: str
+    is_rolling: bool  # True = Chunk loop with history, False = Single pass
+    parser_type: str  # String identifier for the parsing logic
 
 
 class SummarizerService:
-    """Service for generating file summaries via LLM."""
+    """Service for generating file summaries via LLM using DB-driven strategies."""
     
     MAX_RETRIES = 3
-    
-    def __init__(self, project_id: uuid.UUID):
-        """Initialize service."""
+
+    def __init__(self, project_id: uuid.UUID, session: AsyncSession):
+        """
+        Initialize service.
+        
+        Args:
+            project_id: The UUID of the project.
+            session: SQLAlchemy AsyncSession for DB access.
+        """
         self.project_id = project_id
-        # Fix: use get_storage_path() and append project_id
+        self.session = session
+        self.repo = SourceFileRepository(session)
         self.project_storage = settings.get_storage_path() / str(project_id)
         self.output_dir = settings.get_artifacts_path() / str(project_id)
         self.llm = get_llm()
-    
+
+        # Define the strategies for supported Enums
+        self.strategies = {
+            SourceFileType.COBOL: ProcessingStrategy(
+                chunker_cls=CobolChunker,
+                prompt_template=COBOL_CHUNK_PROMPT,
+                is_rolling=True,
+                parser_type="cobol"
+            ),
+            SourceFileType.COPYBOOK: ProcessingStrategy(
+                chunker_cls=CopybookChunker,
+                prompt_template=COPYBOOK_PROMPT,
+                is_rolling=False,
+                parser_type="copybook"
+            ),
+            SourceFileType.PLI: ProcessingStrategy(
+                chunker_cls=PliChunker,
+                prompt_template=PLI_CHUNK_PROMPT,
+                is_rolling=True,
+                parser_type="pli"
+            ),
+            SourceFileType.PLI_COPYBOOK: ProcessingStrategy(
+                chunker_cls=PliCopybookChunker,
+                prompt_template=PLI_COPYBOOK_PROMPT,
+                is_rolling=False,
+                parser_type="pli_copybook"
+            ),
+            # You can easily add JCL, REXX, etc. here in the future
+        }
+
     async def generate(self) -> dict:
-        """Generate file_summaries.md for the project.
-        
-        Returns:
-            Dictionary with output path and file count
-        """
+        """Generate file_summaries.md for the project based on DB records."""
         logger.info(f"Generating file summaries for project {self.project_id}")
         
+        # 1. Fetch files from Database
+        source_files = await self.repo.get_by_project(self.project_id)
+        
+        if not source_files:
+            logger.warning(f"No source files found in DB for project {self.project_id}")
+            return {"output_path": "", "file_count": 0}
+
+        logger.info(f"Found {len(source_files)} files in database.")
+        
         summaries = []
-        
-        # Process COBOL files
-        cobol_files = list.copy(list((self.project_storage / "cobol").glob("*.cbl"))) + \
-                     list((self.project_storage / "cobol").glob("*.cob")) + \
-                     list((self.project_storage / "cobol").glob("*.cobol"))
-                     
-        logger.info(f"Found {len(cobol_files)} COBOL files")
-        
-        for filepath in cobol_files:
+
+        # 2. Iterate through DB records
+        for db_file in source_files:
+            # Map DB enum string/value to Enum object if necessary, or use directly
+            # Assuming db_file.file_type is the string value of the Enum
             try:
-                summary = await self._summarize_cobol_file(filepath)
-                summaries.append(summary)
-            except Exception as e:
-                logger.error(f"Failed to summarize {filepath.name}: {e}")
-                # We continue even if one file fails
-        
-        logger.info(f"Completed processing {len(cobol_files)} COBOL files")
-                
-        # Process Copybook files
-        copy_files = list.copy(list((self.project_storage / "copybook").glob("*.cpy"))) + \
-                    list((self.project_storage / "copybook").glob("*.copy"))
-                    
-        logger.info(f"Found {len(copy_files)} Copybook files")
-        
-        for filepath in copy_files:
+                file_enum = SourceFileType(db_file.file_type)
+            except ValueError:
+                logger.debug(f"Skipping unknown file type: {db_file.file_type}")
+                continue
+
+            # Check if we have a strategy for this file type
+            if file_enum not in self.strategies:
+                logger.debug(f"No summarization strategy for {file_enum.value}, skipping.")
+                continue
+
+            # Construct physical path: storage / file_type / filename
+            # Note: Ensure this matches your actual storage structure
+            file_path = self.project_storage / file_enum.value / db_file.filename
+
+            if not file_path.exists():
+                logger.error(f"File record exists in DB but not on disk: {file_path}")
+                continue
+
             try:
-                summary = await self._summarize_copybook_file(filepath)
-                summaries.append(summary)
+                # 3. Process using the generic handler
+                summary = await self._summarize_file(file_path, self.strategies[file_enum])
+                if summary:
+                    summaries.append(summary)
             except Exception as e:
-                logger.error(f"Failed to summarize {filepath.name}: {e}")
-                
-        logger.info(f"Completed processing {len(copy_files)} Copybook files")
-        
-        # Generate markdown
+                logger.error(f"Failed to summarize {db_file.filename}: {e}")
+
+        # 4. Generate Markdown
         if summaries:
             md_content = generate_file_summaries_md(summaries)
             output_file = self.output_dir / "file_summaries.md"
@@ -86,58 +147,54 @@ class SummarizerService:
                 "file_count": len(summaries),
             }
         
-        return {
-            "output_path": "",
-            "file_count": 0,
-        }
+        return {"output_path": "", "file_count": 0}
 
-    async def _summarize_cobol_file(self, filepath: Path) -> dict:
-        """Rolling summarization for COBOL files."""
-        logger.info(f"Summarizing COBOL file: {filepath.name}")
-        chunks = CobolChunker().chunk([str(filepath)])
+    async def _summarize_file(self, filepath: Path, strategy: ProcessingStrategy) -> dict:
+        """Generic summarizer that follows the provided strategy."""
+        logger.info(f"Summarizing {strategy.parser_type} file: {filepath.name}")
         
-        summary = ""
-        total_chunks = len(chunks)
+        # Instantiate the specific chunker
+        chunker = strategy.chunker_cls()
         
-        for i, chunk in enumerate(chunks):
-            chunk_content = chunk.get("content", "")
-            chunk_type = chunk.get("type", "")
-            chunk_name = chunk.get("name", "")
-            
-            if not chunk_content.strip():
-                continue
-                
-            logger.debug(f"Processing chunk {i+1}/{total_chunks} ({chunk_type}: {chunk_name})")
-            
-            prompt = COBOL_CHUNK_PROMPT.format(
-                chunk=f"SECTION: {chunk_name}\n\n{chunk_content}",
-                previous_summary=summary or "None"
-            )
-            
-            chunk_summary = await self._call_llm_with_retry(prompt)
-            # Log progress for long running files
-            logger.debug(f"Completed chunk {i+1}/{total_chunks} for {filepath.name}")
-            
-            # Here we might want to combine/refine, but for now we replace as per design (rolling)
-            summary = chunk_summary
+        # Get chunks (API differs slightly based on chunker implementation, usually .chunk or .get_whole)
+        # Standardizing on passing a list of file paths
+        if hasattr(chunker, 'get_whole') and not strategy.is_rolling:
+            chunks = chunker.get_whole([str(filepath)])
+        else:
+            chunks = chunker.chunk([str(filepath)])
 
-        logger.info(f"Completed summarization for {filepath.name}")
-        return self._parse_structured_summary(filepath.name, "cobol", summary)
-
-    async def _summarize_copybook_file(self, filepath: Path) -> dict:
-        """Single-pass summarization for copybooks."""
-        logger.debug(f"Summarizing Copybook file: {filepath.name}")
-        chunks = CopybookChunker().get_whole([str(filepath)])
-        
         if not chunks:
             return {}
-            
-        content = chunks[0].get("content", "")
-        
-        prompt = COPYBOOK_PROMPT.format(content=content)
-        summary = await self._call_llm_with_retry(prompt)
-        
-        return self._parse_structured_summary(filepath.name, "copybook", summary)
+
+        summary = ""
+
+        if strategy.is_rolling:
+            # --- Rolling Summarization Logic (Cobol, PL/I) ---
+            total_chunks = len(chunks)
+            for i, chunk in enumerate(chunks):
+                chunk_content = chunk.get("content", "")
+                chunk_name = chunk.get("name", "")
+                
+                if not chunk_content.strip():
+                    continue
+                
+                logger.debug(f"Processing chunk {i+1}/{total_chunks} for {filepath.name}")
+                
+                prompt = strategy.prompt_template.format(
+                    chunk=f"SECTION: {chunk_name}\n\n{chunk_content}",
+                    previous_summary=summary or "None"
+                )
+                
+                # Update summary with result of current chunk
+                summary = await self._call_llm_with_retry(prompt)
+        else:
+            # --- Single Pass Logic (Copybooks) ---
+            content = chunks[0].get("content", "")
+            prompt = strategy.prompt_template.format(content=content)
+            summary = await self._call_llm_with_retry(prompt)
+
+        logger.info(f"Completed summarization for {filepath.name}")
+        return self._parse_structured_summary(filepath.name, strategy.parser_type, summary)
 
     async def _call_llm_with_retry(self, prompt: str) -> str:
         """Call LLM with exponential backoff retry."""

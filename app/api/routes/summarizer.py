@@ -35,6 +35,7 @@ def get_project_service(db: AsyncSession = Depends(get_db)) -> ProjectService:
 @router.post("", response_model=APIResponse[FileSummariesResponse])
 async def create_file_summaries(
     project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),  
     project_service: ProjectService = Depends(get_project_service),
 ) -> APIResponse[FileSummariesResponse]:
     """Generate file summaries for a project via LLM.
@@ -55,7 +56,7 @@ async def create_file_summaries(
     logger.info(f"Generating file summaries for project {project_id}")
     
     # Generate summaries
-    service = SummarizerService(project_id)
+    service = SummarizerService(project_id, db)
     result = await service.generate()
     
     response = FileSummariesResponse(
