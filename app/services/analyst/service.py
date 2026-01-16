@@ -1,0 +1,151 @@
+"""System Analyst Service - async task runner."""
+
+import asyncio
+import json
+from datetime import datetime
+from pathlib import Path
+from uuid import UUID, uuid4
+
+from langchain.messages import HumanMessage
+from loguru import logger
+
+from app.config.settings import settings
+from app.core.tools.artifact_tools import create_artifact_tools
+from app.services.analyst.agent import create_analyst_agent
+from app.services.analyst.tools.writers import create_writer_tools
+
+
+class AnalystService:
+    """Service for running the System Analyst Agent.
+    
+    Uses asyncio.create_task for non-blocking execution.
+    Status is persisted to _status.json for resilience.
+    """
+    
+    # In-memory task registry (class-level)
+    _tasks: dict[str, asyncio.Task] = {}
+    _statuses: dict[str, dict] = {}
+    
+    def __init__(self, project_id: UUID):
+        self.project_id = project_id
+        self.output_path = self._get_output_path()
+    
+    def _get_output_path(self) -> Path:
+        """Get the system_context output directory."""
+        base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve()
+        output_dir = base / str(self.project_id) / "system_context"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+    
+    def _get_status_file(self) -> Path:
+        """Get the status file path."""
+        return self.output_path / "_status.json"
+    
+    def _update_status(self, run_id: str, status: str, phase: str = "", error: str = "") -> None:
+        """Update and persist status."""
+        status_data = {
+            "run_id": run_id,
+            "project_id": str(self.project_id),
+            "status": status,
+            "phase": phase,
+            "error": error,
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        self._statuses[run_id] = status_data
+        
+        try:
+            with open(self._get_status_file(), "w") as f:
+                json.dump(status_data, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to persist status: {e}")
+    
+    async def run(self) -> str:
+        """Start the analyst agent asynchronously.
+        
+        Returns:
+            run_id for tracking
+        """
+        run_id = str(uuid4())
+        
+        task = asyncio.create_task(self._execute(run_id))
+        self._tasks[run_id] = task
+        
+        logger.info(f"Started analyst run: {run_id} for project {self.project_id}")
+        return run_id
+    
+    async def _execute(self, run_id: str) -> None:
+        """Execute the analyst agent."""
+        try:
+            self._update_status(run_id, "running", phase="initializing")
+            
+            project_id_str = str(self.project_id)
+            
+            # Create tools with project_id bound
+            artifact_tools = create_artifact_tools(project_id_str)
+            writer_tools = create_writer_tools(project_id_str)
+            all_tools = artifact_tools + writer_tools
+            
+            # Create agent
+            agent = create_analyst_agent(
+                tools=all_tools,
+                project_id=project_id_str,
+            )
+            
+            self._update_status(run_id, "running", phase="analyzing")
+            
+            # Run agent
+            initial_message = HumanMessage(
+                content="Analyze this project and generate complete system documentation. "
+                        "Start by listing artifacts to understand what's available."
+            )
+            
+            result = await agent.ainvoke(
+                {
+                    "messages": [initial_message],
+                    "project_id": project_id_str,
+                    "iteration_count": 0,
+                },
+                config={"recursion_limit": 250},
+            )
+            
+            self._update_status(run_id, "complete", phase="done")
+            logger.info(f"Analyst run complete: {run_id}")
+            
+        except asyncio.CancelledError:
+            self._update_status(run_id, "cancelled")
+            logger.warning(f"Analyst run cancelled: {run_id}")
+            raise
+            
+        except Exception as e:
+            logger.error(f"Analyst run failed: {run_id} - {e}")
+            self._update_status(run_id, "failed", error=str(e))
+        
+        finally:
+            self._tasks.pop(run_id, None)
+    
+    def get_status(self, run_id: str) -> dict | None:
+        """Get status for a run."""
+        if run_id in self._statuses:
+            return self._statuses[run_id]
+        
+        status_file = self._get_status_file()
+        if status_file.exists():
+            try:
+                with open(status_file) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        
+        return None
+    
+    @classmethod
+    def get_status_by_run_id(cls, run_id: str) -> dict | None:
+        """Get status for a run using only run_id (class method)."""
+        return cls._statuses.get(run_id)
+    
+    def cancel(self, run_id: str) -> bool:
+        """Cancel a running task."""
+        if run_id in self._tasks:
+            self._tasks[run_id].cancel()
+            return True
+        return False
