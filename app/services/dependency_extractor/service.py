@@ -3,12 +3,13 @@
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Dict
 
 from loguru import logger
 
 from app.config.settings import settings
 from app.core.exceptions import DependencyExtractionError
+from app.db.enums import SourceFileType
 from app.services.dependency_extractor.extractors import (
     extract_cobol_dependencies,
     extract_copybook_dependencies,
@@ -17,13 +18,15 @@ from app.services.dependency_extractor.extractors import (
 )
 from app.services.dependency_extractor.generator import generate_dependency_graph_md
 
+# 1. Simplified Expected Types (Just the Enums)
 EXPECTED_FILE_TYPES = {
-    'cobol': 'COBOL programs',
-    'copybook': 'Copybooks',
-    'jcl': 'JCL jobs',
-    'proc': 'JCL procedures',
-    'pli': 'PL/I programs',
-    'rexx': 'REXX scripts',
+    SourceFileType.COBOL,
+    SourceFileType.COPYBOOK,
+    SourceFileType.JCL,
+    SourceFileType.PROC,
+    SourceFileType.PLI,
+    SourceFileType.REXX,
+    SourceFileType.ASSEMBLY,
 }
 
 class DependencyExtractorService:
@@ -40,6 +43,23 @@ class DependencyExtractorService:
             settings.get_artifacts_path() / str(project_id) / "parsed_outputs"
         )
         self.output_path = settings.get_artifacts_path() / str(project_id)
+
+        # 2. Strategy Mapping: Enum -> Extractor Function
+        self.strategies: Dict[SourceFileType, Callable[[list], dict]] = {
+            SourceFileType.COBOL: extract_cobol_dependencies,
+            SourceFileType.COPYBOOK: extract_copybook_dependencies,
+            SourceFileType.JCL: extract_jcl_dependencies,
+            SourceFileType.ASSEMBLY: extract_assembly_dependencies,
+        }
+
+        # 3. Default structures (Empty state)
+        # This ensures that if a file type is missing, we still pass valid empty dicts to the generator
+        self.default_deps = {
+            SourceFileType.COBOL: {'program_calls': [], 'unresolved_calls': [], 'copybooks': [], 'sql_tables': [], 'file_definitions': [], 'file_io': []},
+            SourceFileType.COPYBOOK: {'copybook_to_copybook': []},
+            SourceFileType.JCL: {'jcl_program_calls': [], 'jcl_proc_calls': [], 'jcl_includes': [], 'jcl_files': []},
+            SourceFileType.ASSEMBLY: {'program_calls': [], 'copybooks': [], 'file_io': [], 'db2_usage': [], 'externals': []},
+        }
     
     async def generate(self) -> dict:
         """Generate dependency_graph.md for the project.
@@ -55,60 +75,54 @@ class DependencyExtractorService:
         try:
             # Discover available parsed outputs
             available_types = self._discover_available_types()
-            logger.info(f"Found parsed outputs for: {list(available_types.keys())}")
+            logger.info(f"Found parsed outputs for: {[t.value for t in available_types.keys()]}")
             
-            # Track missing file types
+            # Calculate missing types using Enums
             missing_types = [
-                ft for ft in EXPECTED_FILE_TYPES.keys() 
+                ft.value for ft in EXPECTED_FILE_TYPES 
                 if ft not in available_types
             ]
             
-            # Extract dependencies from each available type
-            cobol_deps = {'program_calls': [], 'unresolved_calls': [], 
-                          'copybooks': [], 'sql_tables': [], 
-                          'file_definitions': [], 'file_io': []}
-            copybook_deps = {'copybook_to_copybook': []}
-            jcl_deps = {'jcl_program_calls': [], 'jcl_proc_calls': [], 
-                        'jcl_includes': [], 'jcl_files': []}
-            assembly_deps = {'program_calls': [], 'copybooks': [], 'file_io': [], 
-                     'db2_usage': [], 'externals': []}
+            # Initialize results with defaults
+            # We copy to avoid modifying the class-level defaults structure
+            results = {k: v.copy() for k, v in self.default_deps.items()}
 
-            if 'cobol' in available_types:
-                cobol_data = self._read_consolidated(available_types['cobol'])
-                if cobol_data:
-                    cobol_deps = extract_cobol_dependencies(cobol_data)
-                    logger.info(f"Extracted {len(cobol_deps['program_calls'])} program calls, "
-                               f"{len(cobol_deps['copybooks'])} copybook refs")
-            
-            if 'copybook' in available_types:
-                copybook_data = self._read_consolidated(available_types['copybook'])
-                if copybook_data:
-                    copybook_deps = extract_copybook_dependencies(copybook_data)
-                    logger.info(f"Extracted {len(copybook_deps['copybook_to_copybook'])} nested copybook refs")
-
-            if 'jcl' in available_types:
-                jcl_data = self._read_consolidated(available_types['jcl'])
-                if jcl_data:
-                    jcl_deps = extract_jcl_dependencies(jcl_data)
-                    logger.info(f"Extracted {len(jcl_deps['jcl_program_calls'])} JCL program calls")
-            
-            if 'assembly' in available_types:
-                assembly_data = self._read_consolidated(available_types['assembly'])
-                if assembly_data:
-                    assembly_deps = extract_assembly_dependencies(assembly_data)
-                    logger.info(f"Extracted {len(assembly_deps['program_calls'])} Assembly program calls")
-
-            # UPDATE THIS: Pass assembly_deps to the generator
+            # ---------------------------------------------------------
+            # STRATEGY LOOP: Replace individual IF blocks
+            # ---------------------------------------------------------
+            for file_type, extractor_func in self.strategies.items():
+                if file_type in available_types:
+                    try:
+                        data = self._read_consolidated(available_types[file_type])
+                        if data:
+                            # Run the extraction strategy
+                            extracted_deps = extractor_func(data)
+                            
+                            # Store result
+                            results[file_type] = extracted_deps
+                            
+                            # Generic logging based on dictionary size
+                            count = sum(len(v) for v in extracted_deps.values() if isinstance(v, list))
+                            logger.info(f"Extracted {count} total dependencies for {file_type.value}")
+                    except Exception as e:
+                        logger.error(f"Error processing dependencies for {file_type.value}: {e}")
+            # ---------------------------------------------------------
+                        # Accessing specifically from the results dictionary
+            cobol_deps = results[SourceFileType.COBOL]
+            copybook_deps = results[SourceFileType.COPYBOOK]
+            jcl_deps= results[SourceFileType.JCL]
+            assembly_deps = results[SourceFileType.ASSEMBLY]
+            # Generate Markdown
+            # accessing the results dictionary by Enum key
             markdown_content = generate_dependency_graph_md(
                 project_id=str(self.project_id),
                 cobol_deps=cobol_deps,
                 copybook_deps=copybook_deps,
                 jcl_deps=jcl_deps,
-                assembly_deps=assembly_deps, # <-- New parameter
+                assembly_deps=assembly_deps,
                 missing_file_types=missing_types,
             )
             
-            # Save to file
             output_file = self.output_path / "dependency_graph.md"
             output_file.parent.mkdir(parents=True, exist_ok=True)
             output_file.write_text(markdown_content, encoding='utf-8')
@@ -137,8 +151,8 @@ class DependencyExtractorService:
             logger.error(f"Dependency extraction failed: {e}")
             raise DependencyExtractionError(f"Failed to generate dependency graph: {e}") from e
     
-    def _discover_available_types(self) -> dict[str, Path]:
-        """Discover which file types have parsed outputs."""
+    def _discover_available_types(self) -> dict[SourceFileType, Path]:
+        """Discover which file types have parsed outputs using Enums."""
         available = {}
         
         if not self.parsed_outputs_path.exists():
@@ -147,9 +161,15 @@ class DependencyExtractorService:
         
         for type_dir in self.parsed_outputs_path.iterdir():
             if type_dir.is_dir():
-                consolidated_file = type_dir / "_consolidated.json"
-                if consolidated_file.exists():
-                    available[type_dir.name] = consolidated_file
+                try:
+                    # Match directory name to Enum
+                    file_type = SourceFileType(type_dir.name)
+                    consolidated_file = type_dir / "_consolidated.json"
+                    if consolidated_file.exists():
+                        available[file_type] = consolidated_file
+                except ValueError:
+                    logger.debug(f"Skipping unknown directory type: {type_dir.name}")
+                    continue
         
         return available
     
