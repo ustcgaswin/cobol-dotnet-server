@@ -240,3 +240,78 @@ def extract_jcl_dependencies(consolidated_data: list[dict]) -> dict:
         'jcl_includes': include_groups,
         'jcl_files': file_references,
     }
+
+
+def extract_assembly_dependencies(consolidated_data: list[dict]) -> dict:
+    """
+    Extract dependencies from parsed Assembly (HLASM) data.
+    
+    Returns categorized lists including:
+    - program_calls: Static calls via =V() constants
+    - copy_files: COPY statement references
+    - file_io: Files accessed via OPEN/CLOSE/GET/PUT/READ/WRITE
+    - db2_usage: Flagging DSNHLI (DB2) access
+    - externals: EXTRN/WXTRN symbols
+    """
+    program_calls = []
+    copy_files = []
+    file_io = []
+    db2_usage = []
+    externals = []
+
+    for module in consolidated_data:
+        # Module identification
+        source_name = module.get('assembly_name') or module.get('source_file', 'UNKNOWN')
+        deps = module.get('dependencies', {})
+        
+        # 1. Extract Copy Files
+        for copy in deps.get('copy_files', []):
+            copy_files.append({
+                'source': source_name,
+                'copybook': copy.get('name'),
+                'line': copy.get('line')
+            })
+
+        # 2. Extract Static Subprogram Calls (=V calls)
+        # Note: This captures only explicit =V(PROG) references
+        for vcall in deps.get('subprograms_called', []):
+            program_calls.append({
+                'source': source_name,
+                'target': vcall.get('target'),
+                'call_type': 'static_v_con',
+                'line': vcall.get('line')
+            })
+
+        # 3. Extract File I/O (Sequential/VSAM)
+        for f in deps.get('files_accessed', []):
+            file_io.append({
+                'source': source_name,
+                'file': f.get('ddname'),
+                'operation': f.get('operation'),
+                'line': f.get('line')
+            })
+
+        # 4. Extract DB2 Access
+        for db2 in deps.get('db2_access', []):
+            db2_usage.append({
+                'source': source_name,
+                'type': db2.get('type'),
+                'line': db2.get('line')
+            })
+
+        # 5. Extract External Symbols (EXTRN/WXTRN)
+        for ext in deps.get('externals', []):
+            externals.append({
+                'source': source_name,
+                'name': ext.get('name'),
+                'type': ext.get('type'),
+                'line': ext.get('line')
+            })
+
+    return {
+        'program_calls': program_calls,
+        'copybooks': copy_files,
+        'file_io': file_io,
+        'db2_usage': db2_usage,
+        'externals': externals
+    }
