@@ -15,16 +15,19 @@ from app.services.dependency_extractor.extractors import (
     extract_copybook_dependencies,
     extract_jcl_dependencies,
     extract_assembly_dependencies,
+    extract_pli_dependencies,           
+    extract_pli_copybook_dependencies,  
 )
 from app.services.dependency_extractor.generator import generate_dependency_graph_md
 
-# 1. Simplified Expected Types (Just the Enums)
+# 1. Expected Types
 EXPECTED_FILE_TYPES = {
     SourceFileType.COBOL,
     SourceFileType.COPYBOOK,
     SourceFileType.JCL,
     SourceFileType.PROC,
     SourceFileType.PLI,
+    SourceFileType.PLI_COPYBOOK,      
     SourceFileType.REXX,
     SourceFileType.ASSEMBLY,
 }
@@ -50,15 +53,18 @@ class DependencyExtractorService:
             SourceFileType.COPYBOOK: extract_copybook_dependencies,
             SourceFileType.JCL: extract_jcl_dependencies,
             SourceFileType.ASSEMBLY: extract_assembly_dependencies,
+            SourceFileType.PLI: extract_pli_dependencies,                   
+            SourceFileType.PLI_COPYBOOK: extract_pli_copybook_dependencies, 
         }
 
         # 3. Default structures (Empty state)
-        # This ensures that if a file type is missing, we still pass valid empty dicts to the generator
         self.default_deps = {
             SourceFileType.COBOL: {'program_calls': [], 'unresolved_calls': [], 'copybooks': [], 'sql_tables': [], 'file_definitions': [], 'file_io': []},
             SourceFileType.COPYBOOK: {'copybook_to_copybook': []},
             SourceFileType.JCL: {'jcl_program_calls': [], 'jcl_proc_calls': [], 'jcl_includes': [], 'jcl_files': []},
             SourceFileType.ASSEMBLY: {'program_calls': [], 'copybooks': [], 'file_io': [], 'db2_usage': [], 'externals': []},
+            SourceFileType.PLI: {'program_calls': [], 'unresolved_calls': [], 'copybooks': [], 'sql_tables': [], 'file_definitions': [], 'file_io': []},
+            SourceFileType.PLI_COPYBOOK: {'copybook_to_copybook': []},
         }
     
     async def generate(self) -> dict:
@@ -110,16 +116,20 @@ class DependencyExtractorService:
                         # Accessing specifically from the results dictionary
             cobol_deps = results[SourceFileType.COBOL]
             copybook_deps = results[SourceFileType.COPYBOOK]
-            jcl_deps= results[SourceFileType.JCL]
+            jcl_deps = results[SourceFileType.JCL]
             assembly_deps = results[SourceFileType.ASSEMBLY]
+            pli_deps = results[SourceFileType.PLI]                  
+            pli_copybook_deps = results[SourceFileType.PLI_COPYBOOK] 
+
             # Generate Markdown
-            # accessing the results dictionary by Enum key
             markdown_content = generate_dependency_graph_md(
                 project_id=str(self.project_id),
                 cobol_deps=cobol_deps,
                 copybook_deps=copybook_deps,
                 jcl_deps=jcl_deps,
                 assembly_deps=assembly_deps,
+                pli_deps=pli_deps,                  
+                pli_copybook_deps=pli_copybook_deps,
                 missing_file_types=missing_types,
             )
             
@@ -131,13 +141,13 @@ class DependencyExtractorService:
             
             # Calculate counts for response
             relationship_counts = {
-                'program_to_program': len(cobol_deps['program_calls']),
-                'program_to_copybook': len(cobol_deps['copybooks']),
-                'program_to_table': len(cobol_deps['sql_tables']),
-                'program_to_file_definition': len(cobol_deps['file_definitions']),
-                'program_to_file_io': len(cobol_deps['file_io']),
-                'copybook_to_copybook': len(copybook_deps['copybook_to_copybook']),
-                'unresolved_calls': len(cobol_deps['unresolved_calls']),
+                'program_to_program': len(cobol_deps['program_calls']) + len(pli_deps['program_calls']),
+                'program_to_copybook': len(cobol_deps['copybooks']) + len(pli_deps['copybooks']),
+                'program_to_table': len(cobol_deps['sql_tables']) + len(pli_deps['sql_tables']),
+                'program_to_file_definition': len(cobol_deps['file_definitions']) + len(pli_deps['file_definitions']),
+                'program_to_file_io': len(cobol_deps['file_io']) + len(pli_deps['file_io']),
+                'copybook_to_copybook': len(copybook_deps['copybook_to_copybook']) + len(pli_copybook_deps['copybook_to_copybook']),
+                'unresolved_calls': len(cobol_deps['unresolved_calls']) + len(pli_deps['unresolved_calls']),
                 'assembly_db2_calls': len(assembly_deps['db2_usage']),
             }
             

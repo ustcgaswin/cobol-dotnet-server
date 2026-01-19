@@ -332,6 +332,7 @@ if __name__ == '__main__':
     # Simple CLI test
     import argparse
     import sys
+    import os
     parser = argparse.ArgumentParser()
     parser.add_argument('input', help='PL/1 Copybook file')
     parser.add_argument('-o', '--output', help='Output JSON file')
