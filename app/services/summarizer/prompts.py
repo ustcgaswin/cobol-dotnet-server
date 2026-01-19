@@ -84,3 +84,29 @@ Key Fields:
 - [field2] - [description]
 ...
 """
+
+ASSEMBLY_CHUNK_PROMPT = """Summarize this Mainframe Assembly (HLASM) code.
+
+Code:
+{chunk}
+
+Previous context:
+{previous_summary}
+
+Respond EXACTLY in this format:
+
+Purpose: [1-2 sentences description of what this module/block does. Start with a verb, e.g., "Masks...", "Calculates..."]
+
+Register Usage:
+- [Reg X] - [Usage (e.g. Base Register, Pointer to Input, Counter)]
+
+Functionalities:
+- [specific business capability 1]
+- [specific business capability 2]
+
+Key Logic/Macros:
+- [Instruction/Macro 1] - [Purpose]
+
+Notes:
+- [Side effects, memory modifications, or complex branching logic]
+"""
