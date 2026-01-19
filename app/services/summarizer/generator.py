@@ -22,6 +22,7 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     pli_summaries = [s for s in summaries if s.get("type") == "pli"]
     pli_copybook_summaries = [s for s in summaries if s.get("type") == "pli_copybook"]
     dclgen_summaries = [s for s in summaries if s.get("type") == "dclgen"] 
+    ca7_summaries = [s for s in summaries if s.get("type") == "ca7"]
     
     # --- Helper to render program-style summaries (COBOL/PLI/Assembly) ---
     def _render_program_section(title: str, items: list[dict]):
@@ -120,6 +121,45 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
             lines.append("---")
             lines.append("")
     
+    # --- Helper to render CA-7 Workload summaries ---
+    def _render_ca7_section(title: str, items: list[dict]):
+        if not items:
+            return
+        lines.append(f"## {title}")
+        lines.append("")
+        
+        for s in sorted(items, key=lambda x: x.get("filename", "")):
+            lines.append(f"### {s.get('filename')}")
+            lines.append(f"**Purpose**: {s.get('purpose', 'N/A')}")
+            lines.append("")
+            
+            if s.get("workload_identity"):
+                lines.append("**Workload Identity**:")
+                for item in s.get("workload_identity", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+
+            if s.get("dependencies_triggers"):
+                lines.append("**Dependencies & Triggers**:")
+                for item in s.get("dependencies_triggers", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+
+            if s.get("operational_rules"):
+                lines.append("**Operational Rules**:")
+                for item in s.get("operational_rules", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+                
+            if s.get("notes"):
+                lines.append("**Notes**:")
+                for item in s.get("notes", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+                
+            lines.append("---")
+            lines.append("")
+    
 
     if jcl_summaries:
         lines.append("## JCL & Procedures")
@@ -161,5 +201,6 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     _render_dclgen_section("Database Table Definitions (DCLGEN)", dclgen_summaries)
     _render_copybook_section("COBOL Copybooks", copybook_summaries)
     _render_copybook_section("PL/I Include Files", pli_copybook_summaries)
+    _render_ca7_section("CA-7 Workload Orchestration", ca7_summaries)
             
     return '\n'.join(lines)
