@@ -11,16 +11,20 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     """
     lines = ["# File Summaries", ""]
     
-    # Group by type
+    # 1. Group by type
     cobol_summaries = [s for s in summaries if s.get("type") == "cobol"]
     copybook_summaries = [s for s in summaries if s.get("type") == "copybook"]
+    pli_summaries = [s for s in summaries if s.get("type") == "pli"]
+    pli_copybook_summaries = [s for s in summaries if s.get("type") == "pli_copybook"]
     
-    # 1. COBOL Programs
-    if cobol_summaries:
-        lines.append("## COBOL Programs")
+    # --- Helper to render program-style summaries (COBOL/PLI) ---
+    def _render_program_section(title: str, items: list[dict]):
+        if not items:
+            return
+        lines.append(f"## {title}")
         lines.append("")
         
-        for s in sorted(cobol_summaries, key=lambda x: x.get("filename", "")):
+        for s in sorted(items, key=lambda x: x.get("filename", "")):
             lines.append(f"### {s.get('filename')}")
             lines.append(f"**Purpose**: {s.get('purpose', 'N/A')}")
             lines.append("")
@@ -46,12 +50,14 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
             lines.append("---")
             lines.append("")
 
-    # 2. Copybooks
-    if copybook_summaries:
-        lines.append("## Copybooks")
+    # --- Helper to render copybook-style summaries ---
+    def _render_copybook_section(title: str, items: list[dict]):
+        if not items:
+            return
+        lines.append(f"## {title}")
         lines.append("")
         
-        for s in sorted(copybook_summaries, key=lambda x: x.get("filename", "")):
+        for s in sorted(items, key=lambda x: x.get("filename", "")):
             lines.append(f"### {s.get('filename')}")
             lines.append(f"**Purpose**: {s.get('purpose', 'N/A')}")
             
@@ -68,5 +74,12 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
                 
             lines.append("---")
             lines.append("")
+
+    # 2. Render Sections
+    _render_program_section("COBOL Programs", cobol_summaries)
+    _render_program_section("PL/I Programs", pli_summaries)
+    
+    _render_copybook_section("COBOL Copybooks", copybook_summaries)
+    _render_copybook_section("PL/I Include Files", pli_copybook_summaries)
             
     return '\n'.join(lines)

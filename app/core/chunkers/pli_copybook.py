@@ -1,10 +1,6 @@
-"""PL/I copybook chunker.
+"""PL/I copybook chunker."""
 
-Copybooks (PL/I include files) are typically small and best treated as a
-single chunk. This module mirrors CopybookChunker API so higher layers can
-reuse the same summarization/extraction flows.
-"""
-
+import re
 from pathlib import Path
 
 from loguru import logger
@@ -14,12 +10,17 @@ from app.core.exceptions import ChunkError
 
 
 class PliCopybookChunker(BaseChunker):
-    """Chunker for PL/I copybooks/includes (fallback)."""
+    """Chunker for PL/I copybooks (Includes).
+    
+    Treats the copybook as a single chunk but performs cleaning 
+    (comment stripping) to optimize LLM context usage.
+    """
 
     SUPPORTED_EXTENSIONS = [".inc", ".mac"]
+    COMMENT_PATTERN = re.compile(r'/\*.*?\*/', re.DOTALL)
 
     def chunk(self, filepaths: list[str]) -> list[dict]:
-        """Return the entire copybook as a single chunk (same as get_whole)."""
+        """Return the entire copybook as a single chunk."""
         return self.get_whole(filepaths)
 
     def get_whole(self, filepaths: list[str]) -> list[dict]:
@@ -42,9 +43,8 @@ class PliCopybookChunker(BaseChunker):
         return chunks
 
     def _preprocess_source(self, content: str) -> str:
-        """Minimal preprocessing for PL/I copybooks.
-
-        We avoid aggressive rewriting; this preserves include directives and
-        lets the PL/I parser or LLM handle structure-specific concerns.
-        """
-        return content.strip('\n')
+        """Remove PL/I comments to clean up declarations."""
+        # Remove block comments
+        content = self.COMMENT_PATTERN.sub(' ', content)
+        # Squeeze extra whitespace
+        return re.sub(r'\n\s*\n', '\n', content).strip()
