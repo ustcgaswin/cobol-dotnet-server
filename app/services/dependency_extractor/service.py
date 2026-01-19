@@ -15,6 +15,7 @@ from app.services.dependency_extractor.extractors import (
     extract_copybook_dependencies,
     extract_jcl_dependencies,
     extract_assembly_dependencies,
+    extract_ca7_dependencies,
 )
 from app.services.dependency_extractor.generator import generate_dependency_graph_md
 
@@ -27,6 +28,7 @@ EXPECTED_FILE_TYPES = {
     SourceFileType.PLI,
     SourceFileType.REXX,
     SourceFileType.ASSEMBLY,
+    SourceFileType.CA7,
 }
 
 class DependencyExtractorService:
@@ -50,6 +52,7 @@ class DependencyExtractorService:
             SourceFileType.COPYBOOK: extract_copybook_dependencies,
             SourceFileType.JCL: extract_jcl_dependencies,
             SourceFileType.ASSEMBLY: extract_assembly_dependencies,
+            SourceFileType.CA7: extract_ca7_dependencies,
         }
 
         # 3. Default structures (Empty state)
@@ -59,6 +62,7 @@ class DependencyExtractorService:
             SourceFileType.COPYBOOK: {'copybook_to_copybook': []},
             SourceFileType.JCL: {'jcl_program_calls': [], 'jcl_proc_calls': [], 'jcl_includes': [], 'jcl_files': []},
             SourceFileType.ASSEMBLY: {'program_calls': [], 'copybooks': [], 'file_io': [], 'db2_usage': [], 'externals': []},
+            SourceFileType.CA7: {'ca7_job_flow': [], 'ca7_dataset_triggers': [], 'ca7_user_requirements': [], 'ca7_nodes': []},
         }
     
     async def generate(self) -> dict:
@@ -112,6 +116,7 @@ class DependencyExtractorService:
             copybook_deps = results[SourceFileType.COPYBOOK]
             jcl_deps= results[SourceFileType.JCL]
             assembly_deps = results[SourceFileType.ASSEMBLY]
+            ca7_deps = results[SourceFileType.CA7]
             # Generate Markdown
             # accessing the results dictionary by Enum key
             markdown_content = generate_dependency_graph_md(
@@ -120,6 +125,7 @@ class DependencyExtractorService:
                 copybook_deps=copybook_deps,
                 jcl_deps=jcl_deps,
                 assembly_deps=assembly_deps,
+                ca7_deps=ca7_deps,
                 missing_file_types=missing_types,
             )
             
@@ -137,6 +143,8 @@ class DependencyExtractorService:
                 'program_to_file_definition': len(cobol_deps['file_definitions']),
                 'program_to_file_io': len(cobol_deps['file_io']),
                 'copybook_to_copybook': len(copybook_deps['copybook_to_copybook']),
+                'ca7_job_dependencies': len(ca7_deps['ca7_job_flow']),
+                'ca7_dataset_triggers': len(ca7_deps['ca7_dataset_triggers']),
                 'unresolved_calls': len(cobol_deps['unresolved_calls']),
                 'assembly_db2_calls': len(assembly_deps['db2_usage']),
             }

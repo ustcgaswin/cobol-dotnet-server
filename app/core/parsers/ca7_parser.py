@@ -68,7 +68,7 @@ class CA7Parser(BaseParser):
         # 1. Split content into blocks by 'JOB:' 
         # We use (?m)^\s* to ensure we only split when 'JOB:' is at the start of a line
         # This prevents accidental splitting on 'DEP-JOB:'
-        blocks = re.split(r'(?im)^.*?JOB:\s+', content)
+        blocks = re.split(r'(?im)^(?:(?!\s*DEP-JOB:).)*?JOB:\s+', content)
         
         for block_text in blocks:
             if not block_text.strip():
