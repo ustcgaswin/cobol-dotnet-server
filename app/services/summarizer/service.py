@@ -21,6 +21,7 @@ from app.core.chunkers.copybook import CopybookChunker
 from app.core.chunkers.pli import PliChunker
 from app.core.chunkers.pli_copybook import PliCopybookChunker
 from app.core.chunkers.jcl import JclChunker
+from app.core.chunkers.ca7 import Ca7Chunker
 
 # Prompts
 from app.services.summarizer.prompts import (
@@ -30,7 +31,8 @@ from app.services.summarizer.prompts import (
     PLI_CHUNK_PROMPT,
     PLI_COPYBOOK_PROMPT,
     JCL_PROMPT,
-    DCLGEN_PROMPT
+    DCLGEN_PROMPT,
+    CA7_PROMPT
 )
 from app.services.summarizer.generator import generate_file_summaries_md
 
@@ -115,6 +117,13 @@ class SummarizerService:
                 prompt_template=DCLGEN_PROMPT,
                 is_rolling=False,            # DCLGEN is always single-pass
                 parser_type="dclgen"
+            ),
+
+            SourceFileType.CA7: ProcessingStrategy(
+                chunker_cls=Ca7Chunker,
+                prompt_template=CA7_PROMPT,
+                is_rolling=True,  # CA-7 reports are often massive
+                parser_type="ca7"
             ),
         
         }
@@ -270,7 +279,10 @@ class SummarizerService:
             "main_datasets": [], 
             "table_name": "",
             "host_structure": [],
-            "table_structure": []
+            "table_structure": [],
+            "workload_identity": [], # for CA7
+            "dependencies_triggers": [], # for CA7
+            "operational_rules": [] # for CA7
         }
         
         current_section = None
@@ -285,6 +297,16 @@ class SummarizerService:
             if lower_line.startswith("purpose:"):
                 parsed["purpose"] = line.split(":", 1)[1].strip()
                 current_section = "purpose"
+            
+             # CA-7: Detect Identity section
+            elif lower_line.startswith("workload identity:"):
+                current_section = "workload_identity"
+            # CA-7: Detect Dependencies/Triggers section
+            elif lower_line.startswith("dependencies & triggers:"):
+                current_section = "dependencies_triggers"
+            # CA-7: Detect Rules section
+            elif lower_line.startswith("operational rules:"):
+                current_section = "operational_rules"
 
             elif lower_line.startswith("table name:"): 
                 parsed["table_name"] = line.split(":", 1)[1].strip()
@@ -313,7 +335,7 @@ class SummarizerService:
             elif line.startswith("- "):
                 item = line[2:].strip()
                 # Define all sections that expect a list of bullet points
-                list_sections = ["functionalities", "key_operations", "notes", "key_fields", "register_usage", "steps", "main_datasets", "table_structure"]
+                list_sections = ["functionalities", "key_operations", "notes", "key_fields", "register_usage", "steps", "main_datasets", "table_structure", "workload_identity", "dependencies_triggers", "operational_rules"]
                 if current_section in list_sections:
                     parsed[current_section].append(item)
             elif current_section == "purpose" and not line.endswith(":"):
