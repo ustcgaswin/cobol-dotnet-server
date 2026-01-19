@@ -1,5 +1,5 @@
 """
-PL/1 Source Parser for Dependency Graph Generation (v3.0)
+PL/1 Source Parser for Dependency Graph Generation (v3.1 - Dependency Focused)
 
 EXPECTATIONS FROM THIS PARSER:
 ------------------------------
@@ -32,10 +32,11 @@ import os
 import sys
 from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Set
+from typing import List, Dict
 from dataclasses import dataclass, field
 
 # --- Framework Imports ---
+# Assuming these exist in your environment, otherwise they act as placeholders
 from app.db.enums import SourceFileType
 from app.core.parsers.base import BaseParser
 
@@ -268,72 +269,47 @@ class DependenciesParser(BaseSectionParser):
         cmd = match.group(1).upper() if match else "UNKNOWN"
         output_list.append({"command": cmd, "statement": text, "line": line})
 
-class LogicAndIOParser(BaseSectionParser):
+class IOParser(BaseSectionParser):
     """
-    Parses IO, Error Handling, AND GENERAL BUSINESS LOGIC via Regex heuristics.
+    Parses File Declarations and I/O Operations for Graph Dependency mapping.
+    (Business Logic parsing has been removed).
     """
     def parse(self, statements: List[Dict], ctx: ParseContext) -> dict:
         data = {
             "file_descriptors": [],
-            "operations": [],
-            "conditions": [],
-            "business_logic": []
+            "operations": []
         }
         
-        # Regex to find variables (heuristic: starts with letter, alphanumeric)
-        # Excludes keywords to avoid false positives
-        variable_regex = re.compile(r'\b(?!(?:IF|THEN|ELSE|DO|END|SELECT|WHEN|OTHERWISE|CALL|DCL|DECLARE|PROC|RETURN)\b)[A-Za-z@#$][\w@#$]*', re.IGNORECASE)
-
         for stmt in statements:
             text = stmt['text']
             upper = text.upper()
             line = stmt['line']
             typ = stmt['type']
             
-            # 1. JCL Dependency
+            # 1. JCL Dependency (DCL FILE)
             if typ == "DECLARE" and "FILE" in upper:
                 var_match = re.search(r'(?:DCL|DECLARE)\s+([\w\$]+)', text, re.IGNORECASE)
                 internal_name = var_match.group(1).upper() if var_match else "UNKNOWN"
                 title_match = re.search(r"TITLE\s*\(\s*'(.*?)'", text, re.IGNORECASE)
+                
+                # Logic: If TITLE('DD:MYFILE') exists, link to MYFILE. Else use internal name.
+                dd_name = title_match.group(1).upper().replace('DD:', '').strip() if title_match else internal_name
+                
                 data["file_descriptors"].append({
                     "internal_name": internal_name,
-                    "ddname": title_match.group(1).upper().replace('DD:', '').strip() if title_match else internal_name,
+                    "ddname": dd_name,
                     "line": line
                 })
 
-            # 2. I/O Usage
+            # 2. I/O Usage (OPEN, READ, WRITE)
             elif re.match(r'\b(OPEN|CLOSE|READ|WRITE|REWRITE|DELETE)\b', upper):
                  file_match = re.search(r'\bFILE\s*\(\s*([\w\$]+)\s*\)', text, re.IGNORECASE)
                  if file_match:
-                     data["operations"].append({"op": upper.split()[0], "file": file_match.group(1).upper(), "line": line})
-
-            # 3. ON Conditions
-            elif typ == "ON_UNIT" or text.lstrip().upper().startswith("ON "):
-                match = re.match(r'ON\s+([A-Za-z0-9_\-\$]+)', text, re.IGNORECASE)
-                if match: data["conditions"].append({"condition": match.group(1).upper(), "line": line})
-
-            # 4. GENERAL BUSINESS LOGIC (The "Catch-All")
-            # We filter out Declarations, Block Starts (PROC/BEGIN), and Compiler directives
-            elif typ in ["STATEMENT", "LOGIC"]:
-                
-                logic_type = "UNKNOWN"
-                vars_involved = list(set(variable_regex.findall(text))) # Unique variables found
-
-                if any(k in upper for k in ['IF ', 'ELSE', 'SELECT', 'WHEN', 'OTHERWISE', 'DO;']):
-                    logic_type = "CONTROL_FLOW"
-                elif '=' in text and not upper.startswith('IF ') and not upper.startswith('WHEN'):
-                    logic_type = "ASSIGNMENT"
-                elif upper.startswith('RETURN'):
-                    logic_type = "RETURN"
-
-                # Capture if it looks like logic
-                if logic_type != "UNKNOWN" or (vars_involved and len(vars_involved) > 0):
-                    data["business_logic"].append({
-                        "line": line,
-                        "type": logic_type,
-                        "statement": text,
-                        "variables_used": [v.upper() for v in vars_involved]
-                    })
+                     data["operations"].append({
+                         "op": upper.split()[0], 
+                         "file": file_match.group(1).upper(), 
+                         "line": line
+                     })
                      
         return data
 
@@ -372,19 +348,19 @@ class PLIParser(BaseParser):
         
         structure_data = {}
         dependencies_data = {}
-        logic_io_data = {}
+        io_data = {}
 
         parsers = [
             ("structure", StructureParser()),
             ("dependencies", DependenciesParser()),
-            ("logic_io", LogicAndIOParser())
+            ("io", IOParser())
         ]
         
         for key, parser in parsers:
             try:
                 if key == "structure": structure_data = parser.parse(statements, ctx)
                 elif key == "dependencies": dependencies_data = parser.parse(statements, ctx)
-                elif key == "logic_io": logic_io_data = parser.parse(statements, ctx)
+                elif key == "io": io_data = parser.parse(statements, ctx)
             except Exception as e:
                 logger.error(f"Parser {key} failed: {e}")
                 ctx.record_error("Whole File", f"Parser {key} crashed: {str(e)}", 0)
@@ -399,12 +375,8 @@ class PLIParser(BaseParser):
             'structure': structure_data,
             'dependencies': dependencies_data,
             'io': {
-                "file_descriptors": logic_io_data.get("file_descriptors", []),
-                "operations": logic_io_data.get("operations", [])
-            },
-            'logic': {
-                "conditions": logic_io_data.get("conditions", []),
-                "business_rules": logic_io_data.get("business_logic", [])
+                "file_descriptors": io_data.get("file_descriptors", []),
+                "operations": io_data.get("operations", [])
             },
             '_unrecognized': ctx.errors,
             '_warnings': ctx.warnings

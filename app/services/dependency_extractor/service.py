@@ -16,16 +16,19 @@ from app.services.dependency_extractor.extractors import (
     extract_jcl_dependencies,
     extract_assembly_dependencies,
     extract_ca7_dependencies,
+    extract_pli_dependencies,           
+    extract_pli_copybook_dependencies,  
 )
 from app.services.dependency_extractor.generator import generate_dependency_graph_md
 
-# 1. Simplified Expected Types (Just the Enums)
+# 1. Expected Types
 EXPECTED_FILE_TYPES = {
     SourceFileType.COBOL,
     SourceFileType.COPYBOOK,
     SourceFileType.JCL,
     SourceFileType.PROC,
     SourceFileType.PLI,
+    SourceFileType.PLI_COPYBOOK,      
     SourceFileType.REXX,
     SourceFileType.ASSEMBLY,
     SourceFileType.CA7,
@@ -53,16 +56,19 @@ class DependencyExtractorService:
             SourceFileType.JCL: extract_jcl_dependencies,
             SourceFileType.ASSEMBLY: extract_assembly_dependencies,
             SourceFileType.CA7: extract_ca7_dependencies,
+            SourceFileType.PLI: extract_pli_dependencies,                   
+            SourceFileType.PLI_COPYBOOK: extract_pli_copybook_dependencies, 
         }
 
         # 3. Default structures (Empty state)
-        # This ensures that if a file type is missing, we still pass valid empty dicts to the generator
         self.default_deps = {
             SourceFileType.COBOL: {'program_calls': [], 'unresolved_calls': [], 'copybooks': [], 'sql_tables': [], 'file_definitions': [], 'file_io': []},
             SourceFileType.COPYBOOK: {'copybook_to_copybook': []},
             SourceFileType.JCL: {'jcl_program_calls': [], 'jcl_proc_calls': [], 'jcl_includes': [], 'jcl_files': []},
             SourceFileType.ASSEMBLY: {'program_calls': [], 'copybooks': [], 'file_io': [], 'db2_usage': [], 'externals': []},
             SourceFileType.CA7: {'ca7_job_flow': [], 'ca7_dataset_triggers': [], 'ca7_user_requirements': [], 'ca7_nodes': []},
+            SourceFileType.PLI: {'program_calls': [], 'unresolved_calls': [], 'copybooks': [], 'sql_tables': [], 'file_definitions': [], 'file_io': []},
+            SourceFileType.PLI_COPYBOOK: {'copybook_to_copybook': []},
         }
     
     async def generate(self) -> dict:
@@ -114,11 +120,13 @@ class DependencyExtractorService:
                         # Accessing specifically from the results dictionary
             cobol_deps = results[SourceFileType.COBOL]
             copybook_deps = results[SourceFileType.COPYBOOK]
-            jcl_deps= results[SourceFileType.JCL]
+            jcl_deps = results[SourceFileType.JCL]
             assembly_deps = results[SourceFileType.ASSEMBLY]
             ca7_deps = results[SourceFileType.CA7]
+            pli_deps = results[SourceFileType.PLI]                  
+            pli_copybook_deps = results[SourceFileType.PLI_COPYBOOK] 
+
             # Generate Markdown
-            # accessing the results dictionary by Enum key
             markdown_content = generate_dependency_graph_md(
                 project_id=str(self.project_id),
                 cobol_deps=cobol_deps,
@@ -126,6 +134,8 @@ class DependencyExtractorService:
                 jcl_deps=jcl_deps,
                 assembly_deps=assembly_deps,
                 ca7_deps=ca7_deps,
+                pli_deps=pli_deps,                  
+                pli_copybook_deps=pli_copybook_deps,
                 missing_file_types=missing_types,
             )
             
