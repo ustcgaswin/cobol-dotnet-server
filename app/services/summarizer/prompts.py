@@ -132,3 +132,25 @@ Main Datasets:
 Notes:
 - [Operational details, frequency, dependencies on other jobs, or special restart instructions]
 """
+
+DCLGEN_PROMPT = """Summarize this DB2 DCLGEN (Table Declaration).
+
+DCLGEN Content:
+{content}
+
+Respond EXACTLY in this format:
+
+Purpose: [What business entity this table represents.]
+
+Table Name: [The actual DB2 table name]
+
+Host Variable Structure: [The name of the 01 level COBOL record]
+
+Table Structure:
+- [Column Name] | [DB2 Type] | [Nullable?]
+- [Column Name] | [DB2 Type] | [Nullable?]
+...
+
+Notes:
+- [Specific constraints or usage context]
+"""
