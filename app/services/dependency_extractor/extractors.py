@@ -454,3 +454,90 @@ def extract_pli_copybook_dependencies(consolidated_data: list[dict]) -> dict:
             })
 
     return {'copybook_to_copybook': copybook_to_copybook}
+
+def extract_ca7_dependencies(consolidated_data: list[dict]) -> dict:
+    """
+    Extracts dependencies from CA-7 JSON data.
+    - Merges multiple entries for the same job name.
+    - Filters out report headers (DATE, PAGE, LIST).
+    - Categorizes into Job-to-Job, DSN-to-Job, and User-Requirements.
+    """
+    merged_jobs = {}
+    
+    # Noise names that often appear in report headers
+    noise_names = {'DATE', 'TIME', 'PAGE', 'LIST', 'SYS'}
+
+    for entry in consolidated_data:
+        # consolidated_data is usually a list containing the parser result dict
+        jobs_list = entry.get('jobs', []) if isinstance(entry, dict) else []
+        
+        for job in jobs_list:
+            name = job.get('job_name', '').upper()
+            
+            # 1. Skip report noise and wildcards
+            if not name or name in noise_names or '*' in name:
+                continue
+
+            # 2. Initialize or retrieve the merged record
+            if name not in merged_jobs:
+                merged_jobs[name] = {
+                    'job_name': name,
+                    'system': None,
+                    'schid': None,
+                    'job_dependencies': set(),
+                    'dataset_dependencies': set(),
+                    'user_requirements': set()
+                }
+
+            # 3. Merge Metadata (if present in this block)
+            header = job.get('header', {})
+            if header.get('system'):
+                merged_jobs[name]['system'] = header.get('system')
+            if header.get('schedule_id'):
+                merged_jobs[name]['schid'] = header.get('schedule_id')
+
+            # 4. Merge Requirements (Using sets to avoid duplicates)
+            reqs = job.get('requirements', {})
+            merged_jobs[name]['job_dependencies'].update(reqs.get('job_dependencies', []))
+            merged_jobs[name]['dataset_dependencies'].update(reqs.get('dataset_dependencies', []))
+            merged_jobs[name]['user_requirements'].update(reqs.get('user_requirements', []))
+
+    # Prepare final output lists
+    job_to_job = []
+    dsn_to_job = []
+    user_reqs = []
+
+    for name, data in merged_jobs.items():
+        # Job -> Job links (Predecessor -> Successor)
+        for pred in data['job_dependencies']:
+            job_to_job.append({
+                'source': pred.upper(),
+                'target': name,
+                'type': 'CA7_PREDECESSOR'
+            })
+            
+        # Dataset -> Job links (Triggering File -> Successor)
+        for dsn in data['dataset_dependencies']:
+            dsn_to_job.append({
+                'source': dsn.upper(),
+                'target': name,
+                'type': 'CA7_DATASET_TRIGGER'
+            })
+            
+        # User Requirements (Manual steps)
+        for usr in data['user_requirements']:
+            user_reqs.append({
+                'source': usr.upper(),
+                'target': name,
+                'type': 'CA7_USER_REQUIREMENT'
+            })
+
+    return {
+        'ca7_job_flow': job_to_job,
+        'ca7_dataset_triggers': dsn_to_job,
+        'ca7_user_requirements': user_reqs,
+        'ca7_nodes': [
+            {k: (list(v) if isinstance(v, set) else v) for k, v in j.items()} 
+            for j in merged_jobs.values()
+        ]
+    }

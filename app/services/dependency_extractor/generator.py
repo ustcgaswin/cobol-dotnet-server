@@ -10,6 +10,7 @@ def generate_dependency_graph_md(
     copybook_deps: dict | None = None,
     jcl_deps: dict | None = None,
     assembly_deps: dict | None = None,
+    ca7_deps: dict | None = None,
     pli_deps: dict | None = None,           # <--- Added
     pli_copybook_deps: dict | None = None,  # <--- Added
     missing_file_types: list[str] | None = None,
@@ -36,6 +37,7 @@ def generate_dependency_graph_md(
     copybook_deps = copybook_deps or {}
     jcl_deps = jcl_deps or {}
     assembly_deps = assembly_deps or {}
+    ca7_deps = ca7_deps or {}
     pli_deps = pli_deps or {}
     pli_copybook_deps = pli_copybook_deps or {}
     missing_file_types = missing_types = missing_file_types or []
@@ -68,6 +70,11 @@ def generate_dependency_graph_md(
     asm_db2 = assembly_deps.get('db2_usage', [])
     asm_io = assembly_deps.get('file_io', [])
     # asm_ext = assembly_deps.get('externals', []) # Optional to display
+
+    # CA-7 Sub-Dependencies
+    ca7_flow = ca7_deps.get('ca7_job_flow', [])
+    ca7_dsn = ca7_deps.get('ca7_dataset_triggers', [])
+    ca7_usr = ca7_deps.get('ca7_user_requirements', [])
 
     # --- Unpack PL/I Data ---
     pli_calls = pli_deps.get('program_calls', [])
@@ -107,6 +114,8 @@ def generate_dependency_graph_md(
     lines.append(f"| Assembly → Copybook | {len(asm_copy)} |")
     lines.append(f"| Assembly → File (I/O) | {len(asm_io)} |")
     lines.append(f"| Assembly → DB2 (DSNHLI) | {len(asm_db2)} |")
+    lines.append(f"| CA-7 → Job Predecessor | {len(ca7_flow)} |")
+    lines.append(f"| CA-7 → Dataset Trigger | {len(ca7_dsn)} |")
     lines.append("")
     
     # =========================================================
@@ -326,9 +335,49 @@ def generate_dependency_graph_md(
         lines.append("| :--- | :--- | :--- |")
         for db2 in sorted(asm_db2, key=lambda x: (x.get('source', ''), x.get('line', 0))):
             lines.append(f"| {db2['source']} | {db2['type']} | {db2['line']} |")
+        lines.append("")
     else:
         lines.append("*No Assembly DB2 usage found.*")
     lines.append("")
+    
+
+    # --- CA-7 WORKLOAD SECTION ---
+    lines.append("---")
+    lines.append("## CA-7 Dependencies")
+    lines.append("")
+
+    lines.append("### CA-7 → Job Dependency Flow")
+    if ca7_flow:
+        lines.append("| Predecessor (Trigger) | Successor (Target) | Type |")
+        lines.append("|-----------------------|--------------------|------|")
+        for flow in sorted(ca7_flow, key=lambda x: x.get('target', '')):
+            lines.append(f"| {flow.get('source')} | {flow.get('target')} | {flow.get('type')} |")
+    else:
+        lines.append("*No CA-7 job-to-job dependencies found.*")
+    lines.append("")
+
+    lines.append("### CA-7 → Dataset (DSN) Triggers")
+    lines.append("Jobs that automatically start when a specific file is created or updated.")
+    if ca7_dsn:
+        lines.append("| Triggering Dataset | Targeted Job | Type |")
+        lines.append("|--------------------|--------------|------|")
+        for dsn in sorted(ca7_dsn, key=lambda x: x.get('source', '')):
+            lines.append(f"| {dsn.get('source')} | {dsn.get('target')} | {dsn.get('type')} |")
+    else:
+        lines.append("*No CA-7 dataset triggers found.*")
+    lines.append("")
+
+    lines.append("### CA-7 → User Requirements")
+    lines.append("Manual intervention or external sign-offs required for job execution.")
+    if ca7_usr:
+        lines.append("| Requirement Name | Targeted Job | Type |")
+        lines.append("|------------------|--------------|------|")
+        for usr in sorted(ca7_usr, key=lambda x: x.get('source', '')):
+            lines.append(f"| {usr.get('source')} | {usr.get('target')} | {usr.get('type')} |")
+    else:
+        lines.append("*No manual user requirements found.*")
+    lines.append("")
+    
  
     # =========================================================
     # GAPS SECTION
