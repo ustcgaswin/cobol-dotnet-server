@@ -94,8 +94,12 @@ class SummarizerService:
                 is_rolling=False,
                 parser_type="jcl"
             ),
-            # You can easily add JCL, REXX, etc. here in the future
-              # NEW: Assembly Strategy
+            SourceFileType.PROC: ProcessingStrategy(
+                chunker_cls=JclChunker,
+                prompt_template=JCL_PROMPT,
+                is_rolling=False,
+                parser_type="proc"
+            ),
             SourceFileType.ASSEMBLY: ProcessingStrategy(
                 chunker_cls=AssemblyChunker,
                 prompt_template=ASSEMBLY_CHUNK_PROMPT,
@@ -295,14 +299,6 @@ class SummarizerService:
                             # Append continuation lines to purpose
                 parsed["purpose"] += " " + line
         return parsed
-
-
-
-
-
-
-
-
 
 
 

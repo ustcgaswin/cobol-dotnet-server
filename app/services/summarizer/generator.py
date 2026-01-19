@@ -17,7 +17,7 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     assembly_summaries = [s for s in summaries if s.get("type") == "assembly"]
     
     copybook_summaries = [s for s in summaries if s.get("type") == "copybook"]
-    jcl_summaries = [s for s in summaries if s.get("type") == "jcl"]
+    jcl_summaries = [s for s in summaries if s.get("type") in ["jcl", "proc"]]
     pli_summaries = [s for s in summaries if s.get("type") == "pli"]
     pli_copybook_summaries = [s for s in summaries if s.get("type") == "pli_copybook"]
     
@@ -87,10 +87,11 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
             lines.append("")
     
     if jcl_summaries:
-        lines.append("## JCL / Jobs")
+        lines.append("## JCL & Procedures")
         lines.append("")
         for s in sorted(jcl_summaries, key=lambda x: x.get("filename", "")):
-            lines.append(f"### {s.get('filename')}")
+            file_label = "PROC" if s.get("type") == "proc" else "JOB"
+            lines.append(f"### {s.get('filename')} ({file_label})")
             lines.append(f"**Purpose**: {s.get('purpose', 'N/A')}")
             lines.append("")
             
