@@ -1,8 +1,6 @@
 """Dependency extractors for different file types."""
 
 import re
-from typing import Any
-
 
 def extract_cobol_dependencies(consolidated_data: list[dict]) -> dict:
     """Extract all dependencies from COBOL parsed data.
@@ -342,8 +340,12 @@ def extract_pli_dependencies(consolidated_data: list[dict]) -> dict:
         for call in deps.get('calls', []):
             target = call.get('target') or call.get('program_name')
             ctype = call.get('type', '').upper()
-            # treat FETCH/DYNAMIC types as dynamic
-            call_type = 'dynamic' if 'DYNAMIC' in ctype or 'FETCH' in ctype else 'static'
+            
+            # Map parser types to standard 'static'/'dynamic'
+            if 'DYNAMIC' in ctype or 'FETCH' in ctype:
+                call_type = 'dynamic'
+            else:
+                call_type = 'static'
 
             entry = {
                 'source': program_name,
@@ -354,7 +356,9 @@ def extract_pli_dependencies(consolidated_data: list[dict]) -> dict:
 
             if call_type == 'dynamic':
                 entry['variable'] = call.get('variable')
-                entry['resolved'] = call.get('resolved', False)
+                # If target is uppercase/alphanumeric, it was resolved by parser heuristics
+                entry['resolved'] = bool(re.match(r'^[\w\@\#\$]+$', target))
+                
                 if not entry['resolved']:
                     unresolved_calls.append(entry)
                 else:
@@ -362,15 +366,15 @@ def extract_pli_dependencies(consolidated_data: list[dict]) -> dict:
             else:
                 program_calls.append(entry)
 
-        # Includes / copybooks
+        # Includes (Preprocessor and SQL Includes)
         for inc in deps.get('includes', []):
-            # include entries can be preprocessor/include or SQL includes
             copybooks.append({
                 'source': program_name,
                 'copybook': inc.get('name') or inc.get('copybook_name', ''),
                 'line': inc.get('line'),
                 'library': inc.get('library'),
                 'replacing': inc.get('replacing'),
+                'type': inc.get('type') # Preserves SQL_INCLUDE vs PREPROCESSOR info
             })
 
         # SQL tables
@@ -378,7 +382,9 @@ def extract_pli_dependencies(consolidated_data: list[dict]) -> dict:
             table_name = tbl.get('table')
             if table_name:
                 existing = next((t for t in sql_tables if t['source'] == program_name and t['table'] == table_name), None)
+                # PLI parser uses 'access' field (READ/WRITE), mapping to 'operations'
                 operation = tbl.get('access') or tbl.get('operation') or 'UNKNOWN'
+                
                 if existing:
                     if operation not in existing['operations']:
                         existing['operations'].append(operation)
@@ -386,10 +392,10 @@ def extract_pli_dependencies(consolidated_data: list[dict]) -> dict:
                     sql_tables.append({
                         'source': program_name,
                         'table': table_name,
-                        'operations': [operation] if operation != 'UNKNOWN' else []
+                        'operations': [operation]
                     })
 
-        # File definitions (from io.file_descriptors)
+        # File definitions (DCL FILE)
         for fd in program.get('io', {}).get('file_descriptors', []):
             file_definitions.append({
                 'source': program_name,
@@ -400,7 +406,7 @@ def extract_pli_dependencies(consolidated_data: list[dict]) -> dict:
                 'line': fd.get('line'),
             })
 
-        # File I/O operations
+        # File I/O operations (OPEN/READ/WRITE)
         for op in program.get('io', {}).get('operations', []):
             file_io.append({
                 'source': program_name,
@@ -422,20 +428,29 @@ def extract_pli_dependencies(consolidated_data: list[dict]) -> dict:
 
 def extract_pli_copybook_dependencies(consolidated_data: list[dict]) -> dict:
     """Extract nested include references from PL/I copybook parsed data.
-    PL/I copybooks typically list includes under dependencies.includes.
-    Normalize to same shape as COBOL copybook extractor.
+    
+    Args:
+        consolidated_data: List of parsed PL/I copybook dictionaries
+        
+    Returns:
+        Dictionary with copybook_to_copybook dependencies.
     """
     copybook_to_copybook = []
 
     for cb in consolidated_data:
         cb_name = cb.get('meta', {}).get('source_file') or cb.get('copybook_name') or 'UNKNOWN'
-        for inc in cb.get('dependencies', {}).get('includes', []):
+        
+        # In PL/I Copybook parser, nested includes are found in dependencies.includes
+        deps = cb.get('dependencies', {})
+        
+        for inc in deps.get('includes', []):
             copybook_to_copybook.append({
                 'source': cb_name,
-                'target': inc.get('name') or inc.get('copybook_name', ''),
+                'target': inc.get('name'),
                 'line': inc.get('line'),
-                'library': inc.get('library'),
-                'replacing': inc.get('replacing'),
+                'library': None, # PL/I includes typically don't specify library in the same way
+                'replacing': None,
+                'type': inc.get('type') # 'NESTED_INCLUDE'
             })
 
     return {'copybook_to_copybook': copybook_to_copybook}
