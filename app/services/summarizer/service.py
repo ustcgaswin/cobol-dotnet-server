@@ -19,6 +19,7 @@ from app.core.chunkers.cobol import CobolChunker
 from app.core.chunkers.copybook import CopybookChunker
 from app.core.chunkers.pli import PliChunker
 from app.core.chunkers.pli_copybook import PliCopybookChunker
+from app.core.chunkers.jcl import JclChunker
 
 # Prompts
 from app.services.summarizer.prompts import (
@@ -27,6 +28,7 @@ from app.services.summarizer.prompts import (
     COPYBOOK_PROMPT,
     PLI_CHUNK_PROMPT,
     PLI_COPYBOOK_PROMPT,
+    JCL_PROMPT
 )
 from app.services.summarizer.generator import generate_file_summaries_md
 
@@ -86,8 +88,18 @@ class SummarizerService:
                 is_rolling=False,
                 parser_type="pli_copybook"
             ),
-            # You can easily add JCL, REXX, etc. here in the future
-              # NEW: Assembly Strategy
+            SourceFileType.JCL: ProcessingStrategy(
+                chunker_cls=JclChunker,
+                prompt_template=JCL_PROMPT,
+                is_rolling=False,
+                parser_type="jcl"
+            ),
+            SourceFileType.PROC: ProcessingStrategy(
+                chunker_cls=JclChunker,
+                prompt_template=JCL_PROMPT,
+                is_rolling=False,
+                parser_type="proc"
+            ),
             SourceFileType.ASSEMBLY: ProcessingStrategy(
                 chunker_cls=AssemblyChunker,
                 prompt_template=ASSEMBLY_CHUNK_PROMPT,
@@ -244,6 +256,8 @@ class SummarizerService:
             "entity": "", # for copybooks
             "key_fields": [], # for copybooks
             "register_usage": [], # for assembly 
+            "steps": [],
+            "main_datasets": [], 
         }
         
         current_section = None
@@ -265,6 +279,10 @@ class SummarizerService:
                 current_section = "functionalities"
             elif lower_line.startswith("key operations:"):
                 current_section = "key_operations"
+            elif lower_line.startswith("workflow steps:"):
+                current_section = "steps"
+            elif lower_line.startswith("main datasets:"):
+                current_section = "main_datasets"
             elif lower_line.startswith("notes:"):
                 current_section = "notes"
             elif lower_line.startswith("key fields:"):
@@ -274,22 +292,13 @@ class SummarizerService:
             elif line.startswith("- "):
                 item = line[2:].strip()
                 # Define all sections that expect a list of bullet points
-                list_sections = ["functionalities", "key_operations", "notes", "key_fields", "register_usage"]
-                
+                list_sections = ["functionalities", "key_operations", "notes", "key_fields", "register_usage", "steps", "main_datasets"]
                 if current_section in list_sections:
                     parsed[current_section].append(item)
             elif current_section == "purpose" and not line.endswith(":"):
                             # Append continuation lines to purpose
                 parsed["purpose"] += " " + line
         return parsed
-
-
-
-
-
-
-
-
 
 
 
