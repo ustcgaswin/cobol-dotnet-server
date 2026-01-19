@@ -7,6 +7,7 @@ from app.core.chunkers.markdown import MarkdownChunker
 from app.core.chunkers.pdf import PDFChunker
 from app.core.chunkers.pli import PliChunker
 from app.core.chunkers.pli_copybook import PliCopybookChunker
+from app.core.chunkers.jcl import JclChunker
 
 # Registry mapping extensions to chunker classes
 CHUNKER_REGISTRY: dict[str, type[BaseChunker]] = {
@@ -21,6 +22,8 @@ CHUNKER_REGISTRY: dict[str, type[BaseChunker]] = {
     ".pl1": PliChunker,
     ".inc": PliCopybookChunker,
     ".mac": PliCopybookChunker,
+    ".proc": JclChunker,
+    ".jcl": JclChunker
 }
 
 
@@ -56,4 +59,5 @@ __all__ = [
     "PliCopybookChunker",
     "CHUNKER_REGISTRY",
     "get_chunker",
+    "JclChunker"
 ]

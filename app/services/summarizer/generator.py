@@ -14,6 +14,7 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     # Group by type
     cobol_summaries = [s for s in summaries if s.get("type") == "cobol"]
     copybook_summaries = [s for s in summaries if s.get("type") == "copybook"]
+    jcl_summaries = [s for s in summaries if s.get("type") == "jcl"]
     
     # 1. COBOL Programs
     if cobol_summaries:
@@ -63,6 +64,38 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
             if s.get("key_fields"):
                 lines.append("**Key Fields**:")
                 for item in s.get("key_fields", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+                
+            lines.append("---")
+            lines.append("")
+    
+    if jcl_summaries:
+        lines.append("## JCL / Jobs")
+        lines.append("")
+        for s in sorted(jcl_summaries, key=lambda x: x.get("filename", "")):
+            lines.append(f"### {s.get('filename')}")
+            lines.append(f"**Purpose**: {s.get('purpose', 'N/A')}")
+            lines.append("")
+            
+            # Workflow Steps (Programs/PROCs called)
+            if s.get("steps"):
+                lines.append("**Workflow Steps**:")
+                for item in s.get("steps", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+                
+            # Main Datasets (Inputs/Outputs)
+            if s.get("main_datasets"):
+                lines.append("**Main Datasets**:")
+                for item in s.get("main_datasets", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+                
+            # Operational Notes (Frequency, restart logic, etc)
+            if s.get("notes"):
+                lines.append("**Notes**:")
+                for item in s.get("notes", []):
                     lines.append(f"- {item}")
                 lines.append("")
                 

@@ -18,6 +18,7 @@ from app.core.chunkers.cobol import CobolChunker
 from app.core.chunkers.copybook import CopybookChunker
 from app.core.chunkers.pli import PliChunker
 from app.core.chunkers.pli_copybook import PliCopybookChunker
+from app.core.chunkers.jcl import JclChunker
 
 # Prompts
 from app.services.summarizer.prompts import (
@@ -25,6 +26,7 @@ from app.services.summarizer.prompts import (
     COPYBOOK_PROMPT,
     PLI_CHUNK_PROMPT,
     PLI_COPYBOOK_PROMPT,
+    JCL_PROMPT
 )
 from app.services.summarizer.generator import generate_file_summaries_md
 
@@ -83,6 +85,12 @@ class SummarizerService:
                 prompt_template=PLI_COPYBOOK_PROMPT,
                 is_rolling=False,
                 parser_type="pli_copybook"
+            ),
+            SourceFileType.JCL: ProcessingStrategy(
+                chunker_cls=JclChunker,
+                prompt_template=JCL_PROMPT,
+                is_rolling=False,
+                parser_type="jcl"
             ),
             # You can easily add JCL, REXX, etc. here in the future
         }
@@ -220,8 +228,10 @@ class SummarizerService:
             "functionalities": [],
             "key_operations": [],
             "notes": [],
-            "entity": "", # for copybooks
-            "key_fields": [], # for copybooks
+            "entity": "",
+            "key_fields": [],
+            "steps": [],
+            "main_datasets": [], 
         }
         
         current_section = None
@@ -243,6 +253,10 @@ class SummarizerService:
                 current_section = "functionalities"
             elif lower_line.startswith("key operations:"):
                 current_section = "key_operations"
+            elif lower_line.startswith("workflow steps:"):
+                current_section = "steps"
+            elif lower_line.startswith("main datasets:"):
+                current_section = "main_datasets"
             elif lower_line.startswith("notes:"):
                 current_section = "notes"
             elif lower_line.startswith("key fields:"):
@@ -257,6 +271,10 @@ class SummarizerService:
                     parsed["notes"].append(item)
                 elif current_section == "key_fields":
                     parsed["key_fields"].append(item)
+                elif current_section == "steps":
+                    parsed["steps"].append(item)
+                elif current_section == "main_datasets":
+                    parsed["main_datasets"].append(item)
             elif current_section == "purpose" and not line.endswith(":"):
                 # Append continuation lines to purpose
                 parsed["purpose"] += " " + line

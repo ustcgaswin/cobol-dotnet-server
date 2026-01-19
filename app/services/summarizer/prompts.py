@@ -84,3 +84,25 @@ Key Fields:
 - [field2] - [description]
 ...
 """
+
+JCL_PROMPT = """Summarize this JCL code.
+
+Code:
+{content}
+
+Respond EXACTLY in this format:
+
+Purpose: [1-2 sentences description of what this job or procedure does. Start directly with the verb, e.g., "Executes...", "Performs...". DO NOT start with "This JCL..."]
+
+Workflow Steps:
+- [Step name or Program name] - [brief description of step purpose]
+- [Step name or Program name] - [brief description of step purpose]
+...
+
+Main Datasets:
+- [Dataset name] - [Input, Output, or Temp]
+- [Dataset name] - [Input, Output, or Temp]
+
+Notes:
+- [Operational details, frequency, dependencies on other jobs, or special restart instructions]
+"""
