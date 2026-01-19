@@ -249,11 +249,11 @@ class SummarizerService:
             "functionalities": [],
             "key_operations": [],
             "notes": [],
-            "entity": "",
-            "key_fields": [],
+            "entity": "", # for copybooks
+            "key_fields": [], # for copybooks
+            "register_usage": [], # for assembly 
             "steps": [],
             "main_datasets": [], 
-            "register_usage": [],
         }
         
         current_section = None
@@ -289,7 +289,6 @@ class SummarizerService:
                 item = line[2:].strip()
                 # Define all sections that expect a list of bullet points
                 list_sections = ["functionalities", "key_operations", "notes", "key_fields", "register_usage", "steps", "main_datasets"]
-                
                 if current_section in list_sections:
                     parsed[current_section].append(item)
             elif current_section == "purpose" and not line.endswith(":"):

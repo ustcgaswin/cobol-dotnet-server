@@ -85,11 +85,43 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
                 
             lines.append("---")
             lines.append("")
+    
+    if jcl_summaries:
+        lines.append("## JCL / Jobs")
+        lines.append("")
+        for s in sorted(jcl_summaries, key=lambda x: x.get("filename", "")):
+            lines.append(f"### {s.get('filename')}")
+            lines.append(f"**Purpose**: {s.get('purpose', 'N/A')}")
+            lines.append("")
+            
+            # Workflow Steps (Programs/PROCs called)
+            if s.get("steps"):
+                lines.append("**Workflow Steps**:")
+                for item in s.get("steps", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+                
+            # Main Datasets (Inputs/Outputs)
+            if s.get("main_datasets"):
+                lines.append("**Main Datasets**:")
+                for item in s.get("main_datasets", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+                
+            # Operational Notes (Frequency, restart logic, etc)
+            if s.get("notes"):
+                lines.append("**Notes**:")
+                for item in s.get("notes", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+                
+            lines.append("---")
+            lines.append("")
 
     # 2. Render Sections (Calls helpers for all 5 types)
     _render_program_section("COBOL Programs", cobol_summaries)
     _render_program_section("PL/I Programs", pli_summaries)
-    _render_program_section("Assembly Modules", assembly_summaries) # Your new logic
+    _render_program_section("Assembly Modules", assembly_summaries)
     
     _render_copybook_section("COBOL Copybooks", copybook_summaries)
     _render_copybook_section("PL/I Include Files", pli_copybook_summaries)
