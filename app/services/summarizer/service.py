@@ -240,7 +240,7 @@ class SummarizerService:
                 await asyncio.sleep(wait_time)
         return ""
 
-   def _parse_structured_summary(self, filename: str, file_type: str, raw_summary: str) -> dict:
+    def _parse_structured_summary(self, filename: str, file_type: str, raw_summary: str) -> dict:
         """Parse raw LLM output into structured dict."""
         parsed = {
             "filename": filename,
