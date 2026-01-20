@@ -33,7 +33,7 @@ from app.services.summarizer.prompts import (
     PLI_COPYBOOK_PROMPT,
     JCL_PROMPT,
     DCLGEN_PROMPT,
-    CA7_PROMPT
+    CA7_PROMPT,
     REXX_CHUNK_PROMPT,
 )
 from app.services.summarizer.generator import generate_file_summaries_md
@@ -115,6 +115,7 @@ class SummarizerService:
 
              # NEW Strategy for DCLGEN
             SourceFileType.DCLGEN: ProcessingStrategy(
+                chunker_cls=CopybookChunker, # DCLGEN can be treated like copybooks
                 prompt_template=DCLGEN_PROMPT,
                 is_rolling=False,            # DCLGEN is always single-pass
                 parser_type="dclgen"
@@ -127,8 +128,10 @@ class SummarizerService:
                 parser_type="ca7"
             ),
             SourceFileType.REXX: ProcessingStrategy(
-                chunker_cls=RexxChunker,  # Your REXX chunker
-                is_rolling=True,  # or False, depending on REXX file size patterns
+                chunker_cls=RexxChunker,
+                prompt_template=REXX_CHUNK_PROMPT,  # Your REXX chunker
+                is_rolling=True,
+                 # or False, depending on REXX file size patterns
                 parser_type="rexx"
             ),
         }
