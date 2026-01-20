@@ -1,7 +1,6 @@
 
 import asyncio
 import uuid
-import json
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Type, Any, Optional
@@ -24,6 +23,7 @@ from app.core.chunkers.pli import PliChunker
 from app.core.chunkers.pli_copybook import PliCopybookChunker
 from app.core.chunkers.jcl import JclChunker
 from app.core.chunkers.ca7 import Ca7Chunker
+from app.core.chunkers.parmlib import ParmlibChunker
 
 # Prompts
 from app.services.summarizer.prompts import (
@@ -36,6 +36,7 @@ from app.services.summarizer.prompts import (
     DCLGEN_PROMPT,
     CA7_PROMPT,
     REXX_CHUNK_PROMPT,
+    PARMLIB_CHUNK_PROMPT,
     CSV_PROMPT,             
     FIXED_LENGTH_PROMPT,
 )
@@ -49,13 +50,13 @@ class ProcessingStrategy:
     prompt_template: str
     is_rolling: bool  # True = Chunk loop with history, False = Single pass
     parser_type: str  # String identifier for the parsing logic
-    use_json: bool = False  # NEW: True = Parse JSON output instead of raw content
 
 
 class SummarizerService:
     """Service for generating file summaries via LLM using DB-driven strategies."""
     
     MAX_RETRIES = 3
+    FLATFILE_SAMPLE_LINES = 100  # Number of lines to sample for flat files
 
     def __init__(self, project_id: uuid.UUID, session: AsyncSession):
         """
@@ -70,7 +71,6 @@ class SummarizerService:
         self.repo = SourceFileRepository(session)
         self.project_storage = settings.get_storage_path() / str(project_id)
         self.output_dir = settings.get_artifacts_path() / str(project_id)
-        self.artifacts_dir = settings.get_artifacts_path() / str(project_id)
         self.llm = get_llm()
 
         # Define the strategies for supported Enums
@@ -139,20 +139,27 @@ class SummarizerService:
                  # or False, depending on REXX file size patterns
                 parser_type="rexx"
             ),
-            # Flat File Strategies (JSON-based, no chunking)
+
+            # Parmlib strategy - chunked by parameter groups
+            SourceFileType.PARMLIB: ProcessingStrategy(
+                chunker_cls=ParmlibChunker,
+                prompt_template=PARMLIB_CHUNK_PROMPT,
+                is_rolling=True,  # Rolling summarization for large parmlib files
+                parser_type="parmlib"
+            ),
+
+            # Flat File Strategies - Work with raw content, single pass, no chunking
             SourceFileType.CSV: ProcessingStrategy(
-                chunker_cls=None,  # No chunker needed
+                chunker_cls=CopybookChunker,  # Reuse simple chunker for single-pass
                 prompt_template=CSV_PROMPT,
-                is_rolling=False,
-                parser_type="csv",
-                use_json=True  # Read from parsed JSON output
+                is_rolling=False,  # Single pass
+                parser_type="csv"
             ),
             SourceFileType.FIXED_LENGTH: ProcessingStrategy(
-                chunker_cls=None,  # No chunker needed
+                chunker_cls=CopybookChunker,  # Reuse simple chunker for single-pass
                 prompt_template=FIXED_LENGTH_PROMPT,
-                is_rolling=False,
-                parser_type="fixed_length",
-                use_json=True  # Read from parsed JSON output
+                is_rolling=False,  # Single pass
+                parser_type="fixed_length"
             ),
         }
 
@@ -222,9 +229,9 @@ class SummarizerService:
         """Generic summarizer that follows the provided strategy."""
         logger.info(f"Summarizing {strategy.parser_type} file: {filepath.name}")
         
-        # NEW: Handle JSON-based flat file processing
-        if strategy.use_json:
-            return await self._summarize_flatfile_from_json(filepath, strategy)
+        # FLAT FILE HANDLING: Sample first N lines only
+        if strategy.parser_type in ["csv", "fixed_length"]:
+            return await self._summarize_flatfile_from_raw(filepath, strategy)
         
         # Handle traditional chunker-based processing
          # 1. SPECIAL CASE: Assembly Line Count Logic
@@ -281,111 +288,49 @@ class SummarizerService:
         logger.info(f"Completed summarization for {filepath.name}")
         return self._parse_structured_summary(filepath.name, strategy.parser_type, summary)
 
-    # NEW: Flat file JSON-based summarization
-    async def _summarize_flatfile_from_json(self, filepath: Path, strategy: ProcessingStrategy) -> dict:
-        """Summarize flat file using its parsed JSON output.
+    # Flat file raw content summarization
+    async def _summarize_flatfile_from_raw(self, filepath: Path, strategy: ProcessingStrategy) -> dict:
+        """Summarize flat file by sampling first N lines of raw content.
         
-        For CSV and Fixed-Length files, we:
-        1. Load the parsed JSON from artifacts/parsed_outputs
-        2. Extract key metadata for the prompt
-        3. Send a focused sample to LLM
-        4. Parse the LLM response into our standard summary format
+        This approach:
+        - Reads only the first 50-100 lines (configurable)
+        - Includes headers/structure for context
+        - Avoids token overflow from large data files
+        - Works independently of parser output
         """
-        logger.info(f"Summarizing flat file from JSON: {filepath.name}")
-        
-        # Construct path to parsed JSON
-        # Pattern: artifacts/{project_id}/parsed_outputs/{file_type}/{filename}.json
-        json_filename = filepath.stem + ".json"
-        json_path = self.artifacts_dir / "parsed_outputs" / strategy.parser_type / json_filename
-        
-        if not json_path.exists():
-            logger.warning(f"No parsed JSON found for {filepath.name} at {json_path}")
-            return {}
+        logger.info(f"Summarizing flat file from raw content: {filepath.name}")
         
         try:
-            # Load parsed JSON
-            with open(json_path, 'r', encoding='utf-8') as f:
-                parsed_data = json.load(f)
+            # Read file with error handling for encoding
+            try:
+                content = filepath.read_text(encoding='utf-8', errors='replace')
+            except Exception as e:
+                logger.warning(f"UTF-8 read failed, trying latin-1: {e}")
+                content = filepath.read_text(encoding='latin-1', errors='replace')
             
-            logger.debug(f"Loaded parsed JSON: {json_path}")
+            # Sample first N lines
+            lines = content.split('\n')
+            sample_lines = lines[:self.FLATFILE_SAMPLE_LINES]
+            sample_content = '\n'.join(sample_lines)
             
-            # Build prompt from JSON data
-            prompt = self._build_flatfile_prompt(parsed_data, strategy)
+            total_lines = len(lines)
+            logger.info(
+                f"Sampled {len(sample_lines)} of {total_lines} lines "
+                f"from {filepath.name}"
+            )
+            
+            # Build prompt with sampled content
+            prompt = strategy.prompt_template.format(content=sample_content)
             
             # Call LLM
             summary = await self._call_llm_with_retry(prompt)
             
-            # Parse response
+            # Parse and return
             return self._parse_structured_summary(filepath.name, strategy.parser_type, summary)
             
         except Exception as e:
-            logger.error(f"Failed to summarize flat file {filepath.name} from JSON: {e}")
+            logger.error(f"Failed to summarize flat file {filepath.name}: {e}")
             return {}
-
-    def _build_flatfile_prompt(self, parsed_data: dict, strategy: ProcessingStrategy) -> str:
-        """Build prompt for flat file summarization from parsed JSON.
-        
-        Args:
-            parsed_data: The parsed JSON structure from flatfile parser
-            strategy: Processing strategy (contains prompt template)
-        
-        Returns:
-            Formatted prompt string
-        """
-        # Extract common metadata
-        metadata = {
-            "fileName": parsed_data.get("fileName", "unknown"),
-            "totalRecords": parsed_data.get("totalRecords", 0),
-            "encoding": parsed_data.get("encoding", "unknown"),
-        }
-        
-        # Add type-specific metadata
-        if strategy.parser_type == "csv":
-            metadata["delimiter"] = parsed_data.get("delimiter", ",")
-            metadata["hasHeader"] = parsed_data.get("hasHeader", False)
-        elif strategy.parser_type == "fixed_length":
-            metadata["recordLength"] = parsed_data.get("recordLength", 0)
-        
-        # Format schema for prompt
-        schema = parsed_data.get("schema", [])
-        schema_lines = []
-        for field in schema:
-            if strategy.parser_type == "csv":
-                schema_lines.append(
-                    f"- {field.get('columnName')}: {field.get('dataType')} "
-                    f"(nullable: {field.get('nullable')}, .NET: {field.get('suggestedDotNetType')})"
-                )
-            elif strategy.parser_type == "fixed_length":
-                schema_lines.append(
-                    f"- {field.get('fieldName')} (pos {field.get('startPosition')}-"
-                    f"{field.get('startPosition') + field.get('length') - 1}): "
-                    f"{field.get('dataType')} (padding: {field.get('padding')}, "
-                    f".NET: {field.get('suggestedDotNetType')})"
-                )
-        
-        schema_text = "\n".join(schema_lines)
-        
-        # Get sample records (first 10-15 for context)
-        records = parsed_data.get("records", [])[:15]
-        sample_records_text = json.dumps(records, indent=2)
-        
-        # Format data quality metrics
-        data_quality = parsed_data.get("dataQuality", {})
-        quality_lines = []
-        for key, value in data_quality.items():
-            quality_lines.append(f"- {key}: {value}")
-        quality_text = "\n".join(quality_lines)
-        
-        # Format the prompt using the template
-        prompt = strategy.prompt_template.format(
-            metadata=json.dumps(metadata, indent=2),
-            schema=schema_text,
-            sample_count=len(records),
-            sample_records=sample_records_text,
-            data_quality=quality_text
-        )
-        
-        return prompt
 
     async def _call_llm_with_retry(self, prompt: str) -> str:
         """Call LLM with exponential backoff retry."""
@@ -423,6 +368,8 @@ class SummarizerService:
             "dependencies_triggers": [], # for CA7
             "operational_rules": [], # for CA7
             "data_characteristics": [],  # For flat files
+            "configuration_areas": [],   # For parmlib
+            "key_parameters": [],        # For parmlib
         }
         
         current_section = None
@@ -472,13 +419,18 @@ class SummarizerService:
                 current_section = "key_fields"
             elif lower_line.startswith("register usage:"):
                 current_section = "register_usage"
+            # Parmlib specific sections
+            elif lower_line.startswith("configuration areas:"):
+                current_section = "configuration_areas"
+            elif lower_line.startswith("key parameters:"):
+                current_section = "key_parameters"
             # Flat file specific section
             elif lower_line.startswith("data characteristics:"):
                 current_section = "data_characteristics"
             elif line.startswith("- "):
                 item = line[2:].strip()
                 # Define all sections that expect a list of bullet points
-                list_sections = ["functionalities", "key_operations", "notes", "key_fields", "register_usage", "steps", "main_datasets", "table_structure", "workload_identity", "dependencies_triggers", "operational_rules", "data_characteristics"]
+                list_sections = ["functionalities", "key_operations", "notes", "key_fields", "register_usage", "steps", "main_datasets", "table_structure", "workload_identity", "dependencies_triggers", "operational_rules", "data_characteristics", "configuration_areas", "key_parameters"]
                 if current_section in list_sections:
                     parsed[current_section].append(item)
             elif current_section == "purpose" and not line.endswith(":"):

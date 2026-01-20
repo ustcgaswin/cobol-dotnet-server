@@ -231,19 +231,36 @@ Notes:
 - [special logic, error handling, or technical details]
 """
 
-CSV_PROMPT = """Summarize this CSV flat file based on its parsed structure.
+PARMLIB_CHUNK_PROMPT = """Summarize this mainframe parmlib (parameter library) configuration.
 
-File Metadata:
-{metadata}
+Code:
+{chunk}
 
-Schema (Columns):
-{schema}
+Previous context:
+{previous_summary}
 
-Sample Records (first {sample_count}):
-{sample_records}
+Respond EXACTLY in this format:
 
-Data Quality Metrics:
-{data_quality}
+Purpose: [1-2 sentences description of what system/subsystem this configures. Start with verb, e.g., "Configures...", "Defines...". DO NOT start with "This parmlib..."]
+
+Configuration Areas:
+- [area 1 (e.g., System initialization parameters)]
+- [area 2 (e.g., Dataset allocation defaults)]
+...
+
+Key Parameters:
+- [parameter_name] - [what it controls/specifies]
+- [parameter_name] - [what it controls/specifies]
+...
+
+Notes:
+- [System dependencies, IPL requirements, migration considerations, or critical settings]
+"""
+
+CSV_PROMPT = """Analyze this CSV flat file and provide a business-focused summary.
+
+File Content (first 50-100 lines):
+{content}
 
 Respond EXACTLY in this format:
 
@@ -258,27 +275,18 @@ Key Fields:
 ...
 
 Data Characteristics:
-- Total Records: [count]
-- Delimiter: [delimiter character]
-- Data Quality: [assessment based on metrics]
+- [Record count or pattern observations]
+- [Delimiter and format notes]
+- [Data quality observations]
 
 Notes:
 - [Migration considerations, data cleansing needs, or special handling required]
 """
 
-FIXED_LENGTH_PROMPT = """Summarize this fixed-length flat file based on its parsed structure.
+FIXED_LENGTH_PROMPT = """Analyze this fixed-length flat file and provide a business-focused summary.
 
-File Metadata:
-{metadata}
-
-Field Layout:
-{schema}
-
-Sample Records (first {sample_count}):
-{sample_records}
-
-Data Quality Metrics:
-{data_quality}
+File Content (first 50-100 lines):
+{content}
 
 Respond EXACTLY in this format:
 
@@ -287,17 +295,16 @@ Purpose: [What business data this file contains. Start with noun/verb, e.g., "Pa
 Entity: [Primary business entity represented (e.g., "Employee", "Sale", "Account")]
 
 Key Fields:
-- [field1 (position X-Y)] - [business meaning and usage]
-- [field2 (position X-Y)] - [business meaning and usage]
-- [field3 (position X-Y)] - [business meaning and usage]
+- [field1 (approximate position)] - [business meaning and usage]
+- [field2 (approximate position)] - [business meaning and usage]
+- [field3 (approximate position)] - [business meaning and usage]
 ...
 
 Data Characteristics:
-- Total Records: [count]
-- Record Length: [bytes]
-- Encoding: [detected encoding]
-- Data Quality: [assessment based on metrics]
+- [Record count or pattern observations]
+- [Record length and format notes]
+- [Data quality observations]
 
 Notes:
-- [COBOL copybook requirements, migration considerations, or special handling needed]
+- [COBOL copybook needs, migration considerations, or special handling required]
 """

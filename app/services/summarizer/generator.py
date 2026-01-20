@@ -23,11 +23,11 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     pli_copybook_summaries = [s for s in summaries if s.get("type") == "pli_copybook"]
     dclgen_summaries = [s for s in summaries if s.get("type") == "dclgen"] 
     ca7_summaries = [s for s in summaries if s.get("type") == "ca7"]
-    # Flat file summaries
+    rexx_summaries = [s for s in summaries if s.get("type") == "rexx"]
+    parmlib_summaries = [s for s in summaries if s.get("type") == "parmlib"]
     csv_summaries = [s for s in summaries if s.get("type") == "csv"]
     fixed_length_summaries = [s for s in summaries if s.get("type") == "fixed_length"]
     
-    rexx_summaries = [s for s in summaries if s.get("type") == "rexx"]
     # --- Helper to render program-style summaries (COBOL/PLI/Assembly) ---
     def _render_program_section(title: str, items: list[dict]):
         if not items:
@@ -163,6 +163,43 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
                 
             lines.append("---")
             lines.append("")
+
+    # Helper to render parmlib summaries
+    def _render_parmlib_section(title: str, items: list[dict]):
+        """Render parmlib (parameter library) summaries."""
+        if not items:
+            return
+        lines.append(f"## {title}")
+        lines.append("")
+        
+        for s in sorted(items, key=lambda x: x.get("filename", "")):
+            lines.append(f"### {s.get('filename')}")
+            lines.append(f"**Purpose**: {s.get('purpose', 'N/A')}")
+            lines.append("")
+            
+            # Configuration Areas
+            if s.get("configuration_areas"):
+                lines.append("**Configuration Areas**:")
+                for item in s.get("configuration_areas", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+            
+            # Key Parameters
+            if s.get("key_parameters"):
+                lines.append("**Key Parameters**:")
+                for item in s.get("key_parameters", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+            
+            # Notes (dependencies, migration considerations)
+            if s.get("notes"):
+                lines.append("**Notes**:")
+                for item in s.get("notes", []):
+                    lines.append(f"- {item}")
+                lines.append("")
+                
+            lines.append("---")
+            lines.append("")
     
     # Helper to render flat file summaries
     def _render_flatfile_section(title: str, items: list[dict]):
@@ -248,6 +285,7 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     _render_copybook_section("PL/I Include Files", pli_copybook_summaries)
     _render_ca7_section("CA-7 Workload Orchestration", ca7_summaries)
     _render_program_section("REXX Executables", rexx_summaries)
+    _render_parmlib_section("System Parameter Libraries (Parmlib)", parmlib_summaries)
     # Render flat file sections
     _render_flatfile_section("CSV Data Files", csv_summaries)
     _render_flatfile_section("Fixed-Length Data Files", fixed_length_summaries)            
