@@ -13,6 +13,7 @@ def generate_dependency_graph_md(
     ca7_deps: dict | None = None,
     pli_deps: dict | None = None,           # <--- Added
     pli_copybook_deps: dict | None = None,  # <--- Added
+    rexx_deps: dict | None = None,
     missing_file_types: list[str] | None = None,
 ) -> str:
     """Generate dependency_graph.md content.
@@ -40,6 +41,7 @@ def generate_dependency_graph_md(
     ca7_deps = ca7_deps or {}
     pli_deps = pli_deps or {}
     pli_copybook_deps = pli_copybook_deps or {}
+    rexx_deps = rexx_deps or {}
     missing_file_types = missing_types = missing_file_types or []
     
     # Header
@@ -87,6 +89,13 @@ def generate_dependency_graph_md(
 
     # --- Aggregate for Gaps ---
     all_unresolved = cbl_unresolved + pli_unresolved
+    
+    # --- Unpack REXX Data ---
+    rexx_cobol = rexx_deps.get('cobol_calls', [])
+    rexx_jcl = rexx_deps.get('jcl_submissions', [])
+    rexx_datasets = rexx_deps.get('dataset_operations', [])
+    rexx_utils = rexx_deps.get('tso_utilities', [])
+    rexx_env = rexx_deps.get('environment_vars', [])
 
     # --- SUMMARY SECTION ---
     lines.append("## Summary")
@@ -116,6 +125,13 @@ def generate_dependency_graph_md(
     lines.append(f"| Assembly → DB2 (DSNHLI) | {len(asm_db2)} |")
     lines.append(f"| CA-7 → Job Predecessor | {len(ca7_flow)} |")
     lines.append(f"| CA-7 → Dataset Trigger | {len(ca7_dsn)} |")
+    lines.append("")
+    # rexx
+    lines.append(f"| REXX → COBOL Programs | {len(rexx_cobol)} |")
+    lines.append(f"| REXX → JCL Jobs | {len(rexx_jcl)} |")
+    lines.append(f"| REXX → Datasets | {len(rexx_datasets)} |")
+    lines.append(f"| REXX → TSO Utilities | {len(rexx_utils)} |")
+    lines.append(f"| REXX → Environment Variables | {len(rexx_env)} |")
     lines.append("")
     
     # =========================================================
@@ -378,6 +394,78 @@ def generate_dependency_graph_md(
         lines.append("*No manual user requirements found.*")
     lines.append("")
     
+
+      # =========================================================
+    # REXX SECTION
+    # =========================================================
+    lines.append("---")
+    lines.append("## REXX Dependencies")
+    lines.append("")
+    
+    # 1. REXX → COBOL Programs
+    lines.append("### REXX → COBOL Programs")
+    if rexx_cobol:
+        lines.append("| Source REXX Exec | COBOL Program | Type |")
+        lines.append("|------------------|---------------|------|")
+        for call in sorted(rexx_cobol, key=lambda x: x.get('source', '')):
+            lines.append(
+                f"| {call['source']} | {call['target']} | {call.get('type', 'CALL')} |"
+            )
+    else:
+        lines.append("*No COBOL program calls found.*")
+    lines.append("")
+    
+    # 2. REXX → JCL Job Submissions
+    lines.append("### REXX → JCL Job Submissions")
+    if rexx_jcl:
+        lines.append("| Source REXX Exec | JCL Job | Operation |")
+        lines.append("|------------------|---------|-----------|")
+        for jcl in sorted(rexx_jcl, key=lambda x: x.get('source', '')):
+            lines.append(
+                f"| {jcl['source']} | {jcl.get('job', '')} | {jcl.get('operation', 'SUBMIT')} |"
+            )
+    else:
+        lines.append("*No JCL job submissions found.*")
+    lines.append("")
+    
+    # 3. REXX → Dataset Operations
+    lines.append("### REXX → Dataset Operations")
+    if rexx_datasets:
+        lines.append("| Source REXX Exec | Dataset | Operation |")
+        lines.append("|------------------|---------|-----------|")
+        for ds in sorted(rexx_datasets, key=lambda x: x.get('source', '')):
+            lines.append(
+                f"| {ds['source']} | {ds.get('dataset', '')} | {ds.get('operation', 'REFERENCE')} |"
+            )
+    else:
+        lines.append("*No dataset operations found.*")
+    lines.append("")
+    
+    # 4. REXX → TSO Utilities
+    lines.append("### REXX → TSO Utilities")
+    if rexx_utils:
+        lines.append("| Source REXX Exec | Utility |")
+        lines.append("|------------------|---------|")
+        for util in sorted(rexx_utils, key=lambda x: x.get('source', '')):
+            lines.append(
+                f"| {util['source']} | {util.get('utility', '')} |"
+            )
+    else:
+        lines.append("*No TSO utilities found.*")
+    lines.append("")
+    
+    # 5. REXX → Environment Variables
+    lines.append("### REXX → Environment Variables")
+    if rexx_env:
+        lines.append("| Source REXX Exec | Variable |")
+        lines.append("|------------------|----------|")
+        for env in sorted(rexx_env, key=lambda x: x.get('source', '')):
+            lines.append(
+                f"| {env['source']} | {env.get('variable', '')} |"
+            )
+    else:
+        lines.append("*No environment variables found.*")
+    lines.append("")
  
     # =========================================================
     # GAPS SECTION

@@ -24,6 +24,7 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     dclgen_summaries = [s for s in summaries if s.get("type") == "dclgen"] 
     ca7_summaries = [s for s in summaries if s.get("type") == "ca7"]
     
+    rexx_summaries = [s for s in summaries if s.get("type") == "rexx"]
     # --- Helper to render program-style summaries (COBOL/PLI/Assembly) ---
     def _render_program_section(title: str, items: list[dict]):
         if not items:
@@ -202,5 +203,6 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     _render_copybook_section("COBOL Copybooks", copybook_summaries)
     _render_copybook_section("PL/I Include Files", pli_copybook_summaries)
     _render_ca7_section("CA-7 Workload Orchestration", ca7_summaries)
+    _render_program_section("REXX Executables", rexx_summaries)
             
     return '\n'.join(lines)

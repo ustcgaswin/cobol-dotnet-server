@@ -156,6 +156,38 @@ Notes:
 """
 
 CA7_PROMPT = """Summarize this CA-7 Workload Job Definition.
+ 
+Code:
+{chunk}
+ 
+Previous context:
+{previous_summary}
+ 
+Respond EXACTLY in this format:
+ 
+Purpose: [1-2 sentences description of this job's role in the batch window. Start directly with the verb, e.g., "Orchestrates...", "Schedules...". DO NOT start with "This job..." or "This CA-7..."]
+ 
+Workload Identity:
+- System: [System Name]
+- Schedule ID: [SCHID]
+- Owner: [Owner ID]
+- Class: [Execution Class]
+ 
+Dependencies & Triggers:
+- [Predecessor Job/DSN Name] - [Type: Predecessor, Dataset Trigger, or User Requirement]
+- [Predecessor Job/DSN Name] - [Type: Predecessor, Dataset Trigger, or User Requirement]
+...
+ 
+Operational Rules:
+- [Rule 1 (e.g., Restartable: Yes/No)]
+- [Rule 2 (e.g., Triggers Successors: Yes/No)]
+- [Rule 3 (e.g., Load Step: Yes/No)]
+ 
+Notes:
+- [Special scheduling logic, frequency, manual sign-off details, or timing constraints]
+"""
+ 
+REXX_CHUNK_PROMPT = """Summarize this REXX code.
 
 Code:
 {chunk}
@@ -185,4 +217,16 @@ Operational Rules:
 
 Notes:
 - [Special scheduling logic, frequency, manual sign-off details, or timing constraints]
+Purpose: [1-2 sentences description. Start with verb, e.g., "Automates...", "Processes..."]
+
+Functionalities:
+- [specific capability 1]
+- [specific capability 2]
+
+Key Operations:
+- [operation 1 (e.g. Reads dataset X)]
+- [operation 2 (e.g. Calls utility Y)]
+
+Notes:
+- [special logic, error handling, or technical details]
 """

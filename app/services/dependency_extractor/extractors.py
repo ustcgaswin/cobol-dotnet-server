@@ -541,3 +541,87 @@ def extract_ca7_dependencies(consolidated_data: list[dict]) -> dict:
             for j in merged_jobs.values()
         ]
     }
+
+def extract_rexx_dependencies(consolidated_data: list[dict]) -> dict:
+    """Extract dependencies from REXX parsed data.
+    
+    Args:
+        consolidated_data: List of parsed REXX exec dictionaries
+        
+    Returns:
+        Dictionary with categorized dependencies:
+        - cobol_calls: Calls to COBOL programs
+        - jcl_submissions: JCL jobs submitted
+        - dataset_operations: Dataset access operations
+        - tso_utilities: TSO/ISPF utilities used
+        - environment_vars: Environment variables referenced
+    """
+    cobol_calls = []
+    jcl_submissions = []
+    dataset_operations = []
+    tso_utilities = []
+    environment_vars = []
+    
+    for rexx_exec in consolidated_data:
+        # Extract source name (adjust based on your parser output)
+        source_name = (
+            rexx_exec.get('exec_name') 
+            or rexx_exec.get('source_file') 
+            or rexx_exec.get('file_name')
+            or 'UNKNOWN'
+        )
+        
+        deps = rexx_exec.get('dependencies', {})
+        
+        # 1. Extract COBOL program calls
+        for cobol_prog in deps.get('cobolPrograms', []):
+            cobol_calls.append({
+                'source': source_name,
+                'target': cobol_prog,
+                'type': 'COBOL_PROGRAM',
+                'line': None,  # Your parser doesn't capture line numbers
+            })
+        
+        # 2. Extract JCL job submissions
+        for jcl_job in deps.get('jclJobs', []):
+            jcl_submissions.append({
+                'source': source_name,
+                'job': jcl_job,
+                'operation': 'SUBMIT',
+                'line': None,
+            })
+        
+        # 3. Extract dataset operations
+        for dataset in deps.get('datasets', []):
+            # Filter out obvious parsing errors like "SPACE(50"
+            if dataset and not dataset.startswith('SPACE('):
+                dataset_operations.append({
+                    'source': source_name,
+                    'dataset': dataset,
+                    'operation': 'REFERENCE',  # Generic since we don't have operation details
+                    'line': None,
+                })
+        
+        # 4. Extract TSO utilities
+        for utility in deps.get('utilities', []):
+            tso_utilities.append({
+                'source': source_name,
+                'utility': utility,
+                'line': None,
+            })
+        
+        # 5. Extract environment variables
+        for env_var in deps.get('environmentVariables', []):
+            environment_vars.append({
+                'source': source_name,
+                'variable': env_var,
+                'line': None,
+            })
+    
+    return {
+        'cobol_calls': cobol_calls,
+        'jcl_submissions': jcl_submissions,
+        'dataset_operations': dataset_operations,
+        'tso_utilities': tso_utilities,
+        'environment_vars': environment_vars,
+    }

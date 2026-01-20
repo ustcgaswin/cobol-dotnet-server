@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.llm_config import get_llm
 from app.config.settings import settings
 from app.core.chunkers.assembly import AssemblyChunker
+from app.core.chunkers.rexx import RexxChunker
 from app.db.enums import SourceFileType
 from app.db.models.source_file import SourceFile
 from app.db.repositories.source_file import SourceFileRepository
@@ -33,6 +34,7 @@ from app.services.summarizer.prompts import (
     JCL_PROMPT,
     DCLGEN_PROMPT,
     CA7_PROMPT
+    REXX_CHUNK_PROMPT,
 )
 from app.services.summarizer.generator import generate_file_summaries_md
 
@@ -113,7 +115,6 @@ class SummarizerService:
 
              # NEW Strategy for DCLGEN
             SourceFileType.DCLGEN: ProcessingStrategy(
-                chunker_cls=CopybookChunker, # Reuse Copybook logic for cleaning fixed-format
                 prompt_template=DCLGEN_PROMPT,
                 is_rolling=False,            # DCLGEN is always single-pass
                 parser_type="dclgen"
@@ -125,7 +126,11 @@ class SummarizerService:
                 is_rolling=True,  # CA-7 reports are often massive
                 parser_type="ca7"
             ),
-        
+            SourceFileType.REXX: ProcessingStrategy(
+                chunker_cls=RexxChunker,  # Your REXX chunker
+                is_rolling=True,  # or False, depending on REXX file size patterns
+                parser_type="rexx"
+            ),
         }
 
     async def generate(self) -> dict:

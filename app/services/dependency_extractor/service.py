@@ -18,6 +18,7 @@ from app.services.dependency_extractor.extractors import (
     extract_ca7_dependencies,
     extract_pli_dependencies,           
     extract_pli_copybook_dependencies,  
+    extract_rexx_dependencies,
 )
 from app.services.dependency_extractor.generator import generate_dependency_graph_md
 
@@ -58,6 +59,7 @@ class DependencyExtractorService:
             SourceFileType.CA7: extract_ca7_dependencies,
             SourceFileType.PLI: extract_pli_dependencies,                   
             SourceFileType.PLI_COPYBOOK: extract_pli_copybook_dependencies, 
+            SourceFileType.REXX: extract_rexx_dependencies,
         }
 
         # 3. Default structures (Empty state)
@@ -69,6 +71,13 @@ class DependencyExtractorService:
             SourceFileType.CA7: {'ca7_job_flow': [], 'ca7_dataset_triggers': [], 'ca7_user_requirements': [], 'ca7_nodes': []},
             SourceFileType.PLI: {'program_calls': [], 'unresolved_calls': [], 'copybooks': [], 'sql_tables': [], 'file_definitions': [], 'file_io': []},
             SourceFileType.PLI_COPYBOOK: {'copybook_to_copybook': []},
+            SourceFileType.REXX: {  # <--- ADD THIS
+                'cobol_calls': [],
+                'jcl_submissions': [],
+                'dataset_operations': [],
+                'tso_utilities': [],
+                'environment_vars': []
+            },
         }
     
     async def generate(self) -> dict:
@@ -125,6 +134,7 @@ class DependencyExtractorService:
             ca7_deps = results[SourceFileType.CA7]
             pli_deps = results[SourceFileType.PLI]                  
             pli_copybook_deps = results[SourceFileType.PLI_COPYBOOK] 
+            rexx_deps = results[SourceFileType.REXX]
 
             # Generate Markdown
             markdown_content = generate_dependency_graph_md(
@@ -136,6 +146,7 @@ class DependencyExtractorService:
                 ca7_deps=ca7_deps,
                 pli_deps=pli_deps,                  
                 pli_copybook_deps=pli_copybook_deps,
+                rexx_deps=rexx_deps,
                 missing_file_types=missing_types,
             )
             
@@ -157,7 +168,12 @@ class DependencyExtractorService:
                 'ca7_dataset_triggers': len(ca7_deps['ca7_dataset_triggers']),
                 'unresolved_calls': len(cobol_deps['unresolved_calls']),
                 'assembly_db2_calls': len(assembly_deps['db2_usage']),
-            }
+                'rexx_cobol_calls': len(rexx_deps['cobol_calls']), 
+                'rexx_jcl_submissions': len(rexx_deps['jcl_submissions']),  
+                'rexx_dataset_operations': len(rexx_deps['dataset_operations']), 
+                'rexx_tso_utilities': len(rexx_deps['tso_utilities']),
+        }
+            
             
             return {
                 'output_path': str(output_file),
