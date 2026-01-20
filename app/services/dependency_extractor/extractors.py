@@ -625,3 +625,104 @@ def extract_rexx_dependencies(consolidated_data: list[dict]) -> dict:
         'tso_utilities': tso_utilities,
         'environment_vars': environment_vars,
     }
+
+def extract_parmlib_dependencies(consolidated_data: list[dict]) -> dict:
+    """
+    Extract dependencies from PARMLIB parsed data.
+    
+    PARMLIB files contain system parameters and configuration that affect:
+    - Program execution behavior
+    - Dataset allocations
+    - JCL procedures
+    - System resources
+    
+    Args:
+        consolidated_data: List of parsed PARMLIB member dictionaries
+        
+    Returns:
+        Dictionary with categorized dependencies:
+        - program_references: Programs/utilities configured by PARMLIB
+        - dataset_allocations: Dataset definitions and overrides
+        - jcl_references: JCL jobs/procs that reference this PARMLIB
+        - system_parameters: System-level configuration settings
+        - symbolic_substitutions: Symbolic parameters defined
+    """
+    program_references = []
+    dataset_allocations = []
+    jcl_references = []
+    system_parameters = []
+    symbolic_substitutions = []
+    
+    for parmlib in consolidated_data:
+        # Extract source identification
+        # Adjust these keys based on your actual parser output structure
+        member_name = (
+            parmlib.get('member_name') 
+            or parmlib.get('parmlib_name')
+            or parmlib.get('filename', 'UNKNOWN')
+        )
+        
+        # Access the dependencies section from your parser
+        deps = parmlib.get('dependencies', {})
+        
+        # 1. Extract Program/Utility References
+        # Example: PARMLIB may specify which programs to execute or configure
+        for prog in deps.get('programs', []):
+            program_references.append({
+                'source': member_name,
+                'program': prog.get('name') or prog.get('program_name'),
+                'purpose': prog.get('purpose'),  # e.g., "SORT", "IEFBR14"
+                'line': prog.get('line'),
+            })
+        
+        # 2. Extract Dataset Allocations
+        # Example: DD overrides, GDG definitions, dataset configurations
+        for dataset in deps.get('datasets', []):
+            dataset_allocations.append({
+                'source': member_name,
+                'dataset': dataset.get('dsname') or dataset.get('name'),
+                'type': dataset.get('type'),  # e.g., "GDG", "VSAM", "FLAT"
+                'disposition': dataset.get('disp'),
+                'line': dataset.get('line'),
+            })
+        
+        # 3. Extract JCL References
+        # Example: Which JCL jobs use this PARMLIB member
+        for jcl in deps.get('jcl_references', []):
+            jcl_references.append({
+                'source': member_name,
+                'jcl_job': jcl.get('job_name'),
+                'step': jcl.get('step_name'),
+                'usage': jcl.get('usage'),  # e.g., "EXEC PARM", "SYSIN DD"
+                'line': jcl.get('line'),
+            })
+        
+        # 4. Extract System Parameters
+        # Example: MVS system settings, resource allocations
+        for param in deps.get('system_parameters', []):
+            system_parameters.append({
+                'source': member_name,
+                'parameter': param.get('name'),
+                'value': param.get('value'),
+                'category': param.get('category'),  # e.g., "REGION", "TIME"
+                'line': param.get('line'),
+            })
+        
+        # 5. Extract Symbolic Substitutions
+        # Example: &SYMBOL definitions that get substituted in JCL
+        for symbol in deps.get('symbols', []):
+            symbolic_substitutions.append({
+                'source': member_name,
+                'symbol': symbol.get('name'),
+                'value': symbol.get('value'),
+                'scope': symbol.get('scope'),  # e.g., "GLOBAL", "LOCAL"
+                'line': symbol.get('line'),
+            })
+    
+    return {
+        'program_references': program_references,
+        'dataset_allocations': dataset_allocations,
+        'jcl_references': jcl_references,
+        'system_parameters': system_parameters,
+        'symbolic_substitutions': symbolic_substitutions,
+    }

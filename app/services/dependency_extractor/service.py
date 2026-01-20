@@ -19,6 +19,7 @@ from app.services.dependency_extractor.extractors import (
     extract_pli_dependencies,           
     extract_pli_copybook_dependencies,  
     extract_rexx_dependencies,
+    extract_parmlib_dependencies,
 )
 from app.services.dependency_extractor.generator import generate_dependency_graph_md
 
@@ -33,6 +34,7 @@ EXPECTED_FILE_TYPES = {
     SourceFileType.REXX,
     SourceFileType.ASSEMBLY,
     SourceFileType.CA7,
+    SourceFileType.PARMLIB,
 }
 
 class DependencyExtractorService:
@@ -60,6 +62,7 @@ class DependencyExtractorService:
             SourceFileType.PLI: extract_pli_dependencies,                   
             SourceFileType.PLI_COPYBOOK: extract_pli_copybook_dependencies, 
             SourceFileType.REXX: extract_rexx_dependencies,
+            SourceFileType.PARMLIB: extract_parmlib_dependencies,
         }
 
         # 3. Default structures (Empty state)
@@ -71,12 +74,19 @@ class DependencyExtractorService:
             SourceFileType.CA7: {'ca7_job_flow': [], 'ca7_dataset_triggers': [], 'ca7_user_requirements': [], 'ca7_nodes': []},
             SourceFileType.PLI: {'program_calls': [], 'unresolved_calls': [], 'copybooks': [], 'sql_tables': [], 'file_definitions': [], 'file_io': []},
             SourceFileType.PLI_COPYBOOK: {'copybook_to_copybook': []},
-            SourceFileType.REXX: {  # <--- ADD THIS
+            SourceFileType.REXX: {
                 'cobol_calls': [],
                 'jcl_submissions': [],
                 'dataset_operations': [],
                 'tso_utilities': [],
                 'environment_vars': []
+            },
+            SourceFileType.PARMLIB: {
+                'program_references': [],
+                'dataset_allocations': [],
+                'jcl_references': [],
+                'system_parameters': [],
+                'symbolic_substitutions': []
             },
         }
     
@@ -135,6 +145,7 @@ class DependencyExtractorService:
             pli_deps = results[SourceFileType.PLI]                  
             pli_copybook_deps = results[SourceFileType.PLI_COPYBOOK] 
             rexx_deps = results[SourceFileType.REXX]
+            parmlib_deps = results[SourceFileType.PARMLIB]
 
             # Generate Markdown
             markdown_content = generate_dependency_graph_md(
@@ -147,6 +158,7 @@ class DependencyExtractorService:
                 pli_deps=pli_deps,                  
                 pli_copybook_deps=pli_copybook_deps,
                 rexx_deps=rexx_deps,
+                parmlib_deps=parmlib_deps,
                 missing_file_types=missing_types,
             )
             
@@ -172,6 +184,11 @@ class DependencyExtractorService:
                 'rexx_jcl_submissions': len(rexx_deps['jcl_submissions']),  
                 'rexx_dataset_operations': len(rexx_deps['dataset_operations']), 
                 'rexx_tso_utilities': len(rexx_deps['tso_utilities']),
+                'parmlib_program_references': len(parmlib_deps['program_references']),
+                'parmlib_dataset_allocations': len(parmlib_deps['dataset_allocations']),
+                'parmlib_jcl_references': len(parmlib_deps['jcl_references']),
+                'parmlib_system_parameters': len(parmlib_deps['system_parameters']),
+                'parmlib_symbolic_substitutions': len(parmlib_deps['symbolic_substitutions']),
         }
             
             

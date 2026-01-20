@@ -14,6 +14,7 @@ def generate_dependency_graph_md(
     pli_deps: dict | None = None,           # <--- Added
     pli_copybook_deps: dict | None = None,  # <--- Added
     rexx_deps: dict | None = None,
+    parmlib_deps: dict | None = None, 
     missing_file_types: list[str] | None = None,
 ) -> str:
     """Generate dependency_graph.md content.
@@ -26,6 +27,7 @@ def generate_dependency_graph_md(
         assembly_deps: Dependencies extracted from Assembly files
         pli_deps: Dependencies extracted from PL/I files
         pli_copybook_deps: Dependencies extracted from PL/I copybooks
+        parmlib_deps: Dependencies extracted from PARMLIB members
         missing_file_types: File types that weren't parsed
         
     Returns:
@@ -42,6 +44,7 @@ def generate_dependency_graph_md(
     pli_deps = pli_deps or {}
     pli_copybook_deps = pli_copybook_deps or {}
     rexx_deps = rexx_deps or {}
+    parmlib_deps = parmlib_deps or {}
     missing_file_types = missing_types = missing_file_types or []
     
     # Header
@@ -97,6 +100,13 @@ def generate_dependency_graph_md(
     rexx_utils = rexx_deps.get('tso_utilities', [])
     rexx_env = rexx_deps.get('environment_vars', [])
 
+     # --- Unpack PARMLIB Data ---
+    parmlib_progs = parmlib_deps.get('program_references', [])
+    parmlib_datasets = parmlib_deps.get('dataset_allocations', [])
+    parmlib_jcl = parmlib_deps.get('jcl_references', [])
+    parmlib_sysparms = parmlib_deps.get('system_parameters', [])
+    parmlib_symbols = parmlib_deps.get('symbolic_substitutions', [])
+
     # --- SUMMARY SECTION ---
     lines.append("## Summary")
     lines.append("")
@@ -133,7 +143,12 @@ def generate_dependency_graph_md(
     lines.append(f"| REXX → TSO Utilities | {len(rexx_utils)} |")
     lines.append(f"| REXX → Environment Variables | {len(rexx_env)} |")
     lines.append("")
-    
+    # parmlib
+    lines.append(f"| PARMLIB → Programs | {len(parmlib_progs)} |")
+    lines.append(f"| PARMLIB → Datasets | {len(parmlib_datasets)} |")
+    lines.append(f"| PARMLIB → JCL Jobs | {len(parmlib_jcl)} |")
+    lines.append(f"| PARMLIB → System Parameters | {len(parmlib_sysparms)} |")
+    lines.append(f"| PARMLIB → Symbolic Substitutions | {len(parmlib_symbols)} |")
     # =========================================================
     # COBOL SECTION
     # =========================================================
@@ -466,6 +481,100 @@ def generate_dependency_graph_md(
     else:
         lines.append("*No environment variables found.*")
     lines.append("")
+
+
+    #==============================================================
+    # 4. PARMLIB SECTION 
+    # ==============================================================
+    lines.append("---")
+    lines.append("## PARMLIB Dependencies")
+    lines.append("")
+    lines.append("PARMLIB members contain system configuration and control parameters that affect job execution, resource allocation, and system behavior.")
+    lines.append("")
+    
+    # 4.1 Program References
+    lines.append("### PARMLIB → Program References")
+    if parmlib_progs:
+        lines.append("| PARMLIB Member | Program/Utility | Purpose | Line |")
+        lines.append("|----------------|-----------------|---------|------|")
+        for prog in sorted(parmlib_progs, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            lines.append(
+                f"| {prog['source']} | {prog.get('program', '')} | "
+                f"{prog.get('purpose', '-')} | {prog.get('line', '')} |"
+            )
+    else:
+        lines.append("*No program references found.*")
+    lines.append("")
+    
+    # 4.2 Dataset Allocations
+    lines.append("### PARMLIB → Dataset Allocations")
+    if parmlib_datasets:
+        lines.append("| PARMLIB Member | Dataset | Type | Disposition | Line |")
+        lines.append("|----------------|---------|------|-------------|------|")
+        for ds in sorted(parmlib_datasets, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            lines.append(
+                f"| {ds['source']} | {ds.get('dataset', '')} | "
+                f"{ds.get('type', '-')} | {ds.get('disposition', '-')} | {ds.get('line', '')} |"
+            )
+    else:
+        lines.append("*No dataset allocations found.*")
+    lines.append("")
+    
+    # 4.3 JCL References
+    lines.append("### PARMLIB → JCL References")
+    lines.append("JCL jobs and procedures that reference these PARMLIB members.")
+    lines.append("")
+    if parmlib_jcl:
+        lines.append("| PARMLIB Member | JCL Job | Step | Usage | Line |")
+        lines.append("|----------------|---------|------|-------|------|")
+        for jcl in sorted(parmlib_jcl, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            lines.append(
+                f"| {jcl['source']} | {jcl.get('jcl_job', '')} | "
+                f"{jcl.get('step', '-')} | {jcl.get('usage', '-')} | {jcl.get('line', '')} |"
+            )
+    else:
+        lines.append("*No JCL references found.*")
+    lines.append("")
+    
+    # 4.4 System Parameters
+    lines.append("### PARMLIB → System Parameters")
+    lines.append("System-level configuration settings defined in PARMLIB members.")
+    lines.append("")
+    if parmlib_sysparms:
+        lines.append("| PARMLIB Member | Parameter | Value | Category | Line |")
+        lines.append("|----------------|-----------|-------|----------|------|")
+        for param in sorted(parmlib_sysparms, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            # Truncate long values for readability
+            value = param.get('value', '-')
+            if len(str(value)) > 50:
+                value = str(value)[:47] + "..."
+            lines.append(
+                f"| {param['source']} | {param.get('parameter', '')} | "
+                f"{value} | {param.get('category', '-')} | {param.get('line', '')} |"
+            )
+    else:
+        lines.append("*No system parameters found.*")
+    lines.append("")
+    
+    # 4.5 Symbolic Substitutions
+    lines.append("### PARMLIB → Symbolic Substitutions")
+    lines.append("Symbolic parameters that can be substituted in JCL.")
+    lines.append("")
+    if parmlib_symbols:
+        lines.append("| PARMLIB Member | Symbol | Value | Scope | Line |")
+        lines.append("|----------------|--------|-------|-------|------|")
+        for symbol in sorted(parmlib_symbols, key=lambda x: (x.get('source', ''), x.get('line', 0))):
+            value = symbol.get('value', '-')
+            if len(str(value)) > 40:
+                value = str(value)[:37] + "..."
+            lines.append(
+                f"| {symbol['source']} | {symbol.get('symbol', '')} | "
+                f"{value} | {symbol.get('scope', '-')} | {symbol.get('line', '')} |"
+            )
+    else:
+        lines.append("*No symbolic substitutions found.*")
+    lines.append("")
+    
  
     # =========================================================
     # GAPS SECTION
