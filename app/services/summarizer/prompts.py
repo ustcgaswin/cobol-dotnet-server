@@ -230,3 +230,74 @@ Key Operations:
 Notes:
 - [special logic, error handling, or technical details]
 """
+
+CSV_PROMPT = """Summarize this CSV flat file based on its parsed structure.
+
+File Metadata:
+{metadata}
+
+Schema (Columns):
+{schema}
+
+Sample Records (first {sample_count}):
+{sample_records}
+
+Data Quality Metrics:
+{data_quality}
+
+Respond EXACTLY in this format:
+
+Purpose: [What business data this file contains. Start with noun/verb, e.g., "Customer transaction records...", "Contains product inventory...". DO NOT start with "This file..."]
+
+Entity: [Primary business entity represented (e.g., "Customer", "Transaction", "Product")]
+
+Key Fields:
+- [field1] - [business meaning and usage]
+- [field2] - [business meaning and usage]
+- [field3] - [business meaning and usage]
+...
+
+Data Characteristics:
+- Total Records: [count]
+- Delimiter: [delimiter character]
+- Data Quality: [assessment based on metrics]
+
+Notes:
+- [Migration considerations, data cleansing needs, or special handling required]
+"""
+
+FIXED_LENGTH_PROMPT = """Summarize this fixed-length flat file based on its parsed structure.
+
+File Metadata:
+{metadata}
+
+Field Layout:
+{schema}
+
+Sample Records (first {sample_count}):
+{sample_records}
+
+Data Quality Metrics:
+{data_quality}
+
+Respond EXACTLY in this format:
+
+Purpose: [What business data this file contains. Start with noun/verb, e.g., "Payroll master records...", "Contains daily sales...". DO NOT start with "This file..."]
+
+Entity: [Primary business entity represented (e.g., "Employee", "Sale", "Account")]
+
+Key Fields:
+- [field1 (position X-Y)] - [business meaning and usage]
+- [field2 (position X-Y)] - [business meaning and usage]
+- [field3 (position X-Y)] - [business meaning and usage]
+...
+
+Data Characteristics:
+- Total Records: [count]
+- Record Length: [bytes]
+- Encoding: [detected encoding]
+- Data Quality: [assessment based on metrics]
+
+Notes:
+- [COBOL copybook requirements, migration considerations, or special handling needed]
+"""
