@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, Form, UploadFile, status
+from fastapi import APIRouter, Depends, Form, Response, UploadFile, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -94,19 +94,29 @@ async def list_files(
     return APIResponse.ok([SourceFileResponse.model_validate(f) for f in files])
 
 
-@router.get("/{file_id}", response_model=APIResponse[SourceFileResponse])
-async def get_file(
+@router.get("/{file_id}")
+async def get_file_content(
     project_id: uuid.UUID,
     file_id: uuid.UUID,
     service: SourceFileService = Depends(get_source_file_service),
-) -> APIResponse[SourceFileResponse]:
-    """Get source file metadata by ID."""
-    source_file = await service.get_file(file_id)
-    if not source_file or source_file.project_id != project_id:
-        raise SourceFileNotFoundException(str(file_id))
+):
+    """
+    Get the raw content of a source file.
+    Returns text/plain content to be displayed in an editor/viewer.
+    """
+    # 1. Call the service to get bytes
+    content, filename = await service.read_file_content(file_id)
     
-    return APIResponse.ok(SourceFileResponse.model_validate(source_file))
-
+    # 2. Return raw response
+    # media_type="text/plain" ensures the browser/frontend treats it as code
+    return Response(
+        content=content,
+        media_type="text/plain",
+        headers={
+            # This header helps browsers suggest a filename if saved
+            "Content-Disposition": f"inline; filename={filename}" 
+        }
+    )
 
 @router.delete("/{file_id}", response_model=APIResponse[DeleteSourceFileResponse])
 async def delete_file(

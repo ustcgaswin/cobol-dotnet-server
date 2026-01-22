@@ -189,3 +189,27 @@ class SourceFileService:
         # Cleanup empty folders
         await self.storage.cleanup_empty_folders(project_id, file_type)
 
+
+    async def read_file_content(self, file_id: uuid.UUID) -> tuple[bytes, str]:
+        """
+        Fetch the actual content of a file from storage.
+        Returns: (content_bytes, filename)
+        """
+        # 1. Get DB Record to find out where the file is
+        source_file = await self.repository.get_by_id(file_id)
+        if not source_file:
+            raise SourceFileNotFoundException(str(file_id))
+            
+        # 2. Fetch bytes from physical storage
+        # Note: self.storage.get takes (project_id, file_type, filename)
+        try:
+            content = await self.storage.get(
+                source_file.project_id,
+                source_file.file_type,
+                source_file.filename
+            )
+            return content, source_file.filename
+        except FileNotFoundError:
+            # Handle case where DB record exists but file is missing on disk
+            raise SourceFileNotFoundException(f"Physical file missing for {file_id}")
+

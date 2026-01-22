@@ -35,5 +35,7 @@ class ProjectResponse(BaseModel):
     functional_document_status: str
     technical_document_status: str
     code_migration_status: str
+
+    file_count: int = 0
     
     model_config = {"from_attributes": True}

@@ -33,14 +33,14 @@ class ProjectService:
         )
         return await self.repository.create(project)
     
-    async def get_project(self, project_id: uuid.UUID) -> Project | None:
-        """Get project by ID."""
+    async def get_project(self, project_id: uuid.UUID) -> tuple[Project, int] | None:
+        """Get project by ID with count."""
         return await self.repository.get_by_id(project_id)
     
-    async def get_all_projects(self) -> Sequence[Project]:
-        """Get all projects."""
+    async def get_all_projects(self) -> Sequence[tuple[Project, int]]:
+        """Get all projects with count."""
         return await self.repository.get_all()
-    
+
     async def update_project(
         self,
         project: Project,

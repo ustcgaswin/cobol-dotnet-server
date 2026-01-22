@@ -49,11 +49,23 @@ async def list_projects(
 ) -> APIResponse[list[ProjectResponse]]:
     """List all projects."""
     logger.debug("Fetching all projects")
-    projects = await service.get_all_projects()
-    logger.debug(f"Found {len(projects)} projects")
-    return APIResponse.ok([ProjectResponse.model_validate(p) for p in projects])
+    
+    # results is a list of tuples: [(project_obj, 5), (project_obj, 0), ...]
+    results = await service.get_all_projects()
+    
+    response_data = []
+    for project, count in results:
+        # Convert ORM object to Pydantic model
+        model = ProjectResponse.model_validate(project)
+        # Inject the computed count
+        model.file_count = count
+        response_data.append(model)
+        
+    logger.debug(f"Found {len(response_data)} projects")
+    return APIResponse.ok(response_data)
 
 
+# UPDATE get_project
 @router.get("/{project_id}", response_model=APIResponse[ProjectResponse])
 async def get_project(
     project_id: uuid.UUID,
@@ -61,11 +73,19 @@ async def get_project(
 ) -> APIResponse[ProjectResponse]:
     """Get project by ID."""
     logger.debug(f"Fetching project: {project_id}")
-    project = await service.get_project(project_id)
-    if not project:
+    
+    result = await service.get_project(project_id)
+    if not result:
         raise ProjectNotFoundException(str(project_id))
-    return APIResponse.ok(ProjectResponse.model_validate(project))
-
+    
+    # Unpack tuple
+    project, count = result
+    
+    # Create response
+    model = ProjectResponse.model_validate(project)
+    model.file_count = count
+    
+    return APIResponse.ok(model)
 
 @router.patch("/{project_id}", response_model=APIResponse[ProjectResponse])
 async def update_project(
@@ -75,9 +95,13 @@ async def update_project(
 ) -> APIResponse[ProjectResponse]:
     """Update a project."""
     logger.info(f"Updating project: {project_id}")
-    project = await service.get_project(project_id)
-    if not project:
+    
+    # FIX: Unpack the tuple here
+    result = await service.get_project(project_id)
+    if not result:
         raise ProjectNotFoundException(str(project_id))
+    
+    project, count = result 
     
     updated = await service.update_project(
         project=project,
@@ -88,7 +112,12 @@ async def update_project(
         code_migration_status=data.code_migration_status,
     )
     logger.info(f"Project updated successfully: {project_id}")
-    return APIResponse.ok(ProjectResponse.model_validate(updated))
+    
+    # Add count back to response
+    model = ProjectResponse.model_validate(updated)
+    model.file_count = count
+    
+    return APIResponse.ok(model)
 
 
 @router.delete("/{project_id}", response_model=APIResponse[DeleteResponse])
@@ -98,9 +127,13 @@ async def delete_project(
 ) -> APIResponse[DeleteResponse]:
     """Delete a project."""
     logger.info(f"Deleting project: {project_id}")
-    project = await service.get_project(project_id)
-    if not project:
+    
+    # FIX: Unpack the tuple here
+    result = await service.get_project(project_id)
+    if not result:
         raise ProjectNotFoundException(str(project_id))
+    
+    project, _ = result 
     
     await service.delete_project(project)
     logger.info(f"Project deleted successfully: {project_id}")
