@@ -5,6 +5,14 @@ from app.core.exceptions.chunker import (
     ChunkError,
     UnsupportedFileTypeError,
 )
+from app.core.exceptions.codegen import (
+    BuildError,
+    CodegenException,
+    ConversionError,
+    FileWriteError,
+    PrerequisiteError,
+    SolutionInitError,
+)
 from app.core.exceptions.db_exceptions import (
     DatabaseConnectionError,
     DatabaseException,
@@ -132,4 +140,11 @@ __all__ = [
     # Dependency
     "DependencyExtractionException",
     "DependencyExtractionError",
+    # Codegen
+    "CodegenException",
+    "PrerequisiteError",
+    "SolutionInitError",
+    "BuildError",
+    "FileWriteError",
+    "ConversionError",
 ]
