@@ -9,24 +9,30 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.schemas.common import APIResponse
 from app.core.exceptions import (
+    BuildError,
     ChunkError,
     ChunkerException,
+    CodegenException,
+    ConversionError,
     DatabaseConnectionError,
     DatabaseException,
     DatabaseHealthCheckError,
     FileSizeExceededError,
+    FileWriteError,
     IndexBuildError,
     IndexNotFoundError,
     InvalidFileTypeError,
     ParseError,
     ParserException,
     ParserNotFoundError,
+    PrerequisiteError,
     ProjectCreationError,
     ProjectException,
     ProjectNotFoundException,
     ProjectValidationError,
     RAGException,
     SearchError,
+    SolutionInitError,
     SourceFileException,
     SourceFileNotFoundException,
     UnsupportedFileTypeError,
@@ -239,9 +245,45 @@ async def rag_exception_handler(
     )
 
 
+async def codegen_exception_handler(
+    request: Request, exc: CodegenException
+) -> JSONResponse:
+    """Handle code generation exceptions."""
+    logger.error(f"Codegen error: {exc.message}")
+    
+    if isinstance(exc, PrerequisiteError):
+        error_code = "PREREQUISITE_ERROR"
+        status_code = 400
+    elif isinstance(exc, SolutionInitError):
+        error_code = "SOLUTION_INIT_ERROR"
+        status_code = 500
+    elif isinstance(exc, BuildError):
+        error_code = "BUILD_ERROR"
+        status_code = 500
+    elif isinstance(exc, FileWriteError):
+        error_code = "FILE_WRITE_ERROR"
+        status_code = 500
+    elif isinstance(exc, ConversionError):
+        error_code = "CONVERSION_ERROR"
+        status_code = 500
+    else:
+        error_code = "CODEGEN_ERROR"
+        status_code = 500
+    
+    response = APIResponse.fail(
+        code=error_code,
+        message=exc.message,
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content=response.model_dump(mode="json"),
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers with the FastAPI app."""
     app.add_exception_handler(ChunkerException, chunker_exception_handler)
+    app.add_exception_handler(CodegenException, codegen_exception_handler)
     app.add_exception_handler(DatabaseException, database_exception_handler)
     app.add_exception_handler(ParserException, parser_exception_handler)
     app.add_exception_handler(ProjectException, project_exception_handler)
