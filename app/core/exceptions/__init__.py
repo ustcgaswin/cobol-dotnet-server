@@ -10,6 +10,9 @@ from app.core.exceptions.codegen import (
     CodegenException,
     ConversionError,
     FileWriteError,
+    GeneratedCodeNotFoundError,
+    GeneratedFileNotFoundError,
+    InvalidFileIdError,
     PrerequisiteError,
     SolutionInitError,
 )
@@ -147,4 +150,7 @@ __all__ = [
     "BuildError",
     "FileWriteError",
     "ConversionError",
+    "GeneratedCodeNotFoundError",
+    "InvalidFileIdError",
+    "GeneratedFileNotFoundError",
 ]

@@ -19,8 +19,11 @@ from app.core.exceptions import (
     DatabaseHealthCheckError,
     FileSizeExceededError,
     FileWriteError,
+    GeneratedCodeNotFoundError,
+    GeneratedFileNotFoundError,
     IndexBuildError,
     IndexNotFoundError,
+    InvalidFileIdError,
     InvalidFileTypeError,
     ParseError,
     ParserException,
@@ -266,6 +269,15 @@ async def codegen_exception_handler(
     elif isinstance(exc, ConversionError):
         error_code = "CONVERSION_ERROR"
         status_code = 500
+    elif isinstance(exc, GeneratedCodeNotFoundError):
+        error_code = "GENERATED_CODE_NOT_FOUND"
+        status_code = 404
+    elif isinstance(exc, InvalidFileIdError):
+        error_code = "INVALID_FILE_ID"
+        status_code = 400
+    elif isinstance(exc, GeneratedFileNotFoundError):
+        error_code = "GENERATED_FILE_NOT_FOUND"
+        status_code = 404
     else:
         error_code = "CODEGEN_ERROR"
         status_code = 500

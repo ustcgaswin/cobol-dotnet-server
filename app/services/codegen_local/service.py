@@ -44,22 +44,34 @@ class CodegenLocalService:
         self._project_name: str | None = None
     
     def _get_codegen_path(self) -> Path:
-        """Get the code-migration directory (parent folder for all outputs)."""
+        """Get the code-migration directory (parent folder for all outputs).
+        
+        Note: This does NOT create the directory. Use _ensure_codegen_path() 
+        when you need to create it during code generation.
+        """
         base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve()
-        codegen_dir = base / str(self.project_id) / "code-migration"
+        return base / str(self.project_id) / "code-migration"
+    
+    def _ensure_codegen_path(self) -> Path:
+        """Get and create the code-migration directory if needed.
+        
+        Use this during code generation when directories need to be created.
+        """
+        codegen_dir = self._get_codegen_path()
         codegen_dir.mkdir(parents=True, exist_ok=True)
         return codegen_dir
     
     def _get_output_path(self, project_name: str) -> Path:
         """Get the {project_name}-local output directory for generated code."""
         safe_name = project_name.replace(" ", "_").replace("/", "_")
-        output_dir = self._get_codegen_path() / f"{safe_name}-local"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        return output_dir
+        return self._get_codegen_path() / f"{safe_name}-local"
     
     def _get_status_file(self) -> Path:
-        """Get the status file path."""
-        return self._get_codegen_path() / "codegen_status_local.json"
+        """Get the status file path.
+        
+        Uses _ensure_codegen_path since status files are written during codegen.
+        """
+        return self._ensure_codegen_path() / "codegen_status_local.json"
     
     def _get_artifacts_path(self) -> Path:
         """Get the project artifacts path (Phase A outputs)."""
@@ -328,3 +340,145 @@ class CodegenLocalService:
             self._tasks[run_id].cancel()
             return True
         return False
+    
+    # -------------------------------------------------------------------------
+    # File tree and content methods
+    # -------------------------------------------------------------------------
+    
+    @staticmethod
+    def encode_file_id(relative_path: str) -> str:
+        """Encode a relative path to a URL-safe file ID."""
+        import base64
+        return base64.urlsafe_b64encode(relative_path.encode()).decode().rstrip('=')
+    
+    @staticmethod
+    def decode_file_id(file_id: str) -> str:
+        """Decode a file ID back to a relative path."""
+        import base64
+        from app.core.exceptions import InvalidFileIdError
+        
+        # Add padding if needed
+        padding = 4 - len(file_id) % 4
+        if padding != 4:
+            file_id += '=' * padding
+        
+        try:
+            return base64.urlsafe_b64decode(file_id).decode()
+        except Exception:
+            raise InvalidFileIdError(file_id)
+    
+    def get_file_tree(self, project_name: str) -> dict:
+        """Build the file tree for generated code.
+        
+        Args:
+            project_name: Project name for folder lookup
+            
+        Returns:
+            Nested dict representing file tree
+            
+        Raises:
+            GeneratedCodeNotFoundError: If output folder doesn't exist
+        """
+        from app.core.exceptions import GeneratedCodeNotFoundError
+        
+        output_path = self._get_output_path(project_name)
+        
+        if not output_path.exists():
+            raise GeneratedCodeNotFoundError(str(self.project_id))
+        
+        # Check if directory has any files (recursive check)
+        has_files = any(output_path.rglob("*") if output_path.is_dir() else [])
+        if not has_files:
+            raise GeneratedCodeNotFoundError(str(self.project_id))
+        
+        def build_tree(path: Path, relative_base: Path) -> dict:
+            """Recursively build tree structure.
+            
+            Skips bin/ and obj/ build artifact directories.
+            Handles errors gracefully for Windows path length issues.
+            """
+            name = path.name
+            
+            if path.is_file():
+                rel_path = str(path.relative_to(relative_base)).replace("\\", "/")
+                return {
+                    "id": self.encode_file_id(rel_path),
+                    "name": name,
+                    "type": "file",
+                }
+            else:
+                children = []
+                try:
+                    for child in sorted(path.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
+                        # Skip build artifact directories
+                        if child.is_dir() and child.name.lower() in ("bin", "obj"):
+                            continue
+                        try:
+                            children.append(build_tree(child, relative_base))
+                        except (OSError, PermissionError) as e:
+                            # Skip inaccessible paths (e.g., Windows path length issues)
+                            logger.warning(f"Skipping inaccessible path: {child} - {e}")
+                            continue
+                except (OSError, PermissionError) as e:
+                    # Handle directory iteration errors
+                    logger.warning(f"Could not iterate directory: {path} - {e}")
+                
+                return {
+                    "name": name,
+                    "type": "directory",
+                    "children": children,
+                }
+        
+        return build_tree(output_path, output_path)
+    
+    def get_file_content(self, project_name: str, file_id: str) -> dict:
+        """Get content of a specific file.
+        
+        Args:
+            project_name: Project name for folder lookup
+            file_id: URL-safe Base64 encoded file path
+            
+        Returns:
+            Dict with file info and content
+            
+        Raises:
+            InvalidFileIdError: If file_id can't be decoded
+            GeneratedCodeNotFoundError: If output folder doesn't exist
+            GeneratedFileNotFoundError: If file doesn't exist
+        """
+        from app.core.exceptions import (
+            GeneratedCodeNotFoundError,
+            GeneratedFileNotFoundError,
+        )
+        
+        output_path = self._get_output_path(project_name)
+        
+        if not output_path.exists():
+            raise GeneratedCodeNotFoundError(str(self.project_id))
+        
+        relative_path = self.decode_file_id(file_id)
+        file_path = output_path / relative_path
+        
+        # Security: ensure path is within output directory
+        try:
+            file_path = file_path.resolve()
+            if not str(file_path).startswith(str(output_path.resolve())):
+                raise GeneratedFileNotFoundError(file_id, relative_path)
+        except Exception:
+            raise GeneratedFileNotFoundError(file_id, relative_path)
+        
+        if not file_path.exists() or not file_path.is_file():
+            raise GeneratedFileNotFoundError(file_id, relative_path)
+        
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            raise GeneratedFileNotFoundError(file_id, f"{relative_path} (read error: {e})")
+        
+        return {
+            "id": file_id,
+            "name": file_path.name,
+            "path": relative_path,
+            "content": content,
+        }
+

@@ -58,3 +58,43 @@ async def get_codegen_status(run_id: str):
         raise HTTPException(status_code=404, detail="Run not found")
     
     return status
+
+
+@router.get("/projects/{project_id}/codegen/local/files")
+async def get_codegen_file_tree(project_id: uuid.UUID):
+    """Get the file tree of generated code.
+    
+    Returns a nested structure of directories and files.
+    File IDs are URL-safe Base64 encoded paths.
+    """
+    service = CodegenLocalService(project_id)
+    
+    # Get project name for folder lookup
+    project_name = await service._get_project_name()
+    
+    tree = service.get_file_tree(project_name)
+    
+    return {
+        "project_id": str(project_id),
+        "project_name": project_name,
+        "tree": tree,
+    }
+
+
+@router.get("/projects/{project_id}/codegen/local/files/{file_id}")
+async def get_codegen_file_content(project_id: uuid.UUID, file_id: str):
+    """Get the content of a generated file.
+    
+    Args:
+        project_id: UUID of the project
+        file_id: URL-safe Base64 encoded file path (from file tree)
+    """
+    service = CodegenLocalService(project_id)
+    
+    # Get project name for folder lookup
+    project_name = await service._get_project_name()
+    
+    content = service.get_file_content(project_name, file_id)
+    
+    return content
+

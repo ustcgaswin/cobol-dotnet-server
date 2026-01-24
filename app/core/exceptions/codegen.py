@@ -52,3 +52,32 @@ class ConversionError(CodegenException):
         self.component = component
         message = f"Failed to convert {component}: {reason}"
         super().__init__(message)
+
+
+class GeneratedCodeNotFoundError(CodegenException):
+    """Generated code folder does not exist (codegen not run yet)."""
+    
+    def __init__(self, project_id: str):
+        self.project_id = project_id
+        message = f"Generated code not found for project {project_id}. Run code generation first."
+        super().__init__(message)
+
+
+class InvalidFileIdError(CodegenException):
+    """File ID is malformed (invalid Base64)."""
+    
+    def __init__(self, file_id: str):
+        self.file_id = file_id
+        message = f"Invalid file ID: {file_id}"
+        super().__init__(message)
+
+
+class GeneratedFileNotFoundError(CodegenException):
+    """File ID is valid but file doesn't exist."""
+    
+    def __init__(self, file_id: str, path: str):
+        self.file_id = file_id
+        self.path = path
+        message = f"File not found: {path}"
+        super().__init__(message)
+
