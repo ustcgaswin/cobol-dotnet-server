@@ -12,8 +12,10 @@ from loguru import logger
 from app.config.settings import settings
 from app.core.tools.artifact_tools import create_artifact_tools
 from app.services.analyst.agent import create_analyst_agent
-from app.services.analyst.tools.writers import create_writer_tools
-
+from app.db.base import async_session_factory
+from app.services.summarizer.service import SummarizerService
+from app.services.dependency_extractor.service import DependencyExtractorService
+from app.services.parser import ParserService
 
 class AnalystService:
     """Service for running the System Analyst Agent.
@@ -33,13 +35,24 @@ class AnalystService:
     def _get_output_path(self) -> Path:
         """Get the system_context output directory."""
         base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve()
-        output_dir = base / str(self.project_id) / "system_context"
+        return base / str(self.project_id) / "system_context"
+    
+    def _ensure_output_path(self) -> Path:
+        """Ensure the output directory exists.
+        
+        Only call this when writing files.
+        """
+        output_dir = self._get_output_path()
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
     
     def _get_status_file(self) -> Path:
         """Get the status file path."""
-        return self.output_path / "_status.json"
+        return self._get_output_path() / "_status.json"
+    
+    def _get_artifacts_path(self) -> Path:
+        """Get the project artifacts path."""
+        return Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / str(self.project_id)
     
     def _update_status(self, run_id: str, status: str, phase: str = "", error: str = "") -> None:
         """Update and persist status."""
@@ -54,10 +67,42 @@ class AnalystService:
         self._statuses[run_id] = status_data
         
         try:
+            self._ensure_output_path()
             with open(self._get_status_file(), "w") as f:
                 json.dump(status_data, f, indent=2)
         except Exception as e:
             logger.warning(f"Failed to persist status: {e}")
+            
+    async def ensure_prerequisites(self) -> None:
+        """Ensure Phase A artifacts exist (file_summaries.md, dependency_graph.md).
+        
+        If missing, triggers the respective services to generate them.
+        """
+        artifacts_path = self._get_artifacts_path()
+        
+        parsed_outputs_path = artifacts_path / "parsed_outputs"
+        
+        # 1. Check/Run Parsers (Required for Dependency Extraction)
+        # We check if the folder exists. A more robust check might look for content,
+        # but existence is a good proxy for "has run at least once".
+        if not parsed_outputs_path.exists():
+            logger.info("parsed_outputs missing. Triggering ParserService...")
+            async with async_session_factory() as session:
+                parser = ParserService(session)
+                await parser.parse_project(self.project_id)
+        
+        # 2. Check/Generate File Summaries
+        if not (artifacts_path / "file_summaries.md").exists():
+            logger.info("file_summaries.md missing. Triggering SummarizerService...")
+            async with async_session_factory() as session:
+                summarizer = SummarizerService(self.project_id, session)
+                await summarizer.generate()
+        
+        # 3. Check/Generate Dependency Graph
+        if not (artifacts_path / "dependency_graph.md").exists():
+            logger.info("dependency_graph.md missing. Triggering DependencyExtractorService...")
+            extractor = DependencyExtractorService(self.project_id)
+            await extractor.generate()
     
     async def run(self) -> str:
         """Start the analyst agent asynchronously.
@@ -77,6 +122,9 @@ class AnalystService:
         """Execute the analyst agent."""
         try:
             self._update_status(run_id, "running", phase="initializing")
+            
+            # Ensure prerequisites (Self-Healing)
+            await self.ensure_prerequisites()
             
             project_id_str = str(self.project_id)
             

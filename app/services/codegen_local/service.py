@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from langchain.messages import HumanMessage
 from loguru import logger
+import httpx
 
 from app.config.settings import settings
 from app.core.tools.artifact_tools import create_artifact_tools
@@ -19,6 +20,7 @@ from app.services.codegen_local.tools.solution_tools import create_solution_tool
 from app.services.codegen_local.tools.build_tools import create_build_tools
 from app.services.codegen_local.tools.status_tools import create_status_tools
 from app.services.codegen_local.tools.source_file_tools import create_source_file_tools
+from app.services.analyst.service import AnalystService
 
 
 class CodegenLocalService:
@@ -37,7 +39,6 @@ class CodegenLocalService:
     """
     
     _tasks: dict[str, asyncio.Task] = {}
-    _statuses: dict[str, dict] = {}
     
     def __init__(self, project_id: UUID):
         self.project_id = project_id
@@ -129,6 +130,8 @@ class CodegenLocalService:
                         # First pass: delete all files
                         for root, dirs, files in os.walk(str(artifact_dir), topdown=False):
                             for name in files:
+                                # Start by checking existing progress, then read the dependency graph
+                                # and begin converting components in dependency order.
                                 force_remove_file(os.path.join(root, name))
                             # Small delay between directories
                             time.sleep(0.05)
@@ -159,25 +162,14 @@ class CodegenLocalService:
         except Exception as e:
             logger.warning(f"Build cleanup error: {e}")
     
-    def _check_prerequisites(self) -> tuple[bool, str]:
-        """Check if Phase A outputs exist.
+    async def _ensure_prerequisites(self) -> None:
+        """Ensure Phase A outputs exist.
         
-        Returns:
-            (success, error_message)
+        Delegates to AnalystService to generate missing artifacts.
         """
-        artifacts_path = self._get_artifacts_path()
-        
-        required_files = ["file_summaries.md", "dependency_graph.md"]
-        missing = []
-        
-        for filename in required_files:
-            if not (artifacts_path / filename).exists():
-                missing.append(filename)
-        
-        if missing:
-            return False, f"Phase A outputs missing: {', '.join(missing)}. Run Phase A first."
-        
-        return True, ""
+        # Call AnalystService to ensure file_summaries.md and dependency_graph.md exist
+        # This will auto-run summarization/dependency extraction if needed
+        await AnalystService(self.project_id).ensure_prerequisites()
     
     def _update_status(
         self,
@@ -189,23 +181,29 @@ class CodegenLocalService:
         completed_at: str = None,
     ) -> None:
         """Update and persist status."""
-        # Load existing status to preserve started_at
-        existing = self._statuses.get(run_id, {})
-        
+        # Read from file to preserve start time if needed, since we no longer keep memory state
+        current_data = {}
+        status_file = self._get_status_file()
+        if status_file.exists():
+            try:
+                with open(status_file, "r") as f:
+                    current_data = json.load(f)
+            except Exception:
+                pass
+
         status_data = {
             "run_id": run_id,
             "project_id": str(self.project_id),
             "status": status,
             "phase": phase,
             "error": error,
-            "started_at": started_at or existing.get("started_at"),
+            "started_at": started_at or current_data.get("started_at"),
             "completed_at": completed_at,
             "updated_at": datetime.utcnow().isoformat(),
         }
-        self._statuses[run_id] = status_data
         
         try:
-            with open(self._get_status_file(), "w") as f:
+            with open(status_file, "w") as f:
                 json.dump(status_data, f, indent=2)
         except Exception as e:
             logger.warning(f"Failed to persist status: {e}")
@@ -214,15 +212,10 @@ class CodegenLocalService:
         """Start the code generation agent asynchronously.
         
         Returns:
-            Dict with run_id and status, or error if prerequisites not met
+            Dict with run_id and status
         """
-        # Check prerequisites first
-        ok, error_msg = self._check_prerequisites()
-        if not ok:
-            return {
-                "success": False,
-                "error": error_msg,
-            }
+        # Note: We do NOT wait for prerequisites here to avoid blocking the API response.
+        # They will be checked/generated in the background task (_execute).
         
         run_id = str(uuid4())
         
@@ -236,13 +229,44 @@ class CodegenLocalService:
             "project_id": str(self.project_id),
         }
     
+    async def _update_db_status(self, status: str) -> None:
+        """Update project status in the database."""
+        from app.db.models.project import Project, ProjectStatus
+        
+        try:
+            async with async_session_factory() as session:
+                repo = ProjectRepository(session)
+                # We need to get the project first to update it
+                # Logic might vary depending on repo implementation, but standard update:
+                project = await session.get(Project, self.project_id)
+                if project:
+                    project.code_migration_status = status
+                    await session.commit()
+        except Exception as e:
+            logger.error(f"Failed to update DB status to {status}: {e}")
+
     async def _execute(self, run_id: str) -> None:
         """Execute the code generation agent."""
+        from app.db.models.project import ProjectStatus
+
         start_time = datetime.utcnow().isoformat()
         
         try:
+            # DB: Mark IN_PROGRESS
+            await self._update_db_status(ProjectStatus.IN_PROGRESS.value)
+            
             self._update_status(run_id, "running", phase="initializing", started_at=start_time)
             
+            # 1. Ensure Prerequisites (Phase A Artifacts)
+            # This might take time (parsing, summarizing, etc.) so we report status
+            self._update_status(run_id, "running", phase="analyzing_dependencies")
+            try:
+                await self._ensure_prerequisites()
+            except Exception as e:
+                logger.error(f"Prerequisite check failed for run {run_id}: {e}")
+                # We fail early if we can't even get the basic artifacts
+                raise RuntimeError(f"Failed to prepare project artifacts: {e}") from e
+
             project_id_str = str(self.project_id)
             
             # Get project name for output folder
@@ -298,41 +322,51 @@ class CodegenLocalService:
             
             end_time = datetime.utcnow().isoformat()
             self._update_status(run_id, "complete", phase="done", completed_at=end_time)
+            
+            # DB: Mark COMPLETED
+            await self._update_db_status(ProjectStatus.COMPLETED.value)
+            
             logger.info(f"Codegen run complete: {run_id}")
             
         except asyncio.CancelledError:
             end_time = datetime.utcnow().isoformat()
             self._update_status(run_id, "cancelled", completed_at=end_time)
             logger.warning(f"Codegen run cancelled: {run_id}")
+            # DB: Reset to PENDING if cancelled? Or FAILED? 
+            # Usually cancelled means user stopped it, so PENDING allows retry.
+            await self._update_db_status(ProjectStatus.PENDING.value)
             raise
+            
+        except httpx.ConnectError as e:
+            end_time = datetime.utcnow().isoformat()
+            error_msg = f"LLM Connection Error: Could not connect to LLM service. Check your network or LLM configuration. Details: {e}"
+            logger.error(f"Codegen run failed: {run_id} - {error_msg}")
+            self._update_status(run_id, "failed", error=error_msg, completed_at=end_time)
+            
+            # DB: Mark FAILED
+            await self._update_db_status(ProjectStatus.FAILED.value)
+
+        except httpx.TimeoutException as e:
+            end_time = datetime.utcnow().isoformat()
+            error_msg = f"LLM Timeout Error: LLM service did not respond in time. Details: {e}"
+            logger.error(f"Codegen run failed: {run_id} - {error_msg}")
+            self._update_status(run_id, "failed", error=error_msg, completed_at=end_time)
+            
+            # DB: Mark FAILED
+            await self._update_db_status(ProjectStatus.FAILED.value)
             
         except Exception as e:
             end_time = datetime.utcnow().isoformat()
             logger.error(f"Codegen run failed: {run_id} - {e}")
             self._update_status(run_id, "failed", error=str(e), completed_at=end_time)
+            
+            # DB: Mark FAILED
+            await self._update_db_status(ProjectStatus.FAILED.value)
         
         finally:
             self._tasks.pop(run_id, None)
     
-    def get_status(self, run_id: str) -> dict | None:
-        """Get status for a run."""
-        if run_id in self._statuses:
-            return self._statuses[run_id]
-        
-        status_file = self._get_status_file()
-        if status_file.exists():
-            try:
-                with open(status_file) as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        
-        return None
-    
-    @classmethod
-    def get_status_by_run_id(cls, run_id: str) -> dict | None:
-        """Get status for a run using only run_id."""
-        return cls._statuses.get(run_id)
+
     
     def cancel(self, run_id: str) -> bool:
         """Cancel a running task."""

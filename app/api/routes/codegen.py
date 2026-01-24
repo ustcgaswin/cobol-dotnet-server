@@ -19,45 +19,61 @@ async def start_codegen_local(project_id: uuid.UUID):
     Runs asynchronously - returns immediately with a run_id.
     
     Prerequisites:
-    - Phase A must be complete (file_summaries.md, dependency_graph.md)
+    - Phase A artifacts (file_summaries.md, dependency_graph.md).
+      If missing, they will be automatically generated (Self-Healing).
     
     Output:
-    - Generated code in project_artifacts/{project_id}/local-migration/
+    - Generated code in project_artifacts/{project_id}/code-migration/{project_name}-local/
     """
-    try:
-        service = CodegenLocalService(project_id)
-        result = await service.run()
+    service = CodegenLocalService(project_id)
+    
+    # run() will auto-generate prerequisites if missing
+    result = await service.run()
+    
+    return {
+        "project_id": str(project_id),
+        "status": "started",
+        "message": "Code generation started.",
+    }
+
+
+
+
+
+@router.get("/projects/{project_id}/codegen/local/status")
+async def get_latest_codegen_status(project_id: uuid.UUID):
+    """Get the latest code generation status for a project.
+    
+    Returns the most recent status from the database.
+    Useful for restoring UI state on page load.
+    
+    Status codes:
+    - pending: Not started / Failed (allows retry)
+    - in_progress: Running
+    - completed: Finished successfully
+    - failed: Error occurred
+    """
+    from app.db.base import async_session_factory
+    from app.db.models.project import Project
+    from app.services.codegen_local import CodegenLocalService
+    
+    async with async_session_factory() as session:
+        project = await session.get(Project, project_id)
         
-        if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("error"))
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        status = project.code_migration_status
+        
+        # If in_progress, strict UX might want running task ID's details.
+        # But for restoration, just knowing "in_progress" is enough to show spinner.
+        # Use existing logic to see if we can get granular details if user wants?
+        # For now, stick to simple DB status.
         
         return {
-            "run_id": result["run_id"],
+            "status": status,
             "project_id": str(project_id),
-            "status": "started",
-            "message": "Code generation started. Poll /codegen/status/{run_id} for progress.",
-            "output_path": f"project_artifacts/{project_id}/local-migration/",
         }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to start codegen: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/codegen/status/{run_id}")
-async def get_codegen_status(run_id: str):
-    """Get the status of a code generation run.
-    
-    Uses run_id only - no project_id needed.
-    """
-    status = CodegenLocalService.get_status_by_run_id(run_id)
-    
-    if not status:
-        raise HTTPException(status_code=404, detail="Run not found")
-    
-    return status
 
 
 @router.get("/projects/{project_id}/codegen/local/files")
