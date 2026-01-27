@@ -12,6 +12,7 @@ from loguru import logger
 from app.config.settings import settings
 from app.core.tools.artifact_tools import create_artifact_tools
 from app.services.analyst.agent import create_analyst_agent
+from app.services.analyst.tools.writers import create_writer_tools
 from app.db.base import async_session_factory
 from app.services.summarizer.service import SummarizerService
 from app.services.dependency_extractor.service import DependencyExtractorService
