@@ -53,10 +53,13 @@ local-migration/
 │   ├── Infrastructure/
 │   │   ├── Infrastructure.csproj
 │   │   ├── Data/            ← DbContext
-│   │   └── Storage/         ← File services
+│   │   ├── Storage/         ← File services
+│   │   ├── Repositories/    ← Data access
 │   └── Worker/Jobs/         ← JCL steps
 ├── scripts/jobs/            ← PowerShell from JCL
 └── tests/
+    └── Core/
+        └── Services/        ← XUnit tests
 ```
 
 ## Mapping Rules
@@ -65,6 +68,8 @@ local-migration/
 |--------|-------------|
 | Copybook X.cpy | src/Core/Entities/X.cs |
 | COBOL program Y.cbl | src/Core/Services/YService.cs + IYService.cs |
+| (File/DB Access) | src/Infrastructure/Repositories/YRepository.cs + src/Core/Interfaces/Repositories/IYRepository.cs |
+| (Unit Test) | tests/Core/Services/YServiceTests.cs |
 | JCL step STEP01 | src/Worker/Jobs/Step01/Program.cs |
 | JCL job JOBNAME | scripts/jobs/run-jobname.ps1 |
 
@@ -82,8 +87,10 @@ local-migration/
    b. Read its Phase A summary (from file_summaries.md)
    c. Get relevant patterns from conversion_guide
    d. Generate C# code following style_guide
-   e. Write file with `write_code_file()`
-   f. Log status with `log_component_status()`
+   e. **GENERATE REPOSITORY**: If the program performs file or DB I/O, generate a Repository Interface (in `Core/Interfaces/Repositories`) and Implementation (in `Infrastructure/Repositories`). Inject this into the Service constructor.
+   f. Write file with `write_code_file()`
+   g. **GENERATE TEST**: Write an xUnit test for the service in `tests/`, checking the main logic. Ensure you mock the repositories.
+   g. Log status with `log_component_status()`
 6. **Build**: Call `run_dotnet_build()` to check for errors
 7. **Fix Errors**: If build fails, read errors and fix the code
 8. **Test**: Call `run_dotnet_test()` when build succeeds

@@ -136,6 +136,13 @@ EndGlobal
             # Create Infrastructure subdirectories
             (infra_path / "Data").mkdir(exist_ok=True)
             (infra_path / "Storage").mkdir(exist_ok=True)
+            (infra_path / "Repositories").mkdir(exist_ok=True)
+            
+            # Create Core subdirectories (Interfaces/Repositories created by default under Interfaces, 
+            # but let's be explicit if needed, or just let the agent create them as needed.)
+            # Actually, let's just make sure the Interfaces folder exists (it is already there).
+            # We can add a specialized folder for repo interfaces if we want strict structure.
+            (core_path / "Interfaces" / "Repositories").mkdir(parents=True, exist_ok=True)
             
             # Create Worker.csproj
             worker_csproj = '''<Project Sdk="Microsoft.NET.Sdk">
