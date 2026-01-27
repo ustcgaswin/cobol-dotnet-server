@@ -87,22 +87,33 @@ REQUIRED JSON STRUCTURE:
 {{{{
     "filename": "From metadata",
     "type": "COBOL",
-    "business_purpose": "1 sentence description of what this program does.",
-    "functional_capabilities": [
-        "Specific business rule 1",
-        "Specific calculation 2"
-    ],
-    "key_operations": [
-        "e.g., 'Reads CUSTOMER-FILE'",
-        "e.g., 'Calls SUBPROG'"
-    ],
-    "data_interactions": [
-        {{{{ "target": "Table/File Name", "operation": "READ/WRITE/UPDATE" }}}}
-    ],
-    "technical_notes": [
-        "Complex logic details",
-        "Error handling specifics"
-    ]
+    
+    "business_overview": {{{{
+        "title": "Business Process Name (Inferred from logic/comments)",
+        "purpose": "2-3 sentences explaining the business goal of this specific program.",
+        "scope": [
+            "What business rules does this handle? (e.g. 'Calculates Interest')",
+            "What data boundaries exist? (e.g. 'Processes only Active Accounts')"
+        ],
+        "key_data_entities": [
+            "Business entities touched (e.g. 'Customer Record', 'General Ledger')"
+        ]
+    }}}},
+
+    "technical_analysis": {{{{
+        "functional_capabilities": [
+            "Specific logic point 1",
+            "Specific logic point 2"
+        ],
+        "key_operations": [
+            "File I/O details (e.g. READ ACCT-FILE)",
+            "Subroutine calls (e.g. CALL DATE-CONV)"
+        ],
+        "technical_notes": [
+            "Error handling specifics",
+            "Performance notes or sort logic"
+        ]
+    }}}}
 }}}}
 """
 
@@ -118,11 +129,34 @@ CURRENT CODE CHUNK:
 REQUIRED JSON STRUCTURE:
 {{{{
     "filename": "From metadata",
-    "type": "PL/I",
-    "business_purpose": "1 sentence description.",
-    "functional_capabilities": ["List of capabilities"],
-    "key_operations": ["List of major ops"],
-    "technical_notes": ["List of notes"]
+    "type": "PLI",
+
+    "business_overview": {{{{
+        "title": "Process Name (Inferred)",
+        "purpose": "2-3 sentences explaining the business goal of this PL/I program.",
+        "scope": [
+            "Business logic scope",
+            "Processing boundaries"
+        ],
+        "key_data_entities": [
+            "Entities processed (e.g. 'Invoices', 'Inventory')"
+        ]
+    }}}},
+
+    "technical_analysis": {{{{
+        "functional_capabilities": [
+            "Specific procedure logic",
+            "Exception handling (ON Units)"
+        ],
+        "key_operations": [
+            "Stream I/O or Record I/O",
+            "Database calls"
+        ],
+        "technical_notes": [
+            "Memory management (ALLOCATE/FREE)",
+            "Pointer manipulation notes"
+        ]
+    }}}}
 }}}}
 """
 
@@ -139,11 +173,37 @@ REQUIRED JSON STRUCTURE:
 {{{{
     "filename": "From metadata",
     "type": "ASSEMBLY",
-    "business_purpose": "1 sentence description.",
-    "register_usage": ["R12: Base", "R15: Return Code"],
-    "macros_used": ["GETMAIN", "WTOR"],
-    "functional_capabilities": ["List of logic performed"],
-    "technical_notes": ["Memory management details", "Reentrancy notes"]
+
+    "business_overview": {{{{
+        "title": "System Module Name",
+        "purpose": "What low-level function does this perform? (e.g. 'Date conversion routine', 'I/O Driver').",
+        "scope": [
+            "Functions provided",
+            "System interactions"
+        ],
+        "key_data_entities": [
+            "Data areas or Control blocks accessed"
+        ]
+    }}}},
+
+    "technical_analysis": {{{{
+        "register_usage": [
+            "R12: Base Register",
+            "R15: Return Code"
+        ],
+        "functional_capabilities": [
+            "Specific logic flow",
+            "Bit manipulation or arithmetic"
+        ],
+        "key_operations": [
+            "Macros used (GETMAIN, WTOR, LINK)",
+            "System services accessed"
+        ],
+        "technical_notes": [
+            "Reentrancy considerations",
+            "Addressing modes (AMODE/RMODE)"
+        ]
+    }}}}
 }}}}
 """
 
@@ -160,16 +220,33 @@ REQUIRED JSON STRUCTURE:
 {{{{
     "filename": "From metadata",
     "type": "REXX",
-    "business_purpose": "1 sentence description (e.g., Automates file transfer).",
-    "automation_tasks": [
-        "Task 1 (e.g., Submits Job X)",
-        "Task 2 (e.g., Checks dataset existence)"
-    ],
-    "external_utilities": [
-        "TSO Command",
-        "ISPF Service"
-    ],
-    "technical_notes": ["Error trapping", "Parse logic"]
+
+    "business_overview": {{{{
+        "title": "Automation Process",
+        "purpose": "What manual task does this script automate? (e.g. 'Daily Report Bursting').",
+        "scope": [
+            "Tasks performed",
+            "Systems interacted with (TSO, ISPF, DB2)"
+        ],
+        "key_data_entities": [
+            "Files moved/renamed",
+            "Jobs submitted"
+        ]
+    }}}},
+
+    "technical_analysis": {{{{
+        "automation_tasks": [
+            "Specific automation steps"
+        ],
+        "external_utilities": [
+            "TSO Commands (ALLOC, FREE)",
+            "ISPF Services (FTOPEN, FTCLOSE)"
+        ],
+        "technical_notes": [
+            "Parsing logic",
+            "Error trapping (SIGNAL ON ERROR)"
+        ]
+    }}}}
 }}}}
 """
 
@@ -184,22 +261,33 @@ REQUIRED JSON STRUCTURE:
 {{{{
     "filename": "From metadata",
     "type": "JCL",
-    "job_header": {{{{
-        "job_name": "Extracted from JOB card",
-        "class": "CLASS value",
-        "owner": "USER/NOTIFY value"
+
+    "business_overview": {{{{
+        "title": "Job Workflow",
+        "purpose": "What business process does this Job orchestrate? (e.g. 'End of Month Settlement').",
+        "scope": [
+            "Process boundaries",
+            "Frequency (if mentioned in comments)"
+        ],
+        "key_data_entities": [
+            "Major inputs/outputs (e.g. 'Transaction Tape', 'Audit Report')"
+        ]
     }}}},
-    "business_purpose": "1 sentence description of the workflow.",
-    "steps": [
-        {{{{ "step_name": "STEP01", "program": "PGMNAME", "description": "Brief explanation of this step" }}}}
-    ],
-    "io_datasets": [
-        {{{{ "dataset": "A.B.C", "usage": "Input/Output based on DISP" }}}}
-    ],
-    "dependencies": [
-        "List of PROCs or Programs called"
-    ],
-    "schedule_notes": "Any comments regarding timing or frequency found in JCL comments"
+
+    "technical_analysis": {{{{
+        "job_header": {{{{
+            "job_name": "Name from JOB card",
+            "class": "CLASS value",
+            "owner": "USER/NOTIFY value"
+        }}}},
+        "steps": [
+            {{{{ "step_name": "STEP01", "program": "PGMNAME", "description": "Technical description of step" }}}}
+        ],
+        "io_datasets": [
+            {{{{ "dataset": "A.B.C", "usage": "Input/Output based on DISP" }}}}
+        ],
+        "schedule_notes": "Restart logic, dependencies, or timing notes"
+    }}}}
 }}}}
 """
 
@@ -214,31 +302,44 @@ REQUIRED JSON STRUCTURE:
 {{{{
     "filename": "From metadata",
     "type": "CA7",
-    "identification": {{{{
-        "job_name": "Name",
-        "system": "System Name",
-        "schid": "ID",
-        "owner": "Owner ID",
-        "class": "Class"
+
+    "business_overview": {{{{
+        "title": "Workload Schedule",
+        "purpose": "What is the scheduling goal? (e.g. 'Triggers Nightly Batch').",
+        "scope": [
+            "Systems covered",
+            "Timeframes managed"
+        ],
+        "key_data_entities": [
+            "Triggering datasets",
+            "Critical jobs managed"
+        ]
     }}}},
-    "execution_characteristics": [
-        {{{{ "flag": "e.g., Y", "meaning": "LOAD STEP EXECUTED" }}}}
-    ],
-    "conditional_dependencies": [
-        {{{{ "job": "PRED_JOB", "type": "Job Dependency" }}}}
-    ],
-    "dataset_dependencies": [
-        {{{{ "dataset": "DS.NAME", "type": "Input Trigger" }}}}
-    ],
-    "user_requirements": [
-        "Manual requirement description"
-    ]
+
+    "technical_analysis": {{{{
+        "identification": {{{{
+            "job_name": "Name",
+            "system": "System Name",
+            "schid": "ID",
+            "class": "Class"
+        }}}},
+        "dependencies_triggers": [
+            {{{{ "type": "Job/Dataset", "target": "Name", "condition": "Requirement" }}}}
+        ],
+        "user_requirements": [
+            "Manual sign-offs or checks"
+        ],
+        "notes": [
+            "Operational rules",
+            "Restart instructions"
+        ]
+    }}}}
 }}}}
 """
 
 COPYBOOK_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
 
-Analyze this Copybook/DCLGEN.
+Analyze this Data Definition (Copybook/DCLGEN/Include).
 
 CODE:
 {{content}}
@@ -247,22 +348,85 @@ REQUIRED JSON STRUCTURE:
 {{{{
     "filename": "From metadata",
     "type": "COPYBOOK",
-    "business_purpose": "Description of the data entity (e.g., 'Customer Master Record').",
-    "entity_name": "Root 01 level name or SQL Table name",
-    "key_fields": [
-        {{{{ "field": "Field Name", "description": "Inferred usage (ID, Amount, Date)" }}}}
-    ],
-    "technical_notes": ["Data types", "Redefines usage"]
+
+    "business_overview": {{{{
+        "title": "Data Entity Definition",
+        "purpose": "What business entity does this structure represent? (e.g. 'Customer Address Record').",
+        "scope": [
+            "Data domain (e.g. Billing, Inventory)",
+            "Usage context"
+        ],
+        "key_data_entities": [
+            "The primary entity defined"
+        ]
+    }}}},
+
+    "technical_analysis": {{{{
+        "table_name": "SQL Table Name (if DCLGEN) or Root Field Name",
+        "key_fields": [
+            {{{{ "field": "Field Name", "description": "Inferred usage (ID, Amount, Date)" }}}}
+        ],
+        "table_structure": [
+             {{{{ "column_name": "Name", "type": "DataType", "nullable": "Yes/No" }}}}
+        ],
+        "technical_notes": [
+            "Data types used (COMP-3, VARCHAR)",
+            "Redefines or arrays present"
+        ]
+    }}}}
 }}}}
 """
 
-# Alias for other single-pass types
+# Aliases for file types that use the same logic
 DCLGEN_PROMPT = COPYBOOK_PROMPT
 PLI_COPYBOOK_PROMPT = COPYBOOK_PROMPT
 
+BIND_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
+
+Analyze this DB2 BIND card.
+
+CODE:
+{{content}}
+
+REQUIRED JSON STRUCTURE:
+{{{{
+    "filename": "From metadata",
+    "type": "BIND",
+
+    "business_overview": {{{{
+        "title": "Database Plan Configuration",
+        "purpose": "What data access strategy does this configure? (e.g. 'Binds Payroll Modules to DB2').",
+        "scope": [
+            "Modules covered",
+            "Environments applied to"
+        ],
+        "key_data_entities": [
+            "Plan Name",
+            "Collections/Packages"
+        ]
+    }}}},
+
+    "technical_analysis": {{{{
+        "key_parameters": [
+            "ISOLATION Level",
+            "RELEASE option",
+            "VALIDATE option"
+        ],
+        "configuration_areas": [
+            "List of DBRMs or Packages included (PKLIST)",
+            "Owner/Qualifier details"
+        ],
+        "technical_notes": [
+            "Performance implications",
+            "Concurrency settings"
+        ]
+    }}}}
+}}}}
+"""
+
 PARMLIB_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
 
-Analyze this Parmlib Member.
+Analyze this System Parameter Member.
 
 CODE:
 {{chunk}}
@@ -271,19 +435,39 @@ REQUIRED JSON STRUCTURE:
 {{{{
     "filename": "From metadata",
     "type": "PARMLIB",
-    "business_purpose": "Description of what this configures (e.g., 'System Initialization').",
-    "configuration_areas": [
-        "Area 1 (e.g., 'Memory Limits')",
-        "Area 2 (e.g., 'Device addresses')"
-    ],
-    "key_parameters": [
-        {{{{ "name": "PARAM", "value": "VALUE", "description": "What this controls" }}}}
-    ]
+
+    "business_overview": {{{{
+        "title": "System Configuration",
+        "purpose": "What aspect of the system does this control? (e.g. 'CICS Initialization', 'Storage Groups').",
+        "scope": [
+            "Subsystems affected",
+            "Resources managed"
+        ],
+        "key_data_entities": [
+            "Managed resources (APF Libraries, Page Datasets)"
+        ]
+    }}}},
+
+    "technical_analysis": {{{{
+        "configuration_areas": [
+            "Area 1 (e.g. 'Memory Limits')",
+            "Area 2 (e.g. 'Device addresses')"
+        ],
+        "key_parameters": [
+            {{{{ "name": "PARAM", "value": "VALUE", "description": "What this controls" }}}}
+        ],
+        "technical_notes": [
+            "IPL requirements",
+            "Dependencies on other members"
+        ]
+    }}}}
 }}}}
 """
 
 CSV_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
-Analyze this Flat File sample.
+
+Analyze this Flat File sample/layout.
+
 CODE:
 {{content}}
 
@@ -291,11 +475,29 @@ REQUIRED JSON STRUCTURE:
 {{{{
     "filename": "From metadata",
     "type": "FLAT_FILE",
-    "business_purpose": "Description of data content.",
-    "columns": [
-        {{{{ "name": "Col Name", "type": "DataType", "significance": "Business meaning" }}}}
-    ],
-    "volume_characteristics": "Observations about record width/types"
+
+    "business_overview": {{{{
+        "title": "Data Feed Definition",
+        "purpose": "What business data does this file contain? (e.g. 'Daily Transactions').",
+        "scope": [
+            "Data origin",
+            "Data destination/usage"
+        ],
+        "key_data_entities": [
+            "Primary entity in record (e.g. Transaction)"
+        ]
+    }}}},
+
+    "technical_analysis": {{{{
+        "table_structure": [
+            {{{{ "column_name": "Name", "type": "DataType", "nullable": "Inferred from data" }}}}
+        ],
+        "technical_notes": [
+            "Delimiter details",
+            "Volume characteristics",
+            "Data quality observations"
+        ]
+    }}}}
 }}}}
 """
 
