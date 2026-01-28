@@ -8,6 +8,13 @@ from app.config.settings import settings
 from .renderers import RendererFactory
 from .models import FileSummary
 
+from app.services.documentation_services.prompts import (
+            COBOL_CHUNK_PROMPT, CA7_PROMPT, JCL_PROMPT, JSON_FORMAT_INSTRUCTION, EXECUTIVE_SUMMARY_PROMPT,
+            CUMULATIVE_MERGE_INSTRUCTION, REXX_CHUNK_PROMPT, BIND_PROMPT,
+            DCLGEN_PROMPT, CSV_PROMPT,FIXED_LENGTH_PROMPT, DOC_AGENT_RESEARCH_SYSTEM_PROMPT, 
+            COPYBOOK_PROMPT, PLI_CHUNK_PROMPT, PLI_COPYBOOK_PROMPT, ASSEMBLY_CHUNK_PROMPT, PARMLIB_PROMPT
+        )
+
 class DocAgentNodes:
     def __init__(self, llm, analyzer, tools):
         # FIX: Save the base LLM so it's accessible in generation nodes
@@ -32,7 +39,7 @@ class DocAgentNodes:
             mermaid = self.analyzer.generate_mermaid_diagram(max_nodes=10)
             path_context = f"\n\nCRITICAL: Use the path '{file_type.lower()}/{filename}' for all tool calls."
             
-            from app.services.documentation_services.prompts import DOC_AGENT_RESEARCH_SYSTEM_PROMPT
+            
             prompt = DOC_AGENT_RESEARCH_SYSTEM_PROMPT.format(target_file=filename) + path_context
             
             initial_messages = [
@@ -63,6 +70,7 @@ class DocAgentNodes:
         
         # Ensure we are passing the existing history (Fixes 400 error)
         response = await self.llm_with_tools.ainvoke(messages)
+        # logger.info(f"the research summary {response.content[:200]}")
         
         # operator.add handles the appending
         return {
@@ -81,8 +89,7 @@ class DocAgentNodes:
         return "\n\n".join(snippets) if snippets else "No snippets found."
 
     async def functional_gen_node(self, state: dict):
-        """Generate Functional JSON."""
-        from app.services.documentation_services.prompts import EXECUTIVE_SUMMARY_PROMPT, JSON_FORMAT_INSTRUCTION
+        """Generate Functional JSON and Map it to the Renderer structure."""
         
         prompt = EXECUTIVE_SUMMARY_PROMPT.format(
             JSON_FORMAT_INSTRUCTION=JSON_FORMAT_INSTRUCTION,
@@ -90,66 +97,89 @@ class DocAgentNodes:
             top_modules=state["target_file"]
         )
         
-        # FIX: Wrap string in a list of messages to avoid "at least one message required"
         res = await self.llm.ainvoke([HumanMessage(content=prompt)])
-        return {"functional_json": self._parse(res.content)}
+        raw_json = self._parse(res.content)
 
-    async def technical_gen_node(self, state: dict):
-        """Generate Technical JSON based on File Type."""
-        from app.services.documentation_services.prompts import (
-            COBOL_CHUNK_PROMPT, CA7_PROMPT, JCL_PROMPT, BIND_PROMPT, 
-            PLI_CHUNK_PROMPT, REXX_CHUNK_PROMPT, JSON_FORMAT_INSTRUCTION, 
-            CUMULATIVE_MERGE_INSTRUCTION
-        )
-        
-        prompt_map = {
-            "COBOL": COBOL_CHUNK_PROMPT, "CA7": CA7_PROMPT, "JCL": JCL_PROMPT,
-            "BIND": BIND_PROMPT, "PLI": PLI_CHUNK_PROMPT, "REXX": REXX_CHUNK_PROMPT
+        # 1. FORCE CORRECT METADATA (Stop Hallucinations)
+        raw_json["filename"] = state["target_file"]
+        raw_json["type"] = state["file_type"]
+
+        # 2. TRANSFORM FOR RENDERER (The Bridge)
+        # We put the flat fields into the 'business_overview' dictionary the renderer expects
+        raw_json["business_overview"] = {
+            "purpose": raw_json.get("business_purpose", "N/A"),
+            "scope": raw_json.get("business_scope", []),
+            "key_data_entities": raw_json.get("data_overview", {}).get("inputs", [])
         }
         
-        file_type = state["file_type"].upper()
-        template = prompt_map.get(file_type, COBOL_CHUNK_PROMPT)
+        # We put the flow steps into technical_analysis so that page isn't blank
+        raw_json["technical_analysis"] = {
+            "functional_capabilities": raw_json.get("process_flow_steps", []),
+            "key_operations": [f"{i['interface']} ({i['direction']})" for i in raw_json.get("external_interfaces", [])],
+            "technical_notes": raw_json.get("business_risks", [])
+        }
+
+        return {"functional_json": raw_json}
+
+    async def technical_gen_node(self, state: dict):
+        """Generate Technical JSON and Fix Hallucinated Metadata."""
         
-        code_snippets = self._extract_code_snippets(state.get("messages", []))
+        # Select prompt based on type
+        prompt_map = {
+                      "COBOL": COBOL_CHUNK_PROMPT, "CA7": CA7_PROMPT,
+                      "JCL": JCL_PROMPT, "REXX": REXX_CHUNK_PROMPT,
+                      "PLI" : PLI_CHUNK_PROMPT, "PLI_COPYBOOK" : PLI_COPYBOOK_PROMPT,
+                      "DCLGEN": DCLGEN_PROMPT, "BIND" : BIND_PROMPT , "CSV": CSV_PROMPT,
+                      "FIXED_LENGTH" : FIXED_LENGTH_PROMPT , "COPYBOOK": COPYBOOK_PROMPT,
+                      "PARMLIB" : PARMLIB_PROMPT, "ASSEMBLY" : ASSEMBLY_CHUNK_PROMPT
+                    }
+        template = prompt_map.get(state["file_type"].upper(), COBOL_CHUNK_PROMPT)
         
+        evidence = self._extract_code_snippets(state.get("messages", []))
         prompt = template.format(
             JSON_FORMAT_INSTRUCTION=JSON_FORMAT_INSTRUCTION,
             CUMULATIVE_MERGE_INSTRUCTION=CUMULATIVE_MERGE_INSTRUCTION,
-            chunk=code_snippets,
-            content=code_snippets,
-            previous_summary="{}"
+            chunk=evidence, content=evidence, previous_summary="{}"
         )
         
-        # FIX: Wrap string in a list of messages
         res = await self.llm.ainvoke([HumanMessage(content=prompt)])
-        return {"technical_json": self._parse(res.content)}
+        parsed_json = self._parse(res.content)
+
+        # FORCE CORRECT METADATA (Overwrite 'file_summaries.md + filename' hallucinations)
+        parsed_json["filename"] = state["target_file"]
+        parsed_json["type"] = state["file_type"]
+
+        return {"technical_json": parsed_json}
 
     async def render_node(self, state: dict):
         """Phase 3: Render to DOCX."""
         base = Path(settings.PROJECT_ARTIFACTS_PATH) / state["project_id"]
-        filename = state["target_file"]
         
+        # Process both types sequentially
         for mode in ["functional", "technical"]:
-            data = state.get(f"{mode}_json", {})
-            if not data or "business_overview" not in data and "technical_analysis" not in data:
-                # If LLM returned bad JSON, skip rendering
-                continue
+            data = state.get(f"{mode}_json")
+            if not data: continue
             
             try:
                 folder = base / f"{mode}_requirements"
                 folder.mkdir(parents=True, exist_ok=True)
                 
-                summary = FileSummary(**data)
+                # Use our super-model to validate the reshaped JSON
+                summary_model = FileSummary(**data)
+                
+                from docx import Document
                 doc = Document()
                 renderer = RendererFactory.get_renderer(state["file_type"])
-                renderer.render_document(doc, summary)
                 
-                output_path = folder / f"{filename}_{mode.upper()}.docx"
+                # Render using your strategy pattern
+                renderer.render_document(doc, summary_model)
+                
+                output_path = folder / f"{state['target_file']}_{mode.upper()}.docx"
                 doc.save(str(output_path))
-                logger.info(f"✅ Created {mode} doc for {filename}")
+                logger.info(f"✅ Document successfully rendered: {output_path.name}")
             except Exception as e:
-                logger.error(f"Render Error for {filename}: {e}")
-        
+                logger.error(f"Error rendering {mode} for {state['target_file']}: {e}")
+                
         return state
 
     def _parse(self, content: str):

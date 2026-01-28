@@ -32,32 +32,11 @@ class BaseRenderer(ABC):
         self._render_technical_section(doc, summary)
 
     def _render_business_section(self, doc: Document, summary: FileSummary):
-        """Renders the Business Overview section."""
-        self._add_header(doc, "1. Business Overview", level=1)
-        
-        # Access the business_overview dict safely
-        biz = getattr(summary, 'business_overview', {}) or {}
-        
-        # 1.1 Purpose
+        biz = summary.business_overview
         self._add_header(doc, "1.1 Purpose", level=2)
-        purpose_text = biz.get('purpose', summary.purpose or "No purpose description available.")
-        doc.add_paragraph(purpose_text)
-
-        # 1.2 Business Scope
-        self._add_header(doc, "1.2 Business Scope", level=2)
-        scope_items = biz.get('scope', [])
-        if scope_items:
-            self._add_bullet_list(doc, scope_items)
-        else:
-            doc.add_paragraph("No specific scope defined.")
-
-        # 1.3 Key Data Overview (Business Level)
-        self._add_header(doc, "1.3 Data Overview", level=2)
-        entities = biz.get('key_data_entities', [])
-        if entities:
-            self._add_bullet_list(doc, entities)
-        else:
-            doc.add_paragraph("No major business data entities identified.")
+        # Handle cases where LLM might return purpose at top level or nested
+        purpose = biz.get('purpose') or summary.business_purpose or "N/A"
+        doc.add_paragraph(purpose)
 
     @abstractmethod
     def _render_technical_section(self, doc: Document, summary: FileSummary):
