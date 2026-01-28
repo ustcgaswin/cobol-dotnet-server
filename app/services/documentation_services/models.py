@@ -1,7 +1,11 @@
 """Data Transfer Objects (DTOs) for the Documentation Engine."""
 
-from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field
+import operator
+from typing import Annotated, List, TypedDict, Dict, Any, Optional
+from langchain_core.messages import BaseMessage
+from typing_extensions import Annotated
+from langgraph.graph import add_messages
 
 class DependencyEdge(BaseModel):
     source: str
@@ -47,3 +51,18 @@ class SystemMetrics(BaseModel):
     total_lines_of_code: Optional[int] = 0
     files_by_type: Dict[str, int]
     top_complex_modules: List[str]
+
+class DocAgentState(TypedDict):
+    project_id: str
+    target_file: str
+    file_type: str
+    mermaid_graph: str
+    code_snippets: str
+    functional_json: Dict[str, Any]
+    technical_json: Dict[str, Any]
+    
+    # Use add_messages to properly handle message list updates
+    messages: Annotated[List, add_messages]
+    
+    research_iterations: int
+    research_complete: bool
