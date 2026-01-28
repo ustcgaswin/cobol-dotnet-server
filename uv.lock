@@ -542,7 +542,7 @@ requires-dist = [
     { name = "networkx", specifier = ">=3.6.1" },
     { name = "openai", specifier = ">=2.14.0" },
     { name = "pypdf", specifier = ">=6.5.0" },
-    { name = "python-docx", specifier = ">=1.2.0" },
+    { name = "python-docx", specifier = ">=1.1.2" },
     { name = "sentence-transformers", specifier = ">=5.2.0" },
     { name = "sqlalchemy", specifier = ">=2.0.45" },
     { name = "tiktoken", specifier = ">=0.12.0" },

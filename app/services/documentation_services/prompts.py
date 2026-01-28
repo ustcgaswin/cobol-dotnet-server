@@ -13,24 +13,34 @@ CRITICAL OUTPUT INSTRUCTIONS:
 6. Ensure all arrays/lists are populated if data exists, otherwise empty list [].
 """
 
-EXECUTIVE_SUMMARY_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
+CUMULATIVE_MERGE_INSTRUCTION = """
+This is a chunked analysis. 
+1. Review 'previous_summary' (JSON).
+2. Analyze 'chunk_code'.
+3. MERGE the new findings into the JSON structure. 
+   - Add new functionalities found.
+   - Update file/table operations.
+   - Do NOT overwrite existing valid data; extend lists.
+"""
+
+EXECUTIVE_SUMMARY_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 CONTEXT:
 You are documenting a Mainframe System.
 Below are the System Metrics and the descriptions of the most critical modules (God Classes).
 
 SYSTEM METRICS:
-{{metrics}}
+{metrics}
 
 CRITICAL MODULES:
-{{top_modules}}
+{top_modules}
 
 TASK:
 Generate the "Business Overview" content for the Master Documentation.
 Infer the business context based on the module names (e.g., 'PAY*' -> Payroll) and descriptions.
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "business_purpose": "2-3 sentences explaining what this system achieves (e.g., 'Daily Merchant Settlement...')",
     "business_scope": [
         "Bullet point 1 (e.g., 'Processes daily batches')",
@@ -55,40 +65,30 @@ REQUIRED JSON STRUCTURE:
         "Risk 2"
     ],
     "external_interfaces": [
-        {{{{ "interface": "Name", "direction": "Inbound/Outbound", "description": "Short desc" }}}}
+        {{"interface": "Name", "direction": "Inbound/Outbound", "description": "Short desc"}}
     ],
     "ownership": {{
         "business_owner": "Inferred Department (e.g., Finance Ops)",
         "it_owner": "Inferred Team (e.g., Mainframe Batch Support)"
     }}
-}}}}
+}}
 """
 
-CUMULATIVE_MERGE_INSTRUCTION = """
-This is a chunked analysis. 
-1. Review 'previous_summary' (JSON).
-2. Analyze 'chunk_code'.
-3. MERGE the new findings into the JSON structure. 
-   - Add new functionalities found.
-   - Update file/table operations.
-   - Do NOT overwrite existing valid data; extend lists.
-"""
-
-COBOL_CHUNK_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
-{{CUMULATIVE_MERGE_INSTRUCTION}}
+COBOL_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+{CUMULATIVE_MERGE_INSTRUCTION}
 
 PREVIOUS SUMMARY JSON:
-{{previous_summary}}
+{previous_summary}
 
 CURRENT CODE CHUNK:
-{{chunk}}
+{chunk}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "COBOL",
     
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "Business Process Name (Inferred from logic/comments)",
         "purpose": "2-3 sentences explaining the business goal of this specific program.",
         "scope": [
@@ -98,9 +98,9 @@ REQUIRED JSON STRUCTURE:
         "key_data_entities": [
             "Business entities touched (e.g. 'Customer Record', 'General Ledger')"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
+    "technical_analysis": {{
         "functional_capabilities": [
             "Specific logic point 1",
             "Specific logic point 2"
@@ -113,25 +113,25 @@ REQUIRED JSON STRUCTURE:
             "Error handling specifics",
             "Performance notes or sort logic"
         ]
-    }}}}
-}}}}
+    }}
+}}
 """
 
-PLI_CHUNK_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
-{{CUMULATIVE_MERGE_INSTRUCTION}}
+PLI_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+{CUMULATIVE_MERGE_INSTRUCTION}
 
 PREVIOUS SUMMARY JSON:
-{{previous_summary}}
+{previous_summary}
 
 CURRENT CODE CHUNK:
-{{chunk}}
+{chunk}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "PLI",
 
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "Process Name (Inferred)",
         "purpose": "2-3 sentences explaining the business goal of this PL/I program.",
         "scope": [
@@ -141,9 +141,9 @@ REQUIRED JSON STRUCTURE:
         "key_data_entities": [
             "Entities processed (e.g. 'Invoices', 'Inventory')"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
+    "technical_analysis": {{
         "functional_capabilities": [
             "Specific procedure logic",
             "Exception handling (ON Units)"
@@ -156,25 +156,25 @@ REQUIRED JSON STRUCTURE:
             "Memory management (ALLOCATE/FREE)",
             "Pointer manipulation notes"
         ]
-    }}}}
-}}}}
+    }}
+}}
 """
 
-ASSEMBLY_CHUNK_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
-{{CUMULATIVE_MERGE_INSTRUCTION}}
+ASSEMBLY_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+{CUMULATIVE_MERGE_INSTRUCTION}
 
 PREVIOUS SUMMARY JSON:
-{{previous_summary}}
+{previous_summary}
 
 CURRENT CODE CHUNK:
-{{chunk}}
+{chunk}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "ASSEMBLY",
 
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "System Module Name",
         "purpose": "What low-level function does this perform? (e.g. 'Date conversion routine', 'I/O Driver').",
         "scope": [
@@ -184,9 +184,9 @@ REQUIRED JSON STRUCTURE:
         "key_data_entities": [
             "Data areas or Control blocks accessed"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
+    "technical_analysis": {{
         "register_usage": [
             "R12: Base Register",
             "R15: Return Code"
@@ -203,25 +203,25 @@ REQUIRED JSON STRUCTURE:
             "Reentrancy considerations",
             "Addressing modes (AMODE/RMODE)"
         ]
-    }}}}
-}}}}
+    }}
+}}
 """
 
-REXX_CHUNK_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
-{{CUMULATIVE_MERGE_INSTRUCTION}}
+REXX_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+{CUMULATIVE_MERGE_INSTRUCTION}
 
 PREVIOUS SUMMARY JSON:
-{{previous_summary}}
+{previous_summary}
 
 CURRENT CODE CHUNK:
-{{chunk}}
+{chunk}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "REXX",
 
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "Automation Process",
         "purpose": "What manual task does this script automate? (e.g. 'Daily Report Bursting').",
         "scope": [
@@ -232,9 +232,9 @@ REQUIRED JSON STRUCTURE:
             "Files moved/renamed",
             "Jobs submitted"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
+    "technical_analysis": {{
         "automation_tasks": [
             "Specific automation steps"
         ],
@@ -246,23 +246,23 @@ REQUIRED JSON STRUCTURE:
             "Parsing logic",
             "Error trapping (SIGNAL ON ERROR)"
         ]
-    }}}}
-}}}}
+    }}
+}}
 """
 
-JCL_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
+JCL_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 Analyze this JCL/PROC.
 
 CODE:
-{{content}}
+{content}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "JCL",
 
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "Job Workflow",
         "purpose": "What business process does this Job orchestrate? (e.g. 'End of Month Settlement').",
         "scope": [
@@ -272,38 +272,38 @@ REQUIRED JSON STRUCTURE:
         "key_data_entities": [
             "Major inputs/outputs (e.g. 'Transaction Tape', 'Audit Report')"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
-        "job_header": {{{{
+    "technical_analysis": {{
+        "job_header": {{
             "job_name": "Name from JOB card",
             "class": "CLASS value",
             "owner": "USER/NOTIFY value"
-        }}}},
+        }},
         "steps": [
-            {{{{ "step_name": "STEP01", "program": "PGMNAME", "description": "Technical description of step" }}}}
+            {{"step_name": "STEP01", "program": "PGMNAME", "description": "Technical description of step"}}
         ],
         "io_datasets": [
-            {{{{ "dataset": "A.B.C", "usage": "Input/Output based on DISP" }}}}
+            {{"dataset": "A.B.C", "usage": "Input/Output based on DISP"}}
         ],
         "schedule_notes": "Restart logic, dependencies, or timing notes"
-    }}}}
-}}}}
+    }}
+}}
 """
 
-CA7_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
+CA7_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 Analyze this CA-7 Job Definition.
 
 CODE:
-{{chunk}}
+{chunk}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "CA7",
 
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "Workload Schedule",
         "purpose": "What is the scheduling goal? (e.g. 'Triggers Nightly Batch').",
         "scope": [
@@ -314,17 +314,17 @@ REQUIRED JSON STRUCTURE:
             "Triggering datasets",
             "Critical jobs managed"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
-        "identification": {{{{
+    "technical_analysis": {{
+        "identification": {{
             "job_name": "Name",
             "system": "System Name",
             "schid": "ID",
             "class": "Class"
-        }}}},
+        }},
         "dependencies_triggers": [
-            {{{{ "type": "Job/Dataset", "target": "Name", "condition": "Requirement" }}}}
+            {{"type": "Job/Dataset", "target": "Name", "condition": "Requirement"}}
         ],
         "user_requirements": [
             "Manual sign-offs or checks"
@@ -333,23 +333,23 @@ REQUIRED JSON STRUCTURE:
             "Operational rules",
             "Restart instructions"
         ]
-    }}}}
-}}}}
+    }}
+}}
 """
 
-COPYBOOK_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
+COPYBOOK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 Analyze this Data Definition (Copybook/DCLGEN/Include).
 
 CODE:
-{{content}}
+{content}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "COPYBOOK",
 
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "Data Entity Definition",
         "purpose": "What business entity does this structure represent? (e.g. 'Customer Address Record').",
         "scope": [
@@ -359,41 +359,41 @@ REQUIRED JSON STRUCTURE:
         "key_data_entities": [
             "The primary entity defined"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
+    "technical_analysis": {{
         "table_name": "SQL Table Name (if DCLGEN) or Root Field Name",
         "key_fields": [
-            {{{{ "field": "Field Name", "description": "Inferred usage (ID, Amount, Date)" }}}}
+            {{"field": "Field Name", "description": "Inferred usage (ID, Amount, Date)"}}
         ],
         "table_structure": [
-             {{{{ "column_name": "Name", "type": "DataType", "nullable": "Yes/No" }}}}
+             {{"column_name": "Name", "type": "DataType", "nullable": "Yes/No"}}
         ],
         "technical_notes": [
             "Data types used (COMP-3, VARCHAR)",
             "Redefines or arrays present"
         ]
-    }}}}
-}}}}
+    }}
+}}
 """
 
 # Aliases for file types that use the same logic
 DCLGEN_PROMPT = COPYBOOK_PROMPT
 PLI_COPYBOOK_PROMPT = COPYBOOK_PROMPT
 
-BIND_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
+BIND_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 Analyze this DB2 BIND card.
 
 CODE:
-{{content}}
+{content}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "BIND",
 
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "Database Plan Configuration",
         "purpose": "What data access strategy does this configure? (e.g. 'Binds Payroll Modules to DB2').",
         "scope": [
@@ -404,9 +404,9 @@ REQUIRED JSON STRUCTURE:
             "Plan Name",
             "Collections/Packages"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
+    "technical_analysis": {{
         "key_parameters": [
             "ISOLATION Level",
             "RELEASE option",
@@ -420,23 +420,23 @@ REQUIRED JSON STRUCTURE:
             "Performance implications",
             "Concurrency settings"
         ]
-    }}}}
-}}}}
+    }}
+}}
 """
 
-PARMLIB_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
+PARMLIB_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 Analyze this System Parameter Member.
 
 CODE:
-{{chunk}}
+{chunk}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "PARMLIB",
 
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "System Configuration",
         "purpose": "What aspect of the system does this control? (e.g. 'CICS Initialization', 'Storage Groups').",
         "scope": [
@@ -446,37 +446,37 @@ REQUIRED JSON STRUCTURE:
         "key_data_entities": [
             "Managed resources (APF Libraries, Page Datasets)"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
+    "technical_analysis": {{
         "configuration_areas": [
             "Area 1 (e.g. 'Memory Limits')",
             "Area 2 (e.g. 'Device addresses')"
         ],
         "key_parameters": [
-            {{{{ "name": "PARAM", "value": "VALUE", "description": "What this controls" }}}}
+            {{"name": "PARAM", "value": "VALUE", "description": "What this controls"}}
         ],
         "technical_notes": [
             "IPL requirements",
             "Dependencies on other members"
         ]
-    }}}}
-}}}}
+    }}
+}}
 """
 
-CSV_PROMPT = f"""{{JSON_FORMAT_INSTRUCTION}}
+CSV_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 Analyze this Flat File sample/layout.
 
 CODE:
-{{content}}
+{content}
 
 REQUIRED JSON STRUCTURE:
-{{{{
+{{
     "filename": "From metadata",
     "type": "FLAT_FILE",
 
-    "business_overview": {{{{
+    "business_overview": {{
         "title": "Data Feed Definition",
         "purpose": "What business data does this file contain? (e.g. 'Daily Transactions').",
         "scope": [
@@ -486,19 +486,39 @@ REQUIRED JSON STRUCTURE:
         "key_data_entities": [
             "Primary entity in record (e.g. Transaction)"
         ]
-    }}}},
+    }},
 
-    "technical_analysis": {{{{
+    "technical_analysis": {{
         "table_structure": [
-            {{{{ "column_name": "Name", "type": "DataType", "nullable": "Inferred from data" }}}}
+            {{"column_name": "Name", "type": "DataType", "nullable": "Inferred from data"}}
         ],
         "technical_notes": [
             "Delimiter details",
             "Volume characteristics",
             "Data quality observations"
         ]
-    }}}}
-}}}}
+    }}
+}}
 """
 
 FIXED_LENGTH_PROMPT = CSV_PROMPT
+
+# Research Agent System Prompt
+DOC_AGENT_RESEARCH_SYSTEM_PROMPT = """
+You are a Lead Mainframe Research Architect. Your goal is to gather raw evidence for: {target_file}.
+
+RESEARCH PROTOCOL:
+1. SUMMARY: Read 'file_summaries.md' via 'read_artifact'.
+2. SEARCH: Use 'grep_search' to find hotspots.
+3. EXTRACT: Use 'view_file' to get code.
+
+STRICT EXIT CRITERIA:
+- For COPYBOOKS/DCLGEN: Once you have the record structure/columns, STOP.
+- For JCL/REXX: Once you have the steps/flow, STOP.
+- For COBOL/PLI: Once you have the 'PROCEDURE DIVISION' or 'MAIN' logic, STOP.
+
+If a tool returns 'No matches found', do not keep retrying. Move to the writing phase with the information you have. 
+DO NOT loop more than 3-5 times.
+
+When you have gathered sufficient information, respond with a summary of what you found WITHOUT calling any more tools.
+"""
