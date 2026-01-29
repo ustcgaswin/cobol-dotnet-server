@@ -94,6 +94,44 @@ local-migration/
 6. **Build**: Call `run_dotnet_build()` to check for errors
 7. **Fix Errors**: If build fails, read errors and fix the code
 8. **Test**: Call `run_dotnet_test()` when build succeeds
+9. **Generate Process Flow**: Create `process_flow.md` documenting the system's batch processing flow (see below)
+
+## Process Flow Documentation
+
+As the final step, generate `process_flow.md` showing the converted .NET system architecture.
+
+**OUTPUT FORMAT - STRICTLY ENFORCED:**
+The file must contain ONLY a mermaid code block. Do NOT add:
+- Headers or titles
+- Descriptions or explanations
+- Flow descriptions
+- Data flow sections
+- Error handling sections
+- Any text before or after the mermaid block
+
+The COMPLETE file content should look exactly like this (only the mermaid block):
+```
+```mermaid
+flowchart TD
+    subgraph Workers
+        W1[BatchJob]
+    end
+    subgraph Services
+        S1[MyService]
+    end
+    subgraph Repositories
+        R1[MyRepository]
+    end
+    subgraph Data
+        DB[(Database)]
+    end
+    W1 --> S1
+    S1 --> R1
+    R1 --> DB
+```
+```
+
+Use `write_code_file("process_flow.md", content)` to create this file.
 
 ## Important Guidelines
 
@@ -113,3 +151,4 @@ local-migration/
 
 Begin by checking existing status, then reading the dependency graph to plan your work.
 """
+
