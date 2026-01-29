@@ -12,7 +12,7 @@ from loguru import logger
 from app.config.settings import settings
 from app.core.tools.artifact_tools import create_artifact_tools
 from app.services.analyst.agent import create_analyst_agent
-from app.services.analyst.tools.writers import create_writer_tools
+from app.services.analyst.tools import create_knowledge_tools, create_writer_tools
 from app.db.base import async_session_factory
 from app.services.summarizer.service import SummarizerService
 from app.services.dependency_extractor.service import DependencyExtractorService
@@ -132,7 +132,8 @@ class AnalystService:
             # Create tools with project_id bound
             artifact_tools = create_artifact_tools(project_id_str)
             writer_tools = create_writer_tools(project_id_str)
-            all_tools = artifact_tools + writer_tools
+            knowledge_tools = create_knowledge_tools()
+            all_tools = artifact_tools + writer_tools + knowledge_tools
             
             # Create agent
             agent = create_analyst_agent(

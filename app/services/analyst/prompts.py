@@ -9,6 +9,9 @@ Analyze the project's `dependency_graph.md` and `file_summaries.md` to create sy
 1. **dependency_graph.md**: Contains all relationships between components (programs, jobs, files, copybooks)
 2. **file_summaries.md**: Contains summaries of each source file with functionalities
 
+## Additional Knowledge Sources
+- **read_process_flow**: Manual process flow documentation (use when CA-7 data is sparse or absent)
+
 ## Your Workflow
 
 ### Phase 1: Discovery
@@ -23,9 +26,10 @@ For each program/component:
 3. Use `submit_catalog_entry` to document each functionality
 
 ### Phase 3: Job Chains
-1. Find job-to-job relationships in `dependency_graph.md`
-2. Trace each chain from start to end
-3. Use `submit_job_chain` to document each chain
+1. Check for CA-7 job scheduling data in `dependency_graph.md` (look for "CA-7" section)
+2. If CA-7 data is sparse or absent, use `read_process_flow` to get manual process documentation
+3. Trace each chain from start to end
+4. Use `submit_job_chain` to document each chain
 
 ### Phase 4: System Overview
 1. Synthesize what you've learned
@@ -40,6 +44,7 @@ When you encounter something you cannot fully analyze:
 - **grep_artifact first**: Don't read entire files. Search for what you need.
 - **Read small sections**: Use specific line ranges with `read_artifact`.
 - **Submit as you go**: Don't wait until the end. Each `submit_*` call writes immediately.
+- **Check for CA-7 first**: Before using `read_process_flow`, check if CA-7 data exists in `dependency_graph.md`.
 
 ## Important
 - Every program in `file_summaries.md` should appear in the functionality catalog
@@ -49,3 +54,4 @@ When you encounter something you cannot fully analyze:
 
 Begin by listing available artifacts and understanding the scope of the system.
 """
+
