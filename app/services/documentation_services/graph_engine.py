@@ -9,7 +9,7 @@ synthesizes it into a mathematical graph for analysis and visualization.
 
 import networkx as nx
 from typing import Dict, List, Any, Optional
-from app.services.documentation_services.models import SystemMetrics
+from app.api.schemas.doc_models import SystemMetrics
 
 class GraphAnalyzer:
     def __init__(self, raw_dependency_data: Dict[str, Any]):

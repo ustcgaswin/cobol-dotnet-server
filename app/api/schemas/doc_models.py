@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 import operator
-from typing import Annotated, List, TypedDict, Dict, Any, Optional
+from typing import Annotated, List, TypedDict, Dict, Any, Optional, Literal
 from langchain_core.messages import BaseMessage
 from typing_extensions import Annotated
 from langgraph.graph import add_messages
@@ -45,6 +45,9 @@ class DocAgentState(TypedDict):
     project_id: str
     target_file: str
     file_type: str
+
+    generation_mode: Literal["ALL", "TECHNICAL", "FUNCTIONAL"]
+
     mermaid_graph: str
     code_snippets: str
     functional_json: Dict[str, Any]
@@ -53,5 +56,5 @@ class DocAgentState(TypedDict):
     # Use add_messages to properly handle message list updates
     messages: Annotated[List, add_messages]
     
-    research_iterations: int
+    iterations: int
     research_complete: bool

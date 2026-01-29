@@ -6,7 +6,7 @@ from loguru import logger
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage, AIMessage
 from app.config.settings import settings
 from .renderers import RendererFactory
-from .models import FileSummary
+from ...api.schemas.doc_models import FileSummary
 
 from app.services.documentation_services.prompts import (
             COBOL_CHUNK_PROMPT, CA7_PROMPT, JCL_PROMPT, JSON_FORMAT_INSTRUCTION, EXECUTIVE_SUMMARY_PROMPT,

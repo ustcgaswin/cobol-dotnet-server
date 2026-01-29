@@ -7,6 +7,8 @@ from typing import Dict, Any, List
 from langchain.tools import ToolRuntime, tool
 from app.core.tools.context import ProjectContext
 
+from fpdf import FPDF
+
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -15,6 +17,8 @@ from app.config.settings import settings
 from app.config.llm_config import get_llm
 from app.db.repositories.source_file import SourceFileRepository
 from app.db.models.source_file import SourceFile
+
+
 
 from app.services.dependency_extractor.extractors import (
     extract_cobol_dependencies,
@@ -31,7 +35,7 @@ from app.services.dependency_extractor.extractors import (
 # Import the new components
 from .graph_engine import GraphAnalyzer
 from .agent import create_documentation_graph
-from .models import DocAgentState
+from ...api.schemas.doc_models import DocAgentState
 from app.core.tools.file_tools import view_file, grep_search
 from app.core.tools.artifact_tools import create_artifact_tools
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
@@ -47,14 +51,14 @@ class DocumentationService:
         self.repository = SourceFileRepository(session)
         self.artifacts_path = settings.get_artifacts_path()
 
-    async def run_full_pipeline(self, project_id: uuid.UUID):
+    async def run_full_pipeline(self, project_id: uuid.UUID, mode: str = "ALL"):
         """
         Main entry point for the background task.
         1. Builds the Global Graph.
         2. Runs the Agent for every file in the project.
         """
         try:
-            logger.info(f"🚀 Starting Agentic Documentation Pipeline for Project: {project_id}")
+            logger.info(f"Starting Agentic Documentation Pipeline for Project: {project_id}")
             
             # 1. Load System-wide Context (Combined JSONs from all parsers)
             system_data = await self._load_all_parsed_jsons(project_id)
@@ -66,7 +70,7 @@ class DocumentationService:
             
             # 3. Initialize Graph Engine with the MAPPED data
             analyzer = GraphAnalyzer(dependency_mapped_data)
-            logger.info(f"📊 System Graph built with {analyzer.graph.number_of_nodes()} nodes.")
+            logger.info(f"System Graph built with {analyzer.graph.number_of_nodes()} nodes.")
 
             project_id_str = str(project_id)
     
@@ -108,32 +112,35 @@ class DocumentationService:
 
             # 5. Fetch all source files associated with the project
             files = await self._get_project_files(project_id)
-            logger.info(f"📂 Found {len(files)} files to document.")
+            logger.info(f"Found {len(files)} files to document.")
 
             # 6. Execute Agent for each file
             # Note: For large projects, consider using a semaphore to limit concurrency
             tasks = []
             for file_record in files:
                 tasks.append(
-                    self._process_single_file(agent_app, project_id, file_record)
+                    self._process_single_file(agent_app, project_id, file_record, mode)
                 )
             
             await asyncio.gather(*tasks)
 
-            logger.info(f"✅ Full pipeline complete for project {project_id}")
+            self._generate_consolidated_placeholders(project_id, mode)
+
+            logger.info(f"Full pipeline complete for project {project_id}")
 
         except Exception as e:
-            logger.exception(f"❌ Agentic Pipeline failed for project {project_id}: {e}")
+            logger.exception(f"Agentic Pipeline failed for project {project_id}: {e}")
 
-    async def _process_single_file(self, agent_app, project_id: uuid.UUID, file_record: SourceFile):
+    async def _process_single_file(self, agent_app, project_id: uuid.UUID, file_record: SourceFile, mode: str):
         """Invoke the LangGraph agent for one specific file record."""
         try:
-            logger.info(f"🤖 Agent researching: {file_record.filename} ({file_record.file_type})")
+            logger.info(f"Agent researching: {file_record.filename} ({file_record.file_type})")
             
             initial_state: DocAgentState = {
                 "project_id": str(project_id),
                 "target_file": file_record.filename,
                 "file_type": file_record.file_type.upper(),
+                "generation_mode": mode,
                 "iterations": 0, # Initialize
                 "mermaid_graph": "", # To be populated by Research Node
                 "code_snippets": "", # To be populated by Research Node
@@ -209,24 +216,100 @@ class DocumentationService:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    # --- Job Status & Metadata Methods ---
+    # async def get_job_status(self, project_id: uuid.UUID, required_type: str = "ALL") -> Dict:
+    #     """
+    #     Checks for folder existence based on what was requested.
+    #     """
+    #     base = self.artifacts_path / str(project_id)
+    #     tech_dir = base / "technical_requirements"
+    #     func_dir = base / "functional_requirements"
+        
+    #     has_tech = tech_dir.exists() and any(tech_dir.iterdir())
+    #     has_func = func_dir.exists() and any(func_dir.iterdir())
+        
+    #     is_ready = False
+    #     if required_type == "ALL":
+    #         is_ready = has_tech and has_func
+    #     elif required_type == "TECHNICAL":
+    #         is_ready = has_tech
+    #     elif required_type == "FUNCTIONAL":
+    #         is_ready = has_func
 
-    async def get_job_status(self, project_id: uuid.UUID) -> Dict:
+    #     return {
+    #         "project_id": project_id,
+    #         "status": "COMPLETED" if is_ready else "PROCESSING",
+    #         "mode_requested": required_type,
+    #         "artifacts": {
+    #             "technical_path": str(tech_dir) if has_tech else None,
+    #             "functional_path": str(func_dir) if has_func else None
+    #         }
+    #     }
+
+    async def get_job_status(self, project_id: uuid.UUID, required_type: str = "ALL") -> Dict:
         """
-        Checks for the existence of the requirement folders to determine progress.
+        Checks for the existence of the CONSOLIDATED PDF files.
         """
         base = self.artifacts_path / str(project_id)
-        tech_dir = base / "technical_requirements"
-        func_dir = base / "functional_requirements"
         
-        is_ready = tech_dir.exists() and func_dir.exists()
+        # Define paths
+        tech_pdf = base / "Technical_Specifications.pdf"
+        func_pdf = base / "Functional_Specifications.pdf"
         
+        has_tech = tech_pdf.exists()
+        has_func = func_pdf.exists()
+        
+        # Determine status
+        is_ready = False
+        if required_type == "ALL":
+            is_ready = has_tech and has_func
+        elif required_type == "TECHNICAL":
+            is_ready = has_tech
+        elif required_type == "FUNCTIONAL":
+            is_ready = has_func
+
+        # If files exist, set progress to 100, else keep it 0 (or estimate based on per-file if needed)
+        progress = 100.0 if is_ready else 0.0
+
         return {
             "project_id": project_id,
-            "status": "COMPLETED" if is_ready else "PENDING/IN_PROGRESS",
-            "progress": 100.0 if is_ready else 0.0,
-            "paths": {
-                "technical": str(tech_dir) if tech_dir.exists() else None,
-                "functional": str(func_dir) if func_dir.exists() else None
+            "status": "COMPLETED" if is_ready else "PROCESSING",
+            "mode_requested": required_type,
+            "progress": progress,
+            "artifacts": {
+                # Return the direct paths to the consolidated files
+                "technical_path": str(tech_pdf) if has_tech else None,
+                "functional_path": str(func_pdf) if has_func else None
             }
         }
+
+    def _generate_consolidated_placeholders(self, project_id: uuid.UUID, mode: str):
+        """Creates dummy consolidated PDF files based on the mode using FPDF2."""
+        base = self.artifacts_path / str(project_id)
+        base.mkdir(parents=True, exist_ok=True)
+
+        def create_pdf(filename: str, title: str):
+            pdf = FPDF()
+            pdf.add_page()
+            
+            # Title
+            pdf.set_font("helvetica", "B", 16)
+            pdf.cell(0, 10, f"Document: {title}", new_x="LMARGIN", new_y="NEXT", align="C")
+            
+            # Metadata
+            pdf.set_font("helvetica", "", 12)
+            pdf.ln(10) # Line break
+            pdf.cell(0, 10, f"Project ID: {project_id}", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 10, "Status: Placeholder for Consolidated Documentation", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 10, "Generated by: Agentic Documentation Pipeline", new_x="LMARGIN", new_y="NEXT")
+            
+            # Save
+            path = base / filename
+            pdf.output(str(path))
+            logger.info(f"📄 Created placeholder: {path}")
+
+        # Logic based on mode
+        if mode in ["ALL", "TECHNICAL"]:
+            create_pdf("Technical_Specifications.pdf", "Technical Specifications")
+        
+        if mode in ["ALL", "FUNCTIONAL"]:
+            create_pdf("Functional_Specifications.pdf", "Functional Specifications")
