@@ -13,7 +13,7 @@ from docx.oxml import OxmlElement
 from docx.shared import Pt, RGBColor
 
 # IMPORTANT: Ensure your models.py is updated to support the nested structure!
-from app.services.documentation_services.models import FileSummary
+from app.api.schemas.doc_models import FileSummary
 
 class BaseRenderer(ABC):
     """Abstract Strategy."""
