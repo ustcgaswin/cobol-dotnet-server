@@ -28,6 +28,7 @@ dependencies = [
     "networkx>=3.6.1",
     "sentence-transformers>=5.2.0",
     "python-docx>=1.1.2",
+    "fpdf2>=2.8.5",
 ]
 
 [dependency-groups]
