@@ -20,6 +20,7 @@ from app.services.codegen_local.tools.solution_tools import create_solution_tool
 from app.services.codegen_local.tools.build_tools import create_build_tools
 from app.services.codegen_local.tools.status_tools import create_status_tools
 from app.services.codegen_local.tools.source_file_tools import create_source_file_tools
+from app.services.codegen_local.tools.system_context_tools import create_system_context_tools
 from app.services.analyst.service import AnalystService
 
 
@@ -163,13 +164,42 @@ class CodegenLocalService:
             logger.warning(f"Build cleanup error: {e}")
     
     async def _ensure_prerequisites(self) -> None:
-        """Ensure Phase A outputs exist.
+        """Ensure Phase A outputs and Analyst outputs exist.
         
         Delegates to AnalystService to generate missing artifacts.
+        If system_context folder is missing, runs the full Analyst agent.
         """
-        # Call AnalystService to ensure file_summaries.md and dependency_graph.md exist
-        # This will auto-run summarization/dependency extraction if needed
-        await AnalystService(self.project_id).ensure_prerequisites()
+        analyst_service = AnalystService(self.project_id)
+        
+        # 1. Ensure basic artifacts (file_summaries.md, dependency_graph.md)
+        # This will auto-run parsing/summarization/dependency extraction if needed
+        await analyst_service.ensure_prerequisites()
+        
+        # 2. Check if Analyst has run (system_context with functionality_catalog)
+        system_context_path = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / str(self.project_id) / "system_context"
+        functionality_catalog = system_context_path / "functionality_catalog.md"
+        
+        if not functionality_catalog.exists():
+            logger.info("functionality_catalog.md missing. Running Analyst agent...")
+            run_id = await analyst_service.run()
+            
+            # Wait for Analyst to complete (poll status)
+            max_wait = 600  # 10 minutes
+            poll_interval = 5
+            waited = 0
+            status = None
+            
+            while waited < max_wait:
+                status = analyst_service.get_status(run_id)
+                if status and status.get("status") in ("complete", "failed", "cancelled"):
+                    break
+                await asyncio.sleep(poll_interval)
+                waited += poll_interval
+            
+            if not status or status.get("status") != "complete":
+                logger.warning(f"Analyst agent did not complete successfully: {status}")
+            else:
+                logger.info("Analyst agent completed")
     
     def _update_status(
         self,
@@ -282,6 +312,7 @@ class CodegenLocalService:
             build_tools = create_build_tools(project_id_str, str(output_path))
             status_tools = create_status_tools(project_id_str)
             source_file_tools = create_source_file_tools(project_id_str)
+            system_context_tools = create_system_context_tools(project_id_str)
             
             all_tools = (
                 artifact_tools +
@@ -289,7 +320,8 @@ class CodegenLocalService:
                 solution_tools +
                 build_tools +
                 status_tools +
-                source_file_tools
+                source_file_tools +
+                system_context_tools
             )
             
             # Create agent
@@ -300,12 +332,26 @@ class CodegenLocalService:
             
             self._update_status(run_id, "running", phase="converting")
             
-            # Run agent with project name in the message
+            # Read system overview if available (inject as context)
+            system_overview_content = ""
+            system_overview_path = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / project_id_str / "system_context" / "system_overview.md"
+            if system_overview_path.exists():
+                try:
+                    overview_text = system_overview_path.read_text(encoding="utf-8", errors="replace")
+                    # Truncate if too long
+                    if len(overview_text) > 4000:
+                        overview_text = overview_text[:4000] + "\n... (truncated)"
+                    system_overview_content = f"\n\n## System Overview (from Analyst)\n{overview_text}\n"
+                except Exception as e:
+                    logger.warning(f"Failed to read system overview: {e}")
+            
+            # Run agent with project name and system overview in the message
             initial_message = HumanMessage(
                 content=f"Convert this mainframe project '{project_name}' to .NET. "
                         f"Use '{project_name}' as the solution name when calling initialize_solution(). "
-                        "Start by checking existing progress, then read the dependency graph "
-                        "and begin converting components in dependency order."
+                        "Start by checking existing progress, read the functionality catalog as your checklist, "
+                        "then read the dependency graph and begin converting components in dependency order."
+                        f"{system_overview_content}"
             )
             
             result = await agent.ainvoke(
