@@ -12,7 +12,7 @@ from langgraph.graph import StateGraph, START, END
 from loguru import logger
 from typing_extensions import TypedDict
 
-from app.config.llm_config import get_llm
+from app.config.llm import get_llm, CODEGEN
 from app.services.codegen_local.prompts import SYSTEM_PROMPT
 
 
@@ -33,7 +33,7 @@ def create_codegen_agent(tools: list, project_id: str):
     Returns:
         Compiled LangGraph agent
     """
-    model = get_llm()
+    model = get_llm(CODEGEN)
     
     tools_by_name = {tool.name: tool for tool in tools}
     model_with_tools = model.bind_tools(tools)

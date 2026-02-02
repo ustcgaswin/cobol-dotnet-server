@@ -6,7 +6,7 @@ from langchain_core.documents import Document
 from loguru import logger
 
 from app.config.settings import settings
-from app.config.llm_config import embeddings
+from app.config.llm import get_embeddings, get_llm, DOCGEN
 from app.core.chunkers import get_chunker, CHUNKER_REGISTRY
 from app.core.utils import find_files
 from app.core.vector_store import FAISSVectorStore
@@ -20,7 +20,7 @@ class RAGService:
     
     def __init__(self):
         self.store = FAISSVectorStore(
-            embeddings=embeddings,
+            embeddings=get_embeddings(DOCGEN),
             index_path=settings.FAISS_INDEX_PATH,
         )
         self.data_path = Path(settings.RAG_DATA_PATH)
@@ -148,7 +148,7 @@ class RAGService:
         Returns:
             Dict with answer, sources, and metadata
         """
-        from app.config.llm_config import llm
+        llm = get_llm(DOCGEN)
         
         # Retrieve relevant chunks
         chunks = self.search(query, k=k, source_folder=source_folder)

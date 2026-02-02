@@ -356,10 +356,10 @@ class REXXParser(BaseParser):
         The agent can decide when to search REXX documentation for context.
         """
         from langgraph.prebuilt import create_react_agent
-        from app.config.llm_config import llm
+        from app.config.llm import get_llm, DOCGEN
         from app.core.tools.rag_tools import search_rexx_docs
         
-        return create_react_agent(model=llm, tools=[search_rexx_docs])
+        return create_react_agent(model=get_llm(DOCGEN), tools=[search_rexx_docs])
     
     async def augment(self, parsed_data: dict) -> dict:
         """Augment parsed REXX data with LLM-generated metadata.

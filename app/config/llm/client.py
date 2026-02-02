@@ -1,0 +1,276 @@
+"""Custom LLM client with OAuth2 authentication.
+
+Implements LangChain's BaseChatModel for full compatibility with
+LangChain/LangGraph agents and chains.
+"""
+
+import asyncio
+import time
+from typing import Any, List, Optional
+
+import httpx
+import requests
+from langchain_core.callbacks import CallbackManagerForLLMRun, AsyncCallbackManagerForLLMRun
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from loguru import logger
+from pydantic import Field
+
+from app.config.llm.token_cache import TokenCache
+from app.config.llm.stats import LLMStats
+
+
+class OAuthLLMClient(BaseChatModel):
+    """Custom LLM client with OAuth2 authentication.
+    
+    Implements BaseChatModel for full LangChain compatibility.
+    Stats tracking is automatic - services don't need to handle it.
+    
+    Features:
+    - OAuth2 token management with automatic refresh
+    - 401 retry: If token is rejected, refresh and retry once
+    - 429 rate limit handling: Wait and retry on rate limiting
+    - Automatic usage statistics tracking
+    - Both sync and async support
+    
+    Usage:
+        from app.config.llm import get_llm, CODEGEN
+        
+        llm = get_llm(CODEGEN)
+        response = llm.invoke("Hello!")  # Sync
+        response = await llm.ainvoke("Hello!")  # Async
+    """
+    
+    # --- Pydantic Fields ---
+    instance_name: str = Field(description="Name of this LLM instance")
+    endpoint_url: str = Field(description="LLM API endpoint URL")
+    token_cache: TokenCache = Field(description="Token cache for this instance")
+    stats_tracker: LLMStats = Field(description="Stats tracker")
+    
+    temperature: float = Field(default=0.0)
+    max_tokens: int = Field(default=16384)
+    timeout: float = Field(default=600.0)
+    
+    class Config:
+        arbitrary_types_allowed = True
+    
+    @property
+    def _llm_type(self) -> str:
+        """Return identifier for this LLM type."""
+        return "oauth-custom-llm"
+    
+    @property
+    def _identifying_params(self) -> dict[str, Any]:
+        """Return identifying parameters for this LLM instance."""
+        return {
+            "instance_name": self.instance_name,
+            "endpoint_url": self.endpoint_url,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+    
+    def _format_messages(self, messages: List[BaseMessage]) -> list[dict]:
+        """Convert LangChain messages to API format.
+        
+        Args:
+            messages: List of LangChain BaseMessage objects
+            
+        Returns:
+            List of dicts with 'role' and 'content' keys
+        """
+        formatted = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                role = "system"
+            elif isinstance(msg, HumanMessage):
+                role = "user"
+            elif isinstance(msg, AIMessage):
+                role = "assistant"
+            else:
+                role = "user"  # Default fallback
+            
+            formatted.append({"role": role, "content": msg.content})
+        return formatted
+    
+    def _call_with_auth_retry(self, messages: list[dict]) -> dict:
+        """Make API call with automatic 401 retry (sync version).
+        
+        Args:
+            messages: Formatted messages list
+            
+        Returns:
+            API response as dict
+            
+        Raises:
+            requests.HTTPError: If API call fails
+            RuntimeError: If all retries exhausted
+        """
+        token = self.token_cache.get_token()
+        
+        for attempt in range(2):  # Max 2 attempts (original + 1 retry on 401)
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            }
+            
+            response = requests.post(
+                self.endpoint_url,
+                json=payload,
+                headers=headers,
+                timeout=self.timeout,
+            )
+            
+            # Handle 401 - refresh token and retry
+            if response.status_code == 401 and attempt == 0:
+                logger.warning(f"[{self.instance_name}] Got 401, refreshing token")
+                self.token_cache.invalidate()
+                token = self.token_cache.get_token()
+                continue
+            
+            # Handle rate limiting
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", 60))
+                logger.warning(f"[{self.instance_name}] Rate limited, waiting {retry_after}s")
+                time.sleep(retry_after)
+                continue
+            
+            response.raise_for_status()
+            return response.json()
+        
+        raise RuntimeError(f"[{self.instance_name}] Failed to call LLM after retries")
+    
+    async def _call_with_auth_retry_async(self, messages: list[dict]) -> dict:
+        """Make API call with automatic 401 retry (async version).
+        
+        Args:
+            messages: Formatted messages list
+            
+        Returns:
+            API response as dict
+            
+        Raises:
+            httpx.HTTPStatusError: If API call fails
+            RuntimeError: If all retries exhausted
+        """
+        token = await self.token_cache.get_token_async()
+        
+        async with httpx.AsyncClient() as client:
+            for attempt in range(2):
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "messages": messages,
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                }
+                
+                response = await client.post(
+                    self.endpoint_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
+                
+                # Handle 401 - refresh token and retry
+                if response.status_code == 401 and attempt == 0:
+                    logger.warning(f"[{self.instance_name}] Got 401, refreshing token")
+                    self.token_cache.invalidate()
+                    token = await self.token_cache.get_token_async()
+                    continue
+                
+                # Handle rate limiting
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("Retry-After", 60))
+                    logger.warning(f"[{self.instance_name}] Rate limited, waiting {retry_after}s")
+                    await asyncio.sleep(retry_after)
+                    continue
+                
+                response.raise_for_status()
+                return response.json()
+        
+        raise RuntimeError(f"[{self.instance_name}] Failed to call LLM after retries")
+    
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        """Sync generation - required by BaseChatModel.
+        
+        Args:
+            messages: List of LangChain messages
+            stop: Optional stop sequences
+            run_manager: Optional callback manager
+            **kwargs: Additional arguments
+            
+        Returns:
+            ChatResult with generated response
+            
+        Raises:
+            Exception: If API call fails (after automatic stats tracking)
+        """
+        formatted = self._format_messages(messages)
+        
+        try:
+            # API call with auth retry
+            data = self._call_with_auth_retry(formatted)
+            
+            # Parse response (adjust based on actual API structure)
+            content = data["choices"][0]["message"]["content"]
+            
+            # Record success - AUTOMATIC, services don't do this
+            self.stats_tracker.record_request(self.instance_name, "llm", success=True)
+            
+            return ChatResult(
+                generations=[ChatGeneration(message=AIMessage(content=content))]
+            )
+        except Exception as e:
+            # Record failure - AUTOMATIC
+            self.stats_tracker.record_request(self.instance_name, "llm", success=False)
+            raise
+    
+    async def _agenerate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        """Async generation.
+        
+        Args:
+            messages: List of LangChain messages
+            stop: Optional stop sequences
+            run_manager: Optional async callback manager
+            **kwargs: Additional arguments
+            
+        Returns:
+            ChatResult with generated response
+            
+        Raises:
+            Exception: If API call fails (after automatic stats tracking)
+        """
+        formatted = self._format_messages(messages)
+        
+        try:
+            data = await self._call_with_auth_retry_async(formatted)
+            content = data["choices"][0]["message"]["content"]
+            
+            self.stats_tracker.record_request(self.instance_name, "llm", success=True)
+            
+            return ChatResult(
+                generations=[ChatGeneration(message=AIMessage(content=content))]
+            )
+        except Exception as e:
+            self.stats_tracker.record_request(self.instance_name, "llm", success=False)
+            raise

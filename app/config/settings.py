@@ -102,6 +102,40 @@ class Settings(BaseSettings):
         description="MLflow experiment name for organizing traces"
     )
 
+    # ============================================
+    # OAuth2 LLM Configuration
+    # ============================================
+    
+    # Shared OAuth2 Auth URL
+    OAUTH_AUTH_URL: str = Field(
+        default="",
+        description="OAuth2 token endpoint URL"
+    )
+    
+    # Separate API Endpoints
+    LLM_ENDPOINT_URL: str = Field(
+        default="",
+        description="LLM chat completion API endpoint"
+    )
+    EMBEDDINGS_ENDPOINT_URL: str = Field(
+        default="",
+        description="Embeddings API endpoint"
+    )
+    
+    # Codegen Instance Credentials
+    CODEGEN_CLIENT_ID: str = Field(default="")
+    CODEGEN_CLIENT_SECRET: str = Field(default="")
+    
+    # Docgen Instance Credentials
+    DOCGEN_CLIENT_ID: str = Field(default="")
+    DOCGEN_CLIENT_SECRET: str = Field(default="")
+    
+    # Token settings
+    OAUTH_TOKEN_REFRESH_BUFFER_SECONDS: int = Field(
+        default=60,
+        description="Refresh token this many seconds before actual expiry"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

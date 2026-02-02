@@ -897,10 +897,10 @@ class PARMLIBParser(BaseParser):
     def _create_augmentation_agent(self):
         """Create LangGraph ReAct agent with PARMLIB RAG tool access."""
         from langgraph.prebuilt import create_react_agent
-        from app.config.llm_config import llm
+        from app.config.llm import get_llm, DOCGEN
         from app.core.tools.rag_tools import search_parmlib_docs
         
-        return create_react_agent(model=llm, tools=[search_parmlib_docs])
+        return create_react_agent(model=get_llm(DOCGEN), tools=[search_parmlib_docs])
     
     async def augment(self, parsed_data: dict) -> dict:
         """Augment parsed PARMLIB data with LLM-generated metadata."""

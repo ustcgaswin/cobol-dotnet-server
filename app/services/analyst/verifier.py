@@ -11,7 +11,7 @@ from pathlib import Path
 from loguru import logger
 
 from app.config.settings import settings
-from app.config.llm_config import get_llm
+from app.config.llm import get_llm, DOCGEN
 
 
 VERIFICATION_PROMPT = """You are a verification agent reviewing documentation coverage.
@@ -108,7 +108,7 @@ def _get_llm_analysis(summaries_file: Path, catalog_file: Path) -> dict:
             catalog_content=catalog_content,
         )
         
-        llm = get_llm()
+        llm = get_llm(DOCGEN)
         response = llm.invoke(prompt)
         
         # Try to parse JSON from response
