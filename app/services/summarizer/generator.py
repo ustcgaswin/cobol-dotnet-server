@@ -25,8 +25,6 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     ca7_summaries = [s for s in summaries if s.get("type") == "ca7"]
     rexx_summaries = [s for s in summaries if s.get("type") == "rexx"]
     parmlib_summaries = [s for s in summaries if s.get("type") == "parmlib"]
-    csv_summaries = [s for s in summaries if s.get("type") == "csv"]
-    fixed_length_summaries = [s for s in summaries if s.get("type") == "fixed_length"]
     
     # --- Helper to render program-style summaries (COBOL/PLI/Assembly) ---
     def _render_program_section(title: str, items: list[dict]):
@@ -200,47 +198,6 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
                 
             lines.append("---")
             lines.append("")
-    
-    # Helper to render flat file summaries
-    def _render_flatfile_section(title: str, items: list[dict]):
-        """Render flat file (CSV/Fixed-Length) summaries."""
-        if not items:
-            return
-        lines.append(f"## {title}")
-        lines.append("")
-        
-        for s in sorted(items, key=lambda x: x.get("filename", "")):
-            lines.append(f"### {s.get('filename')}")
-            lines.append(f"**Purpose**: {s.get('purpose', 'N/A')}")
-            
-            if s.get("entity"):
-                lines.append(f"**Entity**: {s.get('entity')}")
-            
-            lines.append("")
-            
-            # Data Characteristics (replaces some metadata)
-            if s.get("data_characteristics"):
-                lines.append("**Data Characteristics**:")
-                for item in s.get("data_characteristics", []):
-                    lines.append(f"- {item}")
-                lines.append("")
-            
-            # Key Fields
-            if s.get("key_fields"):
-                lines.append("**Key Fields**:")
-                for item in s.get("key_fields", []):
-                    lines.append(f"- {item}")
-                lines.append("")
-            
-            # Notes (migration considerations, quality issues)
-            if s.get("notes"):
-                lines.append("**Notes**:")
-                for item in s.get("notes", []):
-                    lines.append(f"- {item}")
-                lines.append("")
-                
-            lines.append("---")
-            lines.append("")
 
     # --- Render JCL Section ---
     if jcl_summaries:
@@ -286,7 +243,5 @@ def generate_file_summaries_md(summaries: list[dict]) -> str:
     _render_ca7_section("CA-7 Workload Orchestration", ca7_summaries)
     _render_program_section("REXX Executables", rexx_summaries)
     _render_parmlib_section("System Parameter Libraries (Parmlib)", parmlib_summaries)
-    # Render flat file sections
-    _render_flatfile_section("CSV Data Files", csv_summaries)
-    _render_flatfile_section("Fixed-Length Data Files", fixed_length_summaries)            
+         
     return '\n'.join(lines)

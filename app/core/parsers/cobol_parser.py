@@ -124,402 +124,78 @@ class IdentificationDivisionParser(BaseDivisionParser):
         ('method_id', r'METHOD-ID\.\s*([A-Za-z][A-Za-z0-9_-]*)'),  # OO COBOL
         ('function_id', r'FUNCTION-ID\.\s*([A-Za-z][A-Za-z0-9_-]*)'),  # Intrinsic func
     ]
-    
     def parse(self, source: str, lines: list[tuple]) -> dict:
         result = {}
-        
-        # Extract IDENTIFICATION DIVISION content
-        id_match = re.search(
-            r'IDENTIFICATION\s+DIVISION\.(.*?)(?=ENVIRONMENT\s+DIVISION\.|DATA\s+DIVISION\.|PROCEDURE\s+DIVISION\.|$)',
-            source, re.IGNORECASE | re.DOTALL
-        )
-        
-        if not id_match:
-            return result
-            
-        id_content = id_match.group(1)
-        
-        for key, pattern in self.CLAUSES:
-            match = re.search(pattern, id_content, re.IGNORECASE)
-            if match:
-                value = match.group(1).strip().rstrip('.')
-                if value:
-                    result[key] = value
-        
+        # Improved Regex: Handles spaces, tabs, and trailing periods
+        match = re.search(r'PROGRAM-ID\.\s+([A-Za-z0-9_-]+)', source, re.IGNORECASE)
+        if match:
+            result['program_id'] = match.group(1).upper()
+        else:
+            # THIS IS HOW YOU POPULATE UNRECOGNIZED
+            self._unrecognized.append({
+                "type": "MISSING_HEADER",
+                "message": "PROGRAM-ID not found or improperly formatted"
+            })
         return result
 
+# ... (inside CobolParser class)
+    def parse_string(self, content: str, source_file: str = "unknown") -> dict:
+        self._source = content
+        self._lines = self._preprocess(content)
+        self._unrecognized = []
+        self._warnings = [] 
+        
+        normalized = self._normalize_source(content)
+        
+        # Heuristic Warning: Check if file is suspiciously short
+        if len(content.splitlines()) < 10:
+            self._warnings.append("File is very short; verify if this is a complete COBOL program.")
+
+        result = {
+            'source_file': source_file,
+            'program_name': 'UNKNOWN',
+            'dependencies': {},
+            '_warnings': self._warnings,
+            '_unrecognized': []
+        }
+        
+        for parser_name, parser_class in ParserRegistry.all_parsers().items():
+            # Only run the two essential parsers
+            if parser_name not in ['identification', 'dependencies']:
+                continue
+
+            parser = parser_class()
+            parser_result = parser.parse(normalized, self._lines)
+            
+            if parser_result:
+                if parser_name == 'identification':
+                    result['program_name'] = parser_result.get('program_id', 'UNKNOWN')
+                elif parser_name == 'dependencies':
+                    result['dependencies'] = parser_result
+            
+            # Transfer errors from the sub-parser to the main result
+            if parser.unrecognized:
+                self._unrecognized.extend(parser.unrecognized)
+        
+        # Ensure these fields are ALWAYS in the output, even if empty
+        result['_unrecognized'] = self._unrecognized
+        result['_warnings'] = self._warnings
+        
+        return result
 
 # =============================================================================
 # ENVIRONMENT DIVISION Parser
 # =============================================================================
-
-@ParserRegistry.register("environment")
-class EnvironmentDivisionParser(BaseDivisionParser):
-    """Parser for ENVIRONMENT DIVISION"""
-    
-    def parse(self, source: str, lines: list[tuple]) -> dict:
-        result = {}
-        
-        # Extract ENVIRONMENT DIVISION content
-        env_match = re.search(
-            r'ENVIRONMENT\s+DIVISION\.(.*?)(?=DATA\s+DIVISION\.|PROCEDURE\s+DIVISION\.|$)',
-            source, re.IGNORECASE | re.DOTALL
-        )
-        
-        if not env_match:
-            return result
-            
-        env_content = env_match.group(1)
-        
-        # Parse CONFIGURATION SECTION
-        config = self._parse_configuration(env_content)
-        if config:
-            result['configuration_section'] = config
-        
-        # Parse INPUT-OUTPUT SECTION
-        io = self._parse_input_output(env_content)
-        if io:
-            result['input_output_section'] = io
-        
-        return result
-    
-    def _parse_configuration(self, content: str) -> dict:
-        """Parse CONFIGURATION SECTION"""
-        config = {}
-        
-        # SOURCE-COMPUTER
-        match = re.search(r'SOURCE-COMPUTER\.\s*([A-Za-z][A-Za-z0-9_-]*)', content, re.IGNORECASE)
-        if match:
-            config['source_computer'] = match.group(1).upper()
-        
-        # OBJECT-COMPUTER
-        match = re.search(r'OBJECT-COMPUTER\.\s*([A-Za-z][A-Za-z0-9_-]*)', content, re.IGNORECASE)
-        if match:
-            config['object_computer'] = match.group(1).upper()
-        
-        # SPECIAL-NAMES
-        special_names = self._parse_special_names(content)
-        if special_names:
-            config['special_names'] = special_names
-        
-        return config
-    
-    def _parse_special_names(self, content: str) -> dict:
-        """Parse SPECIAL-NAMES paragraph"""
-        special = {}
-        
-        # DECIMAL-POINT IS COMMA
-        if re.search(r'DECIMAL-POINT\s+IS\s+COMMA', content, re.IGNORECASE):
-            special['decimal_point_is_comma'] = True
-        
-        # CURRENCY SIGN
-        currency_matches = re.findall(
-            r"CURRENCY\s+SIGN\s+IS\s+'([^']+)'(?:\s+WITH\s+PICTURE\s+SYMBOL\s+'([^']+)')?",
-            content, re.IGNORECASE
-        )
-        if currency_matches:
-            special['currency_signs'] = [
-                {'sign': m[0], 'symbol': m[1] if m[1] else m[0]}
-                for m in currency_matches
-            ]
-        
-        return special
-    
-    def _parse_input_output(self, content: str) -> dict:
-        """Parse INPUT-OUTPUT SECTION"""
-        io_section = {}
-        
-        # Parse FILE-CONTROL
-        file_control = self._parse_file_control(content)
-        if file_control:
-            io_section['file_control'] = file_control
-        
-        return io_section
-    
-    def _parse_file_control(self, content: str) -> list[dict]:
-        """Parse FILE-CONTROL paragraph"""
-        files = []
-        
-        # Find all SELECT statements
-        select_pattern = re.compile(
-            r'SELECT\s+([A-Za-z][A-Za-z0-9_-]*)(.*?)(?=SELECT\s+|$)',
-            re.IGNORECASE | re.DOTALL
-        )
-        
-        for match in select_pattern.finditer(content):
-            file_entry = {'select_name': match.group(1).upper()}
-            clauses = match.group(2)
-            
-            # ASSIGN TO
-            assign_match = re.search(r'ASSIGN\s+(?:TO\s+)?([A-Za-z][A-Za-z0-9_-]*)', clauses, re.IGNORECASE)
-            if assign_match:
-                file_entry['assign_to'] = assign_match.group(1).upper()
-            
-            # ORGANIZATION
-            org_match = re.search(r'ORGANIZATION\s+(?:IS\s+)?(SEQUENTIAL|INDEXED|RELATIVE|LINE\s+SEQUENTIAL)', 
-                                 clauses, re.IGNORECASE)
-            if org_match:
-                file_entry['organization'] = org_match.group(1).upper().replace(' ', '_')
-            
-            # ACCESS MODE
-            access_match = re.search(r'ACCESS\s+(?:MODE\s+(?:IS\s+)?)?(SEQUENTIAL|RANDOM|DYNAMIC)', 
-                                    clauses, re.IGNORECASE)
-            if access_match:
-                file_entry['access_mode'] = access_match.group(1).upper()
-            
-            # RECORD KEY
-            key_match = re.search(r'RECORD\s+KEY\s+(?:IS\s+)?([A-Za-z][A-Za-z0-9_-]*)', clauses, re.IGNORECASE)
-            if key_match:
-                file_entry['record_key'] = key_match.group(1).upper()
-            
-            # ALTERNATE RECORD KEY
-            alt_keys = re.findall(
-                r'ALTERNATE\s+RECORD\s+KEY\s+(?:IS\s+)?([A-Za-z][A-Za-z0-9_-]*)(?:\s+WITH\s+DUPLICATES)?',
-                clauses, re.IGNORECASE
-            )
-            if alt_keys:
-                file_entry['alternate_keys'] = [k.upper() for k in alt_keys]
-            
-            # FILE STATUS
-            status_match = re.search(r'FILE\s+STATUS\s+(?:IS\s+)?([A-Za-z][A-Za-z0-9_-]*)', 
-                                    clauses, re.IGNORECASE)
-            if status_match:
-                file_entry['file_status'] = status_match.group(1).upper()
-            
-            files.append(file_entry)
-        
-        return files
 
 
 # =============================================================================
 # DATA DIVISION Parser
 # =============================================================================
 
-@ParserRegistry.register("data")
-class DataDivisionParser(BaseDivisionParser):
-    """Parser for DATA DIVISION - extracts file section, working-storage, linkage"""
-    
-    def parse(self, source: str, lines: list[tuple]) -> dict:
-        result = {}
-        
-        # Extract DATA DIVISION content
-        data_match = re.search(
-            r'DATA\s+DIVISION\.(.*?)(?=PROCEDURE\s+DIVISION\.|$)',
-            source, re.IGNORECASE | re.DOTALL
-        )
-        
-        if not data_match:
-            return result
-            
-        data_content = data_match.group(1)
-        
-        # Parse FILE SECTION
-        file_section = self._parse_section(data_content, 'FILE SECTION')
-        if file_section:
-            result['file_section'] = file_section
-        
-        # Parse WORKING-STORAGE SECTION
-        ws_section = self._parse_section(data_content, 'WORKING-STORAGE SECTION')
-        if ws_section:
-            result['working_storage_section'] = ws_section
-        
-        # Parse LINKAGE SECTION
-        linkage_section = self._parse_section(data_content, 'LINKAGE SECTION')
-        if linkage_section:
-            result['linkage_section'] = linkage_section
-        
-        # Parse LOCAL-STORAGE SECTION (for threads)
-        local_section = self._parse_section(data_content, 'LOCAL-STORAGE SECTION')
-        if local_section:
-            result['local_storage_section'] = local_section
-        
-        return result
-    
-    def _parse_section(self, content: str, section_name: str) -> list[dict]:
-        """Parse a specific section of DATA DIVISION"""
-        # Find section boundaries
-        section_pattern = re.compile(
-            rf'{section_name}\.(.*?)(?=FILE\s+SECTION\.|WORKING-STORAGE\s+SECTION\.|'
-            rf'LINKAGE\s+SECTION\.|LOCAL-STORAGE\s+SECTION\.|PROCEDURE\s+DIVISION\.|$)',
-            re.IGNORECASE | re.DOTALL
-        )
-        
-        match = section_pattern.search(content)
-        if not match:
-            return []
-            
-        section_content = match.group(1)
-        
-        # Parse FD entries for FILE SECTION
-        if 'FILE' in section_name.upper():
-            return self._parse_file_descriptions(section_content)
-        
-        # Parse data items for other sections
-        return self._parse_data_items(section_content)
-    
-    def _parse_file_descriptions(self, content: str) -> list[dict]:
-        """Parse FD (File Description) entries"""
-        fds = []
-        
-        # Find all FD entries
-        fd_pattern = re.compile(
-            r'FD\s+([A-Za-z][A-Za-z0-9_-]*)(.*?)(?=FD\s+|SD\s+|\d{2}\s+|$)',
-            re.IGNORECASE | re.DOTALL
-        )
-        
-        for match in fd_pattern.finditer(content):
-            fd_entry = {'file_name': match.group(1).upper()}
-            clauses = match.group(2)
-            
-            # LABEL RECORDS
-            label_match = re.search(r'LABEL\s+RECORDS?\s+(?:ARE?\s+)?(STANDARD|OMITTED)', 
-                                   clauses, re.IGNORECASE)
-            if label_match:
-                fd_entry['label_records'] = label_match.group(1).upper()
-            
-            # BLOCK CONTAINS
-            block_match = re.search(r'BLOCK\s+CONTAINS\s+(\d+)(?:\s+TO\s+(\d+))?\s+(?:RECORDS?|CHARACTERS?)', 
-                                   clauses, re.IGNORECASE)
-            if block_match:
-                fd_entry['block_contains'] = int(block_match.group(1))
-            
-            # RECORD CONTAINS
-            record_match = re.search(r'RECORD\s+CONTAINS\s+(\d+)(?:\s+TO\s+(\d+))?\s+CHARACTERS?', 
-                                    clauses, re.IGNORECASE)
-            if record_match:
-                fd_entry['record_contains'] = int(record_match.group(1))
-                if record_match.group(2):
-                    fd_entry['record_contains_max'] = int(record_match.group(2))
-            
-            # RECORDING MODE
-            mode_match = re.search(r'RECORDING\s+MODE\s+(?:IS\s+)?([FVUS])', clauses, re.IGNORECASE)
-            if mode_match:
-                fd_entry['recording_mode'] = mode_match.group(1).upper()
-            
-            # DATA RECORD(S)
-            data_rec_match = re.search(r'DATA\s+RECORDS?\s+(?:ARE?\s+)?([A-Za-z][A-Za-z0-9_\s-]+?)(?:\.|$)', 
-                                      clauses, re.IGNORECASE)
-            if data_rec_match:
-                fd_entry['data_records'] = [r.strip().upper() for r in data_rec_match.group(1).split()]
-            
-            fds.append(fd_entry)
-        
-        return fds
-    
-    def _parse_data_items(self, content: str) -> list[dict]:
-        """Parse data items (01-49 levels)"""
-        items = []
-        
-        # Simple extraction of 01-level items with their names
-        level_pattern = re.compile(
-            r'^\s*(\d{2})\s+([A-Za-z][A-Za-z0-9_-]*|FILLER)',
-            re.MULTILINE | re.IGNORECASE
-        )
-        
-        current_01 = None
-        for match in level_pattern.finditer(content):
-            level = int(match.group(1))
-            name = match.group(2).upper()
-            
-            if level == 1:
-                current_01 = {'level': level, 'name': name, 'fields': []}
-                items.append(current_01)
-            elif current_01 and level in (5, 10, 15, 20, 25, 30, 35, 40, 45, 49, 66, 77, 88):
-                current_01['fields'].append({'level': level, 'name': name})
-        
-        return items
-
 
 # =============================================================================
 # PROCEDURE DIVISION Parser
 # =============================================================================
-
-@ParserRegistry.register("procedure")
-class ProcedureDivisionParser(BaseDivisionParser):
-    """Parser for PROCEDURE DIVISION structure"""
-    
-    def parse(self, source: str, lines: list[tuple]) -> dict:
-        result = {}
-        
-        # Extract PROCEDURE DIVISION content
-        proc_match = re.search(
-            r'PROCEDURE\s+DIVISION(.*?)\.',
-            source, re.IGNORECASE
-        )
-        
-        if not proc_match:
-            return result
-        
-        # Check for USING clause
-        header = proc_match.group(1)
-        using_match = re.search(r'USING\s+(.*)', header, re.IGNORECASE)
-        if using_match:
-            params = re.findall(r'([A-Za-z][A-Za-z0-9_-]*)', using_match.group(1))
-            result['using_clause'] = [p.upper() for p in params]
-        
-        # Extract full procedure division
-        proc_full_match = re.search(
-            r'PROCEDURE\s+DIVISION.*?\.(.*?)$',
-            source, re.IGNORECASE | re.DOTALL
-        )
-        
-        if proc_full_match:
-            proc_content = proc_full_match.group(1)
-            
-            # Parse sections and paragraphs
-            structure = self._parse_structure(proc_content)
-            if structure.get('sections'):
-                result['sections'] = structure['sections']
-            if structure.get('paragraphs'):
-                result['paragraphs'] = structure['paragraphs']
-        
-        return result
-    
-    def _parse_structure(self, content: str) -> dict:
-        """Parse sections and paragraphs"""
-        result = {'sections': [], 'paragraphs': []}
-        
-        # Find sections (name followed by SECTION)
-        section_pattern = re.compile(
-            r'^(\s*)([A-Za-z][A-Za-z0-9_-]*)\s+SECTION\s*\.',
-            re.MULTILINE | re.IGNORECASE
-        )
-        
-        # Find paragraphs (name at margin A followed by period)
-        # Paragraph names start in column 8-11 (Area A)
-        # COBOL paragraph names can start with digits (e.g., 0000-MAIN-PARA)
-        paragraph_pattern = re.compile(
-            r'^(\s{0,4})([A-Za-z0-9][A-Za-z0-9_-]*)\s*\.',
-            re.MULTILINE
-        )
-        
-        sections = list(section_pattern.finditer(content))
-        paragraphs = list(paragraph_pattern.finditer(content))
-        
-        # Build section list
-        for match in sections:
-            result['sections'].append({
-                'name': match.group(2).upper()
-            })
-        
-        # Build paragraph list (excluding section names)
-        section_names = {s['name'] for s in result['sections']}
-        for match in paragraphs:
-            para_name = match.group(2).upper()
-            # Skip if it's a section name or a COBOL keyword
-            if para_name not in section_names and para_name not in (
-                'IDENTIFICATION', 'ENVIRONMENT', 'DATA', 'PROCEDURE',
-                'DIVISION', 'SECTION', 'COPY', 'END', 'EXIT', 'STOP',
-                'GOBACK', 'CONTINUE', 'NEXT', 'PERFORM', 'IF', 'ELSE',
-                'EVALUATE', 'WHEN', 'MOVE', 'COMPUTE', 'ADD', 'SUBTRACT',
-                'MULTIPLY', 'DIVIDE', 'CALL', 'OPEN', 'CLOSE', 'READ',
-                'WRITE', 'REWRITE', 'DELETE', 'START', 'RETURN',
-            ):
-                result['paragraphs'].append({
-                    'name': para_name
-                })
-        
-        return result
 
 
 # =============================================================================
@@ -1247,50 +923,48 @@ class CobolParser(BaseParser):
         self._source = content
         self._lines = self._preprocess(content)
         self._unrecognized = []
+        self._warnings = [] # Initialize/clear warnings for this run
         
         # Normalize source for parsing (join continuation lines)
         normalized = self._normalize_source(content)
         
-        # Initialize result
+        # Initialize result with mandatory metadata fields
         result = {
             'source_file': source_file,
+            'program_name': 'UNKNOWN',
+            'dependencies': {},
+            '_warnings': self._warnings,      # <--- ADDED THIS
+            '_unrecognized': []               # <--- INITIALIZED EMPTY
         }
         
         # Run all registered parsers
         for parser_name, parser_class in ParserRegistry.all_parsers().items():
+            # Optimization: Only run the parsers you want to keep
+            if parser_name not in ['identification', 'dependencies']:
+                continue
+
             parser = parser_class()
             parser_result = parser.parse(normalized, self._lines)
             
             if parser_result:
-                # Map parser names to output keys
-                key_mapping = {
-                    'identification': 'identification_division',
-                    'environment': 'environment_division',
-                    'data': 'data_division',
-                    'procedure': 'procedure_division',
-                    'dependencies': 'dependencies',
-                }
-                key = key_mapping.get(parser_name, parser_name)
-                result[key] = parser_result
+                if parser_name == 'identification':
+                    # Only keep program_id from identification
+                    prog_id = parser_result.get('program_id')
+                    if prog_id:
+                        result['program_name'] = prog_id
+                
+                elif parser_name == 'dependencies':
+                    result['dependencies'] = parser_result
             
-            # Collect unrecognized patterns
+            # Collect unrecognized patterns from the parser
             if parser.unrecognized:
                 self._unrecognized.extend(parser.unrecognized)
         
-        # Add program_name at top level if available
-        if 'identification_division' in result:
-            id_div = result['identification_division']
-            if 'program_id' in id_div:
-                result['program_name'] = id_div['program_id']
-            elif 'class_id' in id_div:
-                result['program_name'] = id_div['class_id']
-        
-        # Add unrecognized patterns if any
-        if self._unrecognized:
-            result['_unrecognized'] = self._unrecognized
+        # Final assignment to ensure lists are updated
+        result['_unrecognized'] = self._unrecognized
+        result['_warnings'] = self._warnings
         
         return result
-    
     def _preprocess(self, content: str) -> list[tuple]:
         """Preprocess COBOL source into (line_number, text, original) tuples"""
         lines = content.split('\n')

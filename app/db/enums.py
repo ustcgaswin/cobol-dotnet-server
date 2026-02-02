@@ -16,8 +16,5 @@ class SourceFileType(str, Enum):
     PLI_COPYBOOK = "inc"
     DCLGEN = "dclgen" 
     CA7  = "ca7"
-    BIND = "bind"
-    CSV = "csv"
-    FIXED_LENGTH = "fixed_length"
     PARMLIB = "ctl"
     ASSEMBLY = "assembly"

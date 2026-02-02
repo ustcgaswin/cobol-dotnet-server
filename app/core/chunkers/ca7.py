@@ -1,3 +1,5 @@
+"""CA-7 chunker - Simplified for dependency extraction."""
+
 import re
 from pathlib import Path
 from typing import Optional, List
@@ -9,33 +11,25 @@ from app.core.exceptions import ChunkError
 
 
 class Ca7Chunker(BaseChunker):
-    """Chunker for CA-7 LJOB reports.
+    """Simplified chunker for CA-7 LJOB reports.
     
-    Splits large CA-7 report files into individual job definitions.
-    Mirrors the logic in CA7Parser to ensure consistency.
+    Splits large CA-7 report files into individual job definitions
+    after removing report headers and noise.
     """
     
     SUPPORTED_EXTENSIONS = [".ca7", ".txt", ".ljob"]
     
-    # Matches the specific splitter used in CA7Parser
-    # This splits on 'JOB:' but ignores 'DEP-JOB:'
+    # Matches 'JOB:' but not 'DEP-JOB:'
     JOB_SPLIT_PATTERN = re.compile(
         r'(?im)^(?:(?!\s*DEP-JOB:).)*?JOB:\s+', 
         re.MULTILINE
     )
     
-    # Pattern to extract job name from the chunk for metadata naming
+    # Pattern to extract job name from the chunk
     JOB_NAME_PATTERN = re.compile(r'([A-Z0-9#@$]+)', re.IGNORECASE)
 
     def chunk(self, filepaths: list[str]) -> list[dict]:
-        """Chunk CA-7 reports into individual job blocks.
-        
-        Args:
-            filepaths: List of file paths to CA-7 reports
-            
-        Returns:
-            List of chunk dicts with 'content', 'type', 'name', 'source'
-        """
+        """Chunk CA-7 reports into individual job blocks."""
         all_chunks = []
         
         for filepath in filepaths:
@@ -49,7 +43,7 @@ class Ca7Chunker(BaseChunker):
         return all_chunks
 
     def get_whole(self, filepaths: list[str]) -> list[dict]:
-        """Return entire CA-7 file as single chunk."""
+        """Return entire CA-7 file as single chunk after preprocessing."""
         chunks = []
         for filepath in filepaths:
             try:
@@ -72,8 +66,6 @@ class Ca7Chunker(BaseChunker):
         content = self._preprocess_source(content)
         
         # Split by JOB: pattern
-        # The re.split will remove the 'JOB: ' part if not using a capture group,
-        # so we split and then reconstruct if necessary.
         blocks = self.JOB_SPLIT_PATTERN.split(content)
         
         chunks = []
@@ -90,8 +82,8 @@ class Ca7Chunker(BaseChunker):
             # Extract job name for the chunk metadata
             job_name = self._extract_job_name(cleaned_block) or "UNKNOWN_JOB"
             
-            # Filter out wildcard headers (like JOB: FIN*) as per Parser logic
-            if '*' in job_name:
+            # Filter out wildcards and noise names
+            if '*' in job_name or job_name in {'DATE', 'TIME', 'PAGE', 'LIST', 'SYS'}:
                 continue
 
             chunks.append({
@@ -107,19 +99,30 @@ class Ca7Chunker(BaseChunker):
     def _preprocess_source(self, content: str) -> str:
         """Clean CA-7 report noise.
         
-        1. Removes report headers (DATE, TIME, PAGE).
-        2. Removes LIST: LJOB metadata.
-        3. Preserves internal spacing for regex compatibility.
+        Removes:
+        1. Report headers (DATE, TIME, PAGE)
+        2. LIST: LJOB metadata
+        3. Separator lines
+        4. END OF LIST markers
         """
         lines = content.splitlines()
         processed = []
         
-        # Pattern to identify report noise
-        noise_pattern = re.compile(r'^(DATE:|LIST:|TIME:|PAGE:|--+)', re.IGNORECASE)
+        # Patterns to identify report noise
+        noise_patterns = [
+            re.compile(r'^DATE:', re.IGNORECASE),
+            re.compile(r'^LIST:', re.IGNORECASE),
+            re.compile(r'^TIME:', re.IGNORECASE),
+            re.compile(r'^PAGE:', re.IGNORECASE),
+            re.compile(r'^-+$'),
+            re.compile(r'^END OF LIST', re.IGNORECASE)
+        ]
         
         for line in lines:
-            # Skip report headers and separator lines
-            if noise_pattern.match(line.strip()):
+            stripped = line.strip()
+            
+            # Skip if matches any noise pattern
+            if any(pattern.match(stripped) for pattern in noise_patterns):
                 continue
             
             processed.append(line)
@@ -127,8 +130,6 @@ class Ca7Chunker(BaseChunker):
         return '\n'.join(processed)
 
     def _extract_job_name(self, block_text: str) -> Optional[str]:
-        """Helper to find the job name in a block of text."""
-        # Typically the job name is the first word in the first line of the block
-        # after 'JOB: ' has been removed.
+        """Extract the job name from a block of text."""
         match = self.JOB_NAME_PATTERN.search(block_text)
         return match.group(1) if match else None

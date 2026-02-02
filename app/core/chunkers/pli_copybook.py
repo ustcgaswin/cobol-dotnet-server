@@ -1,4 +1,4 @@
-"""PL/I copybook chunker."""
+"""PL/I copybook chunker - Simplified for dependency extraction."""
 
 import re
 from pathlib import Path
@@ -10,10 +10,10 @@ from app.core.exceptions import ChunkError
 
 
 class PliCopybookChunker(BaseChunker):
-    """Chunker for PL/I copybooks (Includes).
+    """Simplified chunker for PL/I copybooks (Includes).
     
-    Treats the copybook as a single chunk but performs cleaning 
-    (comment stripping) to optimize LLM context usage.
+    Returns the entire copybook as a single chunk with comment stripping
+    to optimize for dependency extraction.
     """
 
     SUPPORTED_EXTENSIONS = [".inc", ".mac"]
@@ -24,12 +24,14 @@ class PliCopybookChunker(BaseChunker):
         return self.get_whole(filepaths)
 
     def get_whole(self, filepaths: list[str]) -> list[dict]:
+        """Return entire copybook file as a single chunk after preprocessing."""
         chunks = []
 
         for filepath in filepaths:
             try:
                 content = Path(filepath).read_text(encoding='utf-8', errors='replace')
                 content = self._preprocess_source(content)
+                
                 chunks.append({
                     'content': content,
                     'type': 'whole',
@@ -43,7 +45,7 @@ class PliCopybookChunker(BaseChunker):
         return chunks
 
     def _preprocess_source(self, content: str) -> str:
-        """Remove PL/I comments to clean up declarations."""
+        """Remove PL/I comments to clean up content."""
         # Remove block comments
         content = self.COMMENT_PATTERN.sub(' ', content)
         # Squeeze extra whitespace
