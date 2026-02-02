@@ -516,3 +516,39 @@ class CodegenLocalService:
             "content": content,
         }
 
+    def create_zip(self, project_name: str) -> bytes:
+        """Create a zip archive of the generated code.
+        
+        Args:
+            project_name: Project name for folder lookup
+            
+        Returns:
+            Bytes of the zip file
+            
+        Raises:
+            GeneratedCodeNotFoundError: If output folder doesn't exist
+        """
+        import io
+        import zipfile
+        from app.core.exceptions import GeneratedCodeNotFoundError
+        
+        output_path = self._get_output_path(project_name)
+        
+        if not output_path.exists():
+            raise GeneratedCodeNotFoundError(str(self.project_id))
+        
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for file_path in output_path.rglob('*'):
+                # Skip directories
+                if file_path.is_dir():
+                    continue
+                # Skip build artifacts (bin/, obj/)
+                if any(p.lower() in ('bin', 'obj') for p in file_path.parts):
+                    continue
+                arcname = file_path.relative_to(output_path)
+                zf.write(file_path, arcname)
+        
+        logger.info(f"Created zip for project {self.project_id} ({buffer.tell()} bytes)")
+        return buffer.getvalue()
+
