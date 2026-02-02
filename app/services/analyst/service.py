@@ -11,6 +11,7 @@ from loguru import logger
 
 from app.config.settings import settings
 from app.core.tools.artifact_tools import create_artifact_tools
+from app.core.tools.rag_tools import search_docs
 from app.services.analyst.agent import create_analyst_agent
 from app.services.analyst.tools import create_knowledge_tools, create_writer_tools
 from app.db.base import async_session_factory
@@ -133,7 +134,8 @@ class AnalystService:
             artifact_tools = create_artifact_tools(project_id_str)
             writer_tools = create_writer_tools(project_id_str)
             knowledge_tools = create_knowledge_tools()
-            all_tools = artifact_tools + writer_tools + knowledge_tools
+            rag_tools = [search_docs]
+            all_tools = artifact_tools + writer_tools + knowledge_tools + rag_tools
             
             # Create agent
             agent = create_analyst_agent(

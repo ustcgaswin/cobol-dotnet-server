@@ -11,6 +11,7 @@ Analyze the project's `dependency_graph.md` and `file_summaries.md` to create sy
 
 ## Additional Knowledge Sources
 - **read_process_flow**: Manual process flow documentation (use when CA-7 data is sparse or absent)
+- **search_docs(question)**: Search all project documentation (RAG)
 
 ## Your Workflow
 

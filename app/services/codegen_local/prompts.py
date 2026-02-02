@@ -22,6 +22,7 @@ Convert all source files (COBOL programs, copybooks, JCL jobs) to a complete .NE
 - `read_style_guide()` - Get C# code style requirements
 - `lookup_utility(name)` - Find .NET equivalent for IBM utilities
 - `search_knowledge(pattern, filename)` - Search in knowledge files
+- `search_docs(question)` - Search all project documentation (RAG)
 
 ### Solution Tools:
 - `initialize_solution(solution_name)` - Create .sln skeleton with projects

@@ -12,6 +12,7 @@ import httpx
 
 from app.config.settings import settings
 from app.core.tools.artifact_tools import create_artifact_tools
+from app.core.tools.rag_tools import search_docs
 from app.db.base import async_session_factory
 from app.db.repositories.project import ProjectRepository
 from app.services.codegen_local.agent import create_codegen_agent
@@ -313,6 +314,7 @@ class CodegenLocalService:
             status_tools = create_status_tools(project_id_str)
             source_file_tools = create_source_file_tools(project_id_str)
             system_context_tools = create_system_context_tools(project_id_str)
+            rag_tools = [search_docs]
             
             all_tools = (
                 artifact_tools +
@@ -321,7 +323,8 @@ class CodegenLocalService:
                 build_tools +
                 status_tools +
                 source_file_tools +
-                system_context_tools
+                system_context_tools +
+                rag_tools
             )
             
             # Create agent
