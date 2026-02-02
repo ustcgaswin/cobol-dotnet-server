@@ -33,8 +33,14 @@ For each program/component:
 
 ### Phase 4: System Overview
 1. Synthesize what you've learned
-2. Use `submit_overview` for high-level sections
+2. Use `submit_overview` ONLY for these sections:
+   - **Business Purpose**: What the system does (1-2 paragraphs)
+   - **Technical Architecture**: Components and their relationships
+   - **Key Data Entities**: Main data structures
+   - **Processing Flow**: How data flows through the system
+   - **Integration Points**: External systems and interfaces
 3. Use `submit_data_flow` for data movement
+4. **DO NOT include**: Modernization recommendations, cost estimates, migration strategies, success metrics, or technology stack suggestions. These are out of scope.
 
 ### Phase 5: Gaps
 When you encounter something you cannot fully analyze:

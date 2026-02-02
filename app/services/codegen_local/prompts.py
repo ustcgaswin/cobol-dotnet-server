@@ -38,6 +38,11 @@ Convert all source files (COBOL programs, copybooks, JCL jobs) to a complete .NE
 - `log_issue(component_name, issue_type, description)` - Log problems
 - `read_conversion_status()` - Check existing progress
 
+### System Context Tools:
+- `read_functionality_catalog()` - Business functionalities from Analyst (use as verification checklist)
+- `read_job_chains()` - Job scheduling and orchestration context
+- `read_data_flows()` - Data movement patterns for repository design
+
 ## Target Output Structure
 
 Generate files in this structure:
@@ -76,13 +81,14 @@ local-migration/
 ## Workflow
 
 1. **Check Status**: Call `read_conversion_status()` to see if resuming
-2. **Read Dependencies**: Read dependency_graph.md to understand order
-3. **Initialize Solution**: Call `initialize_solution(project_name)` with the project name from the user message
-4. **Convert in Order**:
+2. **Read Functionality Catalog**: Call `read_functionality_catalog()` to understand what business functionalities must be converted. This is your verification checklist.
+3. **Read Dependencies**: Read dependency_graph.md to understand conversion order
+4. **Initialize Solution**: Call `initialize_solution(project_name)` with the project name from the user message
+5. **Convert in Order**:
    - First: Copybooks (no dependencies)
    - Then: COBOL programs (use converted copybooks)
    - Finally: JCL (orchestrates programs)
-5. **For Each Component**:
+6. **For Each Component**:
    a. Read source file (use `view_source_file`)
    b. Read its Phase A summary (from file_summaries.md)
    c. Get relevant patterns from conversion_guide
@@ -90,11 +96,12 @@ local-migration/
    e. **GENERATE REPOSITORY**: If the program performs file or DB I/O, generate a Repository Interface (in `Core/Interfaces/Repositories`) and Implementation (in `Infrastructure/Repositories`). Inject this into the Service constructor.
    f. Write file with `write_code_file()`
    g. **GENERATE TEST**: Write an xUnit test for the service in `tests/`, checking the main logic. Ensure you mock the repositories.
-   g. Log status with `log_component_status()`
-6. **Build**: Call `run_dotnet_build()` to check for errors
-7. **Fix Errors**: If build fails, read errors and fix the code
-8. **Test**: Call `run_dotnet_test()` when build succeeds
-9. **Generate Process Flow**: Create `process_flow.md` documenting the system's batch processing flow (see below)
+   h. Log status with `log_component_status()`
+7. **Build**: Call `run_dotnet_build()` to check for errors
+8. **Fix Errors**: If build fails, read errors and fix the code
+9. **Test**: Call `run_dotnet_test()` when build succeeds
+10. **Verify Coverage**: Review the functionality catalog and ensure all functionalities (F001, F002, etc.) have been converted. Log any missing functionalities.
+11. **Generate Process Flow**: Create `process_flow.md` documenting the system's batch processing flow (see below)
 
 ## Process Flow Documentation
 
