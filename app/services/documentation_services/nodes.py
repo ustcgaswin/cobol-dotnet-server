@@ -15,13 +15,6 @@ from app.services.documentation_services.prompts import (
             COPYBOOK_PROMPT, PLI_CHUNK_PROMPT, PLI_COPYBOOK_PROMPT, ASSEMBLY_CHUNK_PROMPT, PARMLIB_PROMPT
         )
 
-from app.services.documentation_services.prompts import (
-            COBOL_CHUNK_PROMPT, CA7_PROMPT, JCL_PROMPT, JSON_FORMAT_INSTRUCTION, EXECUTIVE_SUMMARY_PROMPT,
-            CUMULATIVE_MERGE_INSTRUCTION, REXX_CHUNK_PROMPT, BIND_PROMPT,
-            DCLGEN_PROMPT, CSV_PROMPT,FIXED_LENGTH_PROMPT, DOC_AGENT_RESEARCH_SYSTEM_PROMPT, 
-            COPYBOOK_PROMPT, PLI_CHUNK_PROMPT, PLI_COPYBOOK_PROMPT, ASSEMBLY_CHUNK_PROMPT, PARMLIB_PROMPT
-        )
-
 class DocAgentNodes:
     def __init__(self, llm, analyzer, tools):
         # FIX: Save the base LLM so it's accessible in generation nodes
