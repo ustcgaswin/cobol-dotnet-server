@@ -357,11 +357,15 @@ class CodegenLocalService:
                         f"{system_overview_content}"
             )
             
+            # Create codegen logs directory path
+            codegen_logs_path = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / project_id_str / "codegen_logs"
+            
             result = await agent.ainvoke(
                 {
                     "messages": [initial_message],
                     "project_id": project_id_str,
                     "iteration_count": 0,
+                    "codegen_logs_path": str(codegen_logs_path),
                 },
                 config={"recursion_limit": 550},
             )
