@@ -202,9 +202,73 @@ Utilities encountered that need research to find .NET equivalents.
             logger.error(f"read_conversion_status error: {e}")
             return f"Error reading status: {e}"
     
+    @tool("search_session_logs")
+    def search_session_logs(query: str) -> str:
+        """Search session logs for specific information.
+        
+        Use this if you need details about a component that was summarized away
+        from the conversation history.
+        
+        Args:
+            query: Text to search for (component name, error message, etc.)
+            
+        Returns:
+            Matching snippets from session logs or "No matches found"
+        """
+        import json
+        
+        try:
+            logs_path = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / project_id / "codegen_logs"
+            
+            if not logs_path.exists():
+                return "No session logs found."
+            
+            matches = []
+            for log_file in sorted(logs_path.glob("session_*.json")):
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    for i, msg in enumerate(data.get("messages", [])):
+                        content = msg.get("content", "")
+                        if query.lower() in content.lower():
+                            # Truncate long content
+                            snippet = content[:500]
+                            if len(content) > 500:
+                                snippet += "..."
+                            
+                            matches.append({
+                                "file": log_file.name,
+                                "index": i,
+                                "role": msg.get("role", "unknown"),
+                                "snippet": snippet
+                            })
+                            
+                            if len(matches) >= 3:
+                                break
+                except Exception as e:
+                    logger.warning(f"Failed to read {log_file}: {e}")
+                
+                if len(matches) >= 3:
+                    break
+            
+            if not matches:
+                return f"No matches found for '{query}' in session logs."
+            
+            result = f"Found {len(matches)} match(es) for '{query}':\n\n"
+            for m in matches:
+                result += f"**{m['file']}** (index {m['index']}, {m['role']}):\n{m['snippet']}\n\n---\n\n"
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"search_session_logs error: {e}")
+            return f"Error searching session logs: {e}"
+    
     return [
         log_component_status,
         log_issue,
         log_unknown_utility,
         read_conversion_status,
+        search_session_logs,
     ]
