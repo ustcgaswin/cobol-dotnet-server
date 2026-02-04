@@ -17,6 +17,7 @@ from app.config.settings import settings
 from app.config.llm_config import get_llm
 from app.db.repositories.source_file import SourceFileRepository
 from app.db.models.source_file import SourceFile
+from app.db.models.project import Project, ProjectStatus
 
 
 
@@ -51,6 +52,27 @@ class DocumentationService:
         self.repository = SourceFileRepository(session)
         self.artifacts_path = settings.get_artifacts_path()
 
+    async def _update_project_status(self, project_id: uuid.UUID, mode: str, status: ProjectStatus):
+        """Helper to update the project's documentation status in the DB."""
+        try:
+            # Fetch project
+            result = await self.session.execute(select(Project).where(Project.id == project_id))
+            project = result.scalar_one_or_none()
+            
+            if project:
+                if mode == "ALL":
+                    project.technical_document_status = status
+                    project.functional_document_status = status
+                elif mode == "TECHNICAL":
+                    project.technical_document_status = status
+                elif mode == "FUNCTIONAL":
+                    project.functional_document_status = status
+                
+                await self.session.commit()
+                logger.info(f"Updated Project {project_id} status to {status} for mode {mode}")
+        except Exception as e:
+            logger.error(f"Failed to update project status: {e}")        
+
     async def run_full_pipeline(self, project_id: uuid.UUID, mode: str = "ALL"):
         """
         Main entry point for the background task.
@@ -59,6 +81,8 @@ class DocumentationService:
         """
         try:
             logger.info(f"Starting Agentic Documentation Pipeline for Project: {project_id}")
+
+            await self._update_project_status(project_id, mode, ProjectStatus.IN_PROGRESS)
             
             # 1. Load System-wide Context (Combined JSONs from all parsers)
             system_data = await self._load_all_parsed_jsons(project_id)
@@ -74,8 +98,6 @@ class DocumentationService:
 
             project_id_str = str(project_id)
     
-            # We create a "Surgical" tool for the Agent that calls your REAL tool
-            # but hard-codes the project_id behind the scenes.
             
             class RuntimeShim:
                 def __init__(self, pid):
@@ -125,6 +147,7 @@ class DocumentationService:
             await asyncio.gather(*tasks)
 
             self._generate_consolidated_placeholders(project_id, mode)
+            await self._update_project_status(project_id, mode, ProjectStatus.COMPLETED)
 
             logger.info(f"Full pipeline complete for project {project_id}")
 
