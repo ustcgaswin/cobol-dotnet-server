@@ -36,37 +36,60 @@ CRITICAL MODULES:
 {top_modules}
 
 TASK:
-Generate the "Business Overview" content for the Master Documentation.
+Generate the content for the "Introduction" and "System Architecture" sections of the Master Documentation.
 Infer the business context based on the module names (e.g., 'PAY*' -> Payroll) and descriptions.
 
 REQUIRED JSON STRUCTURE:
 {{
-    "business_purpose": "2-3 sentences explaining what this system achieves (e.g., 'Daily Merchant Settlement...')",
+    "business_purpose": "2-3 sentences explaining what this system achieves (e.g., 'Daily Merchant Settlement').",
+    
     "business_scope": [
         "Bullet point 1 (e.g., 'Processes daily batches')",
-        "Bullet point 2"
+        "Bullet point 2 (e.g., 'Generates General Ledger postings')"
     ],
+    
+    "system_landscape": "A technical summary sentence. Example: 'The system operates within a z/OS environment utilizing DB2 for persistence, CICS for online transactions, and JES2 for batch orchestration.' (Derive this from the SYSTEM METRICS technologies).",
+    
+    "glossary": [
+        {{ "term": "Acronym found (e.g., CATO)", "definition": "Inferred definition or 'System-specific term'" }},
+        {{ "term": "GVAP", "definition": "Inferred definition" }}
+    ],
+
+    "functional_flow_diagram": {{
+        "description": "A paragraph describing the end-to-end data lifecycle.",
+        "mermaid_code": "Generate a MermaidJS Sequence Diagram string. Start with 'sequenceDiagram'. Define participants like 'External System', 'Batch Job', 'Database', 'Reporting'. Show the flow of data.",
+        "steps_table": [
+            {{ "actor": "e.g. Upstream Feed", "action": "Sends file", "outcome": "Data Ingested" }},
+            {{ "actor": "Batch Job", "action": "Validates & Processes", "outcome": "DB2 Updated" }},
+            {{ "actor": "Reporting", "action": "Generates Output", "outcome": "Report Distrubuted" }}
+        ]
+    }},
+
     "process_flow_steps": [
         "Step 1 (e.g., 'Ingest ISO8583')",
-        "Step 2 (e.g., 'Calculate Fees')",
-        "Step 3 (e.g., 'Update DB2')"
+        "Step 2 (e.g., 'Calculate Fees')"
     ],
+    
     "schedule_frequency": {{
         "frequency": "e.g., Daily (Weekdays) or Real-time",
         "start_time": "Inferred start time or 'Event Driven'",
         "sla_window": "Inferred or 'Standard Batch Window'"
     }},
+    
     "data_overview": {{
         "inputs": ["List of input data types inferred from file names"],
         "outputs": ["List of output artifacts/reports"]
     }},
+    
     "business_risks": [
         "Risk 1 (e.g., 'Delays impact settlement')",
         "Risk 2"
     ],
+    
     "external_interfaces": [
-        {{"interface": "Name", "direction": "Inbound/Outbound", "description": "Short desc"}}
+        {{ "interface": "Name", "direction": "Inbound/Outbound", "description": "Short desc" }}
     ],
+    
     "ownership": {{
         "business_owner": "Inferred Department (e.g., Finance Ops)",
         "it_owner": "Inferred Team (e.g., Mainframe Batch Support)"
@@ -89,14 +112,15 @@ REQUIRED JSON STRUCTURE:
     "type": "COBOL",
     
     "business_overview": {{
-        "title": "Business Process Name (Inferred from logic/comments)",
-        "purpose": "2-3 sentences explaining the business goal of this specific program.",
+        "title": "Business Process Name (Inferred)",
+        "purpose": "2-3 sentences explaining the business goal.",
+        "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
         "scope": [
-            "What business rules does this handle? (e.g. 'Calculates Interest')",
-            "What data boundaries exist? (e.g. 'Processes only Active Accounts')"
+            "Business rules handled (e.g. 'Calculates Interest')",
+            "Data boundaries (e.g. 'Active Accounts only')"
         ],
         "key_data_entities": [
-            "Business entities touched (e.g. 'Customer Record', 'General Ledger')"
+            "Entities touched (e.g. 'Customer', 'Ledger')"
         ]
     }},
 
@@ -106,12 +130,12 @@ REQUIRED JSON STRUCTURE:
             "Specific logic point 2"
         ],
         "key_operations": [
-            "File I/O details (e.g. READ ACCT-FILE)",
-            "Subroutine calls (e.g. CALL DATE-CONV)"
+            "File I/O details",
+            "Subroutine calls"
         ],
         "technical_notes": [
             "Error handling specifics",
-            "Performance notes or sort logic"
+            "Performance notes"
         ]
     }}
 }}
@@ -132,30 +156,17 @@ REQUIRED JSON STRUCTURE:
     "type": "PLI",
 
     "business_overview": {{
-        "title": "Process Name (Inferred)",
-        "purpose": "2-3 sentences explaining the business goal of this PL/I program.",
-        "scope": [
-            "Business logic scope",
-            "Processing boundaries"
-        ],
-        "key_data_entities": [
-            "Entities processed (e.g. 'Invoices', 'Inventory')"
-        ]
+        "title": "Process Name",
+        "purpose": "Business goal description.",
+        "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
+        "scope": ["Business logic scope"],
+        "key_data_entities": ["Entities processed"]
     }},
 
     "technical_analysis": {{
-        "functional_capabilities": [
-            "Specific procedure logic",
-            "Exception handling (ON Units)"
-        ],
-        "key_operations": [
-            "Stream I/O or Record I/O",
-            "Database calls"
-        ],
-        "technical_notes": [
-            "Memory management (ALLOCATE/FREE)",
-            "Pointer manipulation notes"
-        ]
+        "functional_capabilities": ["Specific procedure logic"],
+        "key_operations": ["I/O and Calls"],
+        "technical_notes": ["Memory/Pointer notes"]
     }}
 }}
 """
@@ -177,6 +188,7 @@ REQUIRED JSON STRUCTURE:
     "business_overview": {{
         "title": "System Module Name",
         "purpose": "What low-level function does this perform? (e.g. 'Date conversion routine', 'I/O Driver').",
+        "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
         "scope": [
             "Functions provided",
             "System interactions"
@@ -224,6 +236,7 @@ REQUIRED JSON STRUCTURE:
     "business_overview": {{
         "title": "Automation Process",
         "purpose": "What manual task does this script automate? (e.g. 'Daily Report Bursting').",
+        "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
         "scope": [
             "Tasks performed",
             "Systems interacted with (TSO, ISPF, DB2)"
@@ -263,30 +276,26 @@ REQUIRED JSON STRUCTURE:
     "type": "JCL",
 
     "business_overview": {{
-        "title": "Job Workflow",
-        "purpose": "What business process does this Job orchestrate? (e.g. 'End of Month Settlement').",
-        "scope": [
-            "Process boundaries",
-            "Frequency (if mentioned in comments)"
-        ],
-        "key_data_entities": [
-            "Major inputs/outputs (e.g. 'Transaction Tape', 'Audit Report')"
-        ]
+        "title": "Job Workflow Name",
+        "purpose": "What business process does this orchestrate?",
+        "functional_category": "Must be one of: 'Core Batch', 'Reporting', 'Housekeeping', 'Ingestion', 'Distribution'",
+        "scope": ["Process boundaries", "Frequency"],
+        "key_data_entities": ["Major inputs/outputs"]
     }},
 
     "technical_analysis": {{
         "job_header": {{
-            "job_name": "Name from JOB card",
-            "class": "CLASS value",
-            "owner": "USER/NOTIFY value"
+            "job_name": "Name",
+            "class": "CLASS",
+            "owner": "USER/NOTIFY"
         }},
         "steps": [
-            {{"step_name": "STEP01", "program": "PGMNAME", "description": "Technical description of step"}}
+            {{"step_name": "STEP01", "program": "PGMNAME", "description": "Technical description"}}
         ],
         "io_datasets": [
-            {{"dataset": "A.B.C", "usage": "Input/Output based on DISP"}}
+            {{"dataset": "A.B.C", "usage": "Input/Output"}}
         ],
-        "schedule_notes": "Restart logic, dependencies, or timing notes"
+        "schedule_notes": "Restart/timing notes"
     }}
 }}
 """

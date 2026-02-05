@@ -259,3 +259,29 @@ class GraphAnalyzer:
     def _sanitize_node(self, name: str) -> str:
         """Cleans node names for Mermaid syntax."""
         return name.replace('.', '_').replace('-', '_').replace(':', '_').replace(' ', '')
+    
+    def generate_mermaid_png(self, output_path: str):
+        """
+        Generates a PNG from the graph.
+        Uses mermaid.ink (public API) for simplicity, or we could use a local CLI.
+        """
+        import base64
+        import requests
+
+        mermaid_code = self.generate_mermaid_diagram()
+        graphbytes = mermaid_code.encode("utf8")
+        base64_bytes = base64.b64encode(graphbytes)
+        base64_string = base64_bytes.decode("ascii")
+        
+        # mermaid.ink API
+        url = "https://mermaid.ink/img/" + base64_string
+        
+        try:
+            response = requests.get(url)
+            if response.status_code == 200:
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
+                return True
+        except Exception as e:
+            print(f"Failed to generate Mermaid PNG: {e}")
+            return False
