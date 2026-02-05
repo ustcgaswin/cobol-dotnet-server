@@ -7,6 +7,7 @@ Updated to align with v2.0 Parsers and Extractors.
 import networkx as nx
 from typing import Dict, List, Any
 from app.api.schemas.doc_models import SystemMetrics
+from loguru import logger
 
 class GraphAnalyzer:
     def __init__(self, raw_dependency_data: Dict[str, Any]):
