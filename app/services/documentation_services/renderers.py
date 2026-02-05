@@ -740,6 +740,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm, inch
+from pathlib import Path
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, 
     PageBreak, Image, ListFlowable, ListItem
@@ -880,21 +881,22 @@ class BaseBuilder:
         )
         self.elements.append(Spacer(1, 3*mm))
 
-    def image(self, path, width=170*mm):
+    def image(self, path, width=160*mm): # Reduced width slightly for margins
+        if not path or not Path(path).exists():
+            self.para("<i>[Diagram Image Not Available]</i>")
+            return
         try:
             img = Image(path)
-            # Resize preserving aspect ratio
-            img_width = img.drawWidth
-            img_height = img.drawHeight
-            if img_width > width:
-                factor = width / img_width
-                img.drawWidth = width
-                img.drawHeight = img_height * factor
+            # Preserve Aspect Ratio
+            aspect = img.drawHeight / img.drawWidth
+            img.drawWidth = width
+            img.drawHeight = width * aspect
             
             self.elements.append(img)
             self.elements.append(Spacer(1, 5*mm))
-        except Exception:
-            self.para("<i>[Diagram Image Not Available]</i>")
+        except Exception as e:
+            logger.error(f"Failed to embed image: {e}")
+            self.para("<i>[Error rendering diagram file]</i>")
 
     def table(self, headers: List[str], rows: List[List[str]], col_widths=None):
         if not rows:
