@@ -286,13 +286,15 @@ def create_codegen_agent(tools: list, project_id: str):
         logs_path = Path(state.get("codegen_logs_path", ""))
         should_reset = False
         
-        # Step 1: Prune old tool outputs
-        messages = _prune_old_tool_outputs(messages)
-        
-        # Step 2: Compress if above threshold
-        if len(messages) > SUMMARIZE_THRESHOLD and logs_path:
-            messages = _compress_messages(messages, logs_path)
-            should_reset = True  # Need to replace state, not add
+        # Only prune and compress if summarization is enabled
+        if settings.CODEGEN_ENABLE_SUMMARIZATION:
+            # Step 1: Prune old tool outputs
+            messages = _prune_old_tool_outputs(messages)
+            
+            # Step 2: Compress if above threshold
+            if len(messages) > SUMMARIZE_THRESHOLD and logs_path:
+                messages = _compress_messages(messages, logs_path)
+                should_reset = True  # Need to replace state, not add
         
         # Invoke LLM with system prompt + processed messages
         full_messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
