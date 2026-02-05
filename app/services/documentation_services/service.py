@@ -362,8 +362,8 @@ from app.services.dependency_extractor.extractors import (
     extract_assembly_dependencies, extract_pli_dependencies, extract_copybook_dependencies,
     extract_rexx_dependencies, extract_parmlib_dependencies, extract_pli_copybook_dependencies
 )
+from app.services.parser import ParserService
 
-# --- Import Core Components ---
 from .graph_engine import GraphAnalyzer
 from .agent import create_documentation_graph
 from app.core.tools.file_tools import view_file, grep_search
@@ -383,6 +383,7 @@ class DocumentationService:
         self.session = session
         self.repository = SourceFileRepository(session)
         self.artifacts_path = settings.get_artifacts_path()
+        self.parser_service = ParserService(session)
 
     async def _update_project_status(self, project_id: uuid.UUID, mode: str, status: ProjectStatus):
         """Helper to update the project's documentation status in the DB."""
@@ -447,9 +448,17 @@ class DocumentationService:
             
             # 1. Load System-wide Context
             system_data = await self._load_all_parsed_jsons(project_id)
+            
             if not system_data:
-                logger.error(f"No parsed data found for {project_id}. Documentation aborted.")
-                return
+                logger.info("Parsing data not found. Triggering Parser Service...")
+                await self.parser_service.parse_project(project_id)
+                
+                system_data = await self._load_all_parsed_jsons(project_id)
+                
+                if not system_data:
+                    logger.error(f"Parsing completed but no data found for {project_id}. Aborting.")
+                    await self._update_project_status(project_id, mode, ProjectStatus.FAILED)
+                    return
 
             dependency_mapped_data = self._map_dependencies(system_data)
             
