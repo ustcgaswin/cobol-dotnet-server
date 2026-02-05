@@ -42,7 +42,9 @@ class OAuthEmbeddings(BaseModel, Embeddings):
     token_cache: TokenCache = Field(description="Token cache for this instance")
     stats_tracker: LLMStats = Field(description="Stats tracker")
     
+    model_name: str = Field(default="text-embedding-ada-002-2-gs", description="Model name for API requests")
     timeout: float = Field(default=60.0)
+    ssl_verify: bool = Field(default=False, description="Whether to verify SSL certificates")
     
     class Config:
         arbitrary_types_allowed = True
@@ -67,13 +69,17 @@ class OAuthEmbeddings(BaseModel, Embeddings):
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             }
-            payload = {"input": texts}
+            payload = {
+                "input": texts,
+                "model": self.model_name,
+            }
             
             response = requests.post(
                 self.endpoint_url,
                 json=payload,
                 headers=headers,
                 timeout=self.timeout,
+                verify=self.ssl_verify,
             )
             
             # Handle 401 - refresh token and retry
@@ -113,13 +119,16 @@ class OAuthEmbeddings(BaseModel, Embeddings):
         """
         token = await self.token_cache.get_token_async()
         
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=self.ssl_verify) as client:
             for attempt in range(2):
                 headers = {
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                 }
-                payload = {"input": texts}
+                payload = {
+                    "input": texts,
+                    "model": self.model_name,
+                }
                 
                 response = await client.post(
                     self.endpoint_url,

@@ -48,9 +48,11 @@ class OAuthLLMClient(BaseChatModel):
     token_cache: TokenCache = Field(description="Token cache for this instance")
     stats_tracker: LLMStats = Field(description="Stats tracker")
     
-    temperature: float = Field(default=0.0)
+    model_name: str = Field(default="gpt-40-dev", description="Model name for API requests")
+    temperature: float = Field(default=0.1)
     max_tokens: int = Field(default=16384)
     timeout: float = Field(default=600.0)
+    ssl_verify: bool = Field(default=False, description="Whether to verify SSL certificates")
     
     class Config:
         arbitrary_types_allowed = True
@@ -66,6 +68,7 @@ class OAuthLLMClient(BaseChatModel):
         return {
             "instance_name": self.instance_name,
             "endpoint_url": self.endpoint_url,
+            "model_name": self.model_name,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
@@ -114,6 +117,7 @@ class OAuthLLMClient(BaseChatModel):
                 "Content-Type": "application/json",
             }
             payload = {
+                "model": self.model_name,
                 "messages": messages,
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
@@ -124,6 +128,7 @@ class OAuthLLMClient(BaseChatModel):
                 json=payload,
                 headers=headers,
                 timeout=self.timeout,
+                verify=self.ssl_verify,
             )
             
             # Handle 401 - refresh token and retry
@@ -160,13 +165,14 @@ class OAuthLLMClient(BaseChatModel):
         """
         token = await self.token_cache.get_token_async()
         
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=self.ssl_verify) as client:
             for attempt in range(2):
                 headers = {
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                 }
                 payload = {
+                    "model": self.model_name,
                     "messages": messages,
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
@@ -225,8 +231,12 @@ class OAuthLLMClient(BaseChatModel):
             # API call with auth retry
             data = self._call_with_auth_retry(formatted)
             
-            # Parse response (adjust based on actual API structure)
-            content = data["choices"][0]["message"]["content"]
+            # Parse response - API returns payload.choices structure
+            if "payload" in data:
+                content = data["payload"]["choices"][0]["message"]["content"]
+            else:
+                # Fallback for standard OpenAI format
+                content = data["choices"][0]["message"]["content"]
             
             # Record success - AUTOMATIC, services don't do this
             self.stats_tracker.record_request(self.instance_name, "llm", success=True)
@@ -264,7 +274,13 @@ class OAuthLLMClient(BaseChatModel):
         
         try:
             data = await self._call_with_auth_retry_async(formatted)
-            content = data["choices"][0]["message"]["content"]
+            
+            # Parse response - API returns payload.choices structure
+            if "payload" in data:
+                content = data["payload"]["choices"][0]["message"]["content"]
+            else:
+                # Fallback for standard OpenAI format
+                content = data["choices"][0]["message"]["content"]
             
             self.stats_tracker.record_request(self.instance_name, "llm", success=True)
             

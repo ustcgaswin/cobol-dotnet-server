@@ -128,6 +128,26 @@ class Settings(BaseSettings):
         description="Embeddings API endpoint"
     )
     
+    # OAuth settings
+    OAUTH_SCOPE: str = Field(
+        default="customscope",
+        description="OAuth2 scope for token request"
+    )
+    OAUTH_SSL_VERIFY: bool = Field(
+        default=False,
+        description="Whether to verify SSL certificates for OAuth/LLM calls"
+    )
+    
+    # Model names
+    LLM_MODEL: str = Field(
+        default="gpt-40-dev",
+        description="LLM model name to use"
+    )
+    EMBEDDINGS_MODEL: str = Field(
+        default="text-embedding-ada-002-2-gs",
+        description="Embeddings model name to use"
+    )
+    
     # Codegen Instance Credentials
     CODEGEN_CLIENT_ID: str = Field(default="")
     CODEGEN_CLIENT_SECRET: str = Field(default="")

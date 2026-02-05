@@ -77,6 +77,8 @@ class LLMManager:
                 client_id=creds["client_id"],
                 client_secret=creds["client_secret"],
                 auth_url=settings.OAUTH_AUTH_URL,
+                scope=settings.OAUTH_SCOPE,
+                ssl_verify=settings.OAUTH_SSL_VERIFY,
                 buffer_seconds=settings.OAUTH_TOKEN_REFRESH_BUFFER_SECONDS,
             )
             self._token_caches[name] = token_cache
@@ -87,9 +89,11 @@ class LLMManager:
                 endpoint_url=settings.LLM_ENDPOINT_URL,
                 token_cache=token_cache,
                 stats_tracker=self._stats,
+                model_name=settings.LLM_MODEL,
                 temperature=settings.LLM_TEMPERATURE,
                 max_tokens=settings.LLM_MAX_TOKENS,
                 timeout=settings.LLM_TIMEOUT,
+                ssl_verify=settings.OAUTH_SSL_VERIFY,
             )
             
             # Create Embeddings client (shares same TokenCache)
@@ -98,6 +102,8 @@ class LLMManager:
                 endpoint_url=settings.EMBEDDINGS_ENDPOINT_URL,
                 token_cache=token_cache,
                 stats_tracker=self._stats,
+                model_name=settings.EMBEDDINGS_MODEL,
+                ssl_verify=settings.OAUTH_SSL_VERIFY,
             )
             
             logger.info(f"Initialized instance: {name}")

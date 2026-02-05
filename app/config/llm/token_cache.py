@@ -32,7 +32,9 @@ class TokenCache:
         instance_name: str,
         client_id: str, 
         client_secret: str, 
-        auth_url: str, 
+        auth_url: str,
+        scope: str = "customscope",
+        ssl_verify: bool = False,
         buffer_seconds: int = 60
     ):
         """Initialize token cache.
@@ -42,12 +44,16 @@ class TokenCache:
             client_id: OAuth2 client ID
             client_secret: OAuth2 client secret
             auth_url: OAuth2 token endpoint URL
+            scope: OAuth2 scope for token request
+            ssl_verify: Whether to verify SSL certificates
             buffer_seconds: Refresh token this many seconds before expiry
         """
         self.instance_name = instance_name
         self.client_id = client_id
         self.client_secret = client_secret
         self.auth_url = auth_url
+        self.scope = scope
+        self.ssl_verify = ssl_verify
         self.buffer_seconds = buffer_seconds
         
         self._token: CachedToken | None = None
@@ -97,9 +103,11 @@ class TokenCache:
                 "grant_type": "client_credentials",
                 "client_id": self.client_id,
                 "client_secret": self.client_secret,
+                "scope": self.scope,
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=30,
+            verify=self.ssl_verify,
         )
         response.raise_for_status()
         
@@ -130,13 +138,14 @@ class TokenCache:
         """Fetch new token via async HTTP request."""
         logger.info(f"[{self.instance_name}] Fetching new OAuth token (async)")
         
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=self.ssl_verify) as client:
             response = await client.post(
                 self.auth_url,
                 data={
                     "grant_type": "client_credentials",
                     "client_id": self.client_id,
                     "client_secret": self.client_secret,
+                    "scope": self.scope,
                 },
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                 timeout=30,
