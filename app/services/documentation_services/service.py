@@ -425,7 +425,7 @@ class DocumentationService:
             )
             
             # Call LLM (using a simple invoke, not the agent graph)
-            llm = get_llm()
+            llm = get_llm(DOCGEN)
             from langchain_core.messages import HumanMessage
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             
