@@ -749,6 +749,7 @@ from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER
 
 from app.api.schemas.doc_models import FileSummary, SystemMetrics
+from loguru import logger
 
 class DocTemplateWithTOC(SimpleDocTemplate):
     def __init__(self, filename, **kw):
