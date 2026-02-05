@@ -194,6 +194,50 @@ public class DateRecord
 
 ---
 
+## Parameterized Copybooks (REPLACING)
+
+Copybooks may use placeholder tags that get replaced at compile time:
+
+**COBOL Copybook (CUSTCOPY.cpy):**
+```cobol
+01 :TAG:-CUSTOMER-REC.
+   05 :TAG:-CUST-ID    PIC 9(10).
+   05 :TAG:-CUST-NAME  PIC X(50).
+```
+
+**Usage:**
+```cobol
+COPY CUSTCOPY REPLACING ==:TAG:== BY ==INP==.
+COPY CUSTCOPY REPLACING ==:TAG:== BY ==OUT==.
+```
+
+**C# Pattern:** Generate ONE class without the tag prefix:
+```csharp
+public class CustomerRecord
+{
+    public long CustId { get; set; }
+    public string CustName { get; set; }
+}
+```
+
+- Do NOT create separate classes for each REPLACING usage (e.g., no `InpCustomerRecord`, `OutCustomerRecord`)
+- Strip the placeholder tag (`:TAG:`, `:PREFIX:`, etc.) from field names
+- If truly needed for type safety, create empty derived classes inheriting from one base
+
+---
+
+## Source File Format Notes
+
+COBOL source files use fixed-format columns:
+- **Columns 1-6**: Sequence numbers (ignore these)
+- **Column 7**: Indicator (`*` = comment, `-` = continuation)
+- **Columns 8-72**: Actual source code
+- **Columns 73-80**: Identification/sequence area (ignore these)
+
+**Important:** Numbers appearing at the end of lines (columns 73-80) are sequence numbers, not part of the code. Ignore them during conversion.
+
+---
+
 ## Flagged Constructs (Require Human Review)
 
 | Construct | Reason |
@@ -202,3 +246,4 @@ public class DateRecord
 | Complex `GO TO` networks | Unstructured flow |
 | `EXEC CICS` | Out of scope |
 | Dynamic SQL (`EXECUTE IMMEDIATE`) | Runtime query building |
+ 

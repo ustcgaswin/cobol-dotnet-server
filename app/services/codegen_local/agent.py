@@ -22,7 +22,7 @@ from app.services.codegen_local.prompts import SYSTEM_PROMPT
 
 
 # Summarization configuration
-SUMMARIZE_THRESHOLD = 40  # Trigger summarization at this message count
+SUMMARIZE_THRESHOLD = 80  # Trigger summarization at this message count
 KEEP_RECENT_MESSAGES = 10  # Keep last N messages after compression
 PRUNE_AFTER_EXCHANGES = 4  # Prune tool outputs older than N exchanges (N*2 messages)
 

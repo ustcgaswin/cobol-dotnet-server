@@ -367,7 +367,7 @@ class CodegenLocalService:
                     "iteration_count": 0,
                     "codegen_logs_path": str(codegen_logs_path),
                 },
-                config={"recursion_limit": 550},
+                config={"recursion_limit": 1000},
             )
             
             # Clean up build artifacts before marking complete
