@@ -259,3 +259,32 @@ class GraphAnalyzer:
     def _sanitize_node(self, name: str) -> str:
         """Cleans node names for Mermaid syntax."""
         return name.replace('.', '_').replace('-', '_').replace(':', '_').replace(' ', '')
+    
+    def generate_mermaid_png(self, output_path: str):
+        import base64
+        import requests
+        import urllib3
+
+        # Disable the warning in logs for unverified HTTPS requests
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        mermaid_code = self.generate_mermaid_diagram()
+        graphbytes = mermaid_code.encode("utf8")
+        base64_bytes = base64.b64encode(graphbytes)
+        base64_string = base64_bytes.decode("ascii")
+        
+        url = "https://mermaid.ink/img/" + base64_string
+        
+        try:
+            # Added verify=False to bypass SSL check
+            response = requests.get(url, verify=False, timeout=30)
+            if response.status_code == 200:
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
+                return True
+            else:
+                logger.error(f"Mermaid API returned status code {response.status_code}")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to generate Mermaid PNG: {e}")
+            return False
