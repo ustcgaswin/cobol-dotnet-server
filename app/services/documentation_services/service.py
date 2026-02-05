@@ -553,6 +553,12 @@ class DocumentationService:
             # Assuming you added generate_mermaid_png to GraphAnalyzer as discussed previously
             # If not, comment this line out.
             # analyzer.generate_mermaid_png(str(graph_img_path)) 
+            success = analyzer.generate_mermaid_png(str(graph_img_path)) 
+
+            if success:
+                logger.info(f"🎨 Successfully generated graph image at {graph_img_path}")
+            else:
+                logger.warning("⚠️ Failed to generate graph image via Mermaid API")
 
             # 10. Build Real PDFs
             if mode in ["ALL", "TECHNICAL"]:
