@@ -8,7 +8,7 @@ from typing import Type, Any, Optional
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config.llm import get_llm, DOCGEN
+from app.config.llm import get_llm, DOCGEN, LLMModel
 from app.config.settings import settings
 from app.core.chunkers.assembly import AssemblyChunker
 from app.core.chunkers.rexx import RexxChunker
@@ -68,7 +68,7 @@ class SummarizerService:
         self.repo = SourceFileRepository(session)
         self.project_storage = settings.get_storage_path() / str(project_id)
         self.output_dir = settings.get_artifacts_path() / str(project_id)
-        self.llm = get_llm(DOCGEN)
+        self.llm = get_llm(DOCGEN, model=LLMModel.GPT4O_DEV)
 
         # Define the strategies for supported Enums
         self.strategies = {

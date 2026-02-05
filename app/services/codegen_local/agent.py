@@ -16,7 +16,7 @@ from langgraph.graph import StateGraph, START, END
 from loguru import logger
 from typing_extensions import TypedDict
 
-from app.config.llm import get_llm, CODEGEN
+from app.config.llm import get_llm, CODEGEN, LLMModel
 from app.config.settings import settings
 from app.services.codegen_local.prompts import SYSTEM_PROMPT
 
@@ -275,7 +275,7 @@ def create_codegen_agent(tools: list, project_id: str):
     Returns:
         Compiled LangGraph agent
     """
-    model = get_llm(CODEGEN)
+    model = get_llm(CODEGEN, model=LLMModel.GPT4O_DEV)
     
     tools_by_name = {tool.name: tool for tool in tools}
     model_with_tools = model.bind_tools(tools)

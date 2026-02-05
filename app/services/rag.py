@@ -6,7 +6,7 @@ from langchain_core.documents import Document
 from loguru import logger
 
 from app.config.settings import settings
-from app.config.llm import get_embeddings, get_llm, DOCGEN
+from app.config.llm import get_embeddings, get_llm, DOCGEN, LLMModel
 from app.core.chunkers import get_chunker, CHUNKER_REGISTRY
 from app.core.utils import find_files
 from app.core.vector_store import FAISSVectorStore
@@ -148,7 +148,7 @@ class RAGService:
         Returns:
             Dict with answer, sources, and metadata
         """
-        llm = get_llm(DOCGEN)
+        llm = get_llm(DOCGEN, model=LLMModel.GPT4O_DEV)
         
         # Retrieve relevant chunks
         chunks = self.search(query, k=k, source_folder=source_folder)

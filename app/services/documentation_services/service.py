@@ -350,7 +350,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.config.settings import settings
-from app.config.llm import get_llm, DOCGEN
+from app.config.llm import get_llm, DOCGEN, LLMModel
 from app.db.repositories.source_file import SourceFileRepository
 from app.db.models.source_file import SourceFile
 from app.db.models.project import Project, ProjectStatus
@@ -425,7 +425,7 @@ class DocumentationService:
             )
             
             # Call LLM (using a simple invoke, not the agent graph)
-            llm = get_llm(DOCGEN)
+            llm = get_llm(DOCGEN, model=LLMModel.GPT4O_DEV)
             from langchain_core.messages import HumanMessage
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             
@@ -497,7 +497,7 @@ class DocumentationService:
                 return grep_search.func(pattern, file_pattern, runtime=shim)
 
             artifact_tools = create_artifact_tools(project_id_str)
-            llm = get_llm(DOCGEN)
+            llm = get_llm(DOCGEN, model=LLMModel.GPT4O_DEV)
             tools = {
                 "view_file": agent_view_file,
                 "grep_search": agent_grep_search,

@@ -11,7 +11,7 @@ from langgraph.graph import StateGraph, START, END
 from loguru import logger
 from typing_extensions import TypedDict
 
-from app.config.llm import get_llm, DOCGEN
+from app.config.llm import get_llm, DOCGEN, LLMModel
 from app.services.analyst.prompts import SYSTEM_PROMPT
 
 
@@ -33,7 +33,7 @@ def create_analyst_agent(tools: list, project_id: str):
         Compiled LangGraph agent
     """
     # Get LLM from config
-    model = get_llm(DOCGEN)
+    model = get_llm(DOCGEN, model=LLMModel.GPT4O_DEV)
     
     # Bind tools to model
     tools_by_name = {tool.name: tool for tool in tools}
