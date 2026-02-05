@@ -88,6 +88,12 @@ class Settings(BaseSettings):
         description="Default number of chunks to retrieve for RAG queries"
     )
 
+    # Code Generation settings
+    CODEGEN_ENABLE_SUMMARIZATION: bool = Field(
+        default=False,
+        description="Enable context summarization for codegen agent (experimental - may affect output quality)"
+    )
+
     # MLflow
     MLFLOW_ENABLED: bool = Field(
         default=False,

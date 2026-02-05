@@ -4,8 +4,7 @@ import json
 import logging
 import argparse
 from pathlib import Path
-from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 
 from app.core.parsers.base import BaseParser
 
@@ -19,159 +18,107 @@ class ParseError(Exception):
     """Custom exception for parsing failures."""
     pass
 
-class StatementRegistry:
-    _parsers: Dict[str, Any] = {}
-    
-    @classmethod
-    def register(cls, op_code: str):
-        def decorator(parser_class):
-            cls._parsers[op_code] = parser_class
-            return parser_class
-        return decorator
-    
-    @classmethod
-    def get_parser(cls, op_code: str):
-        return cls._parsers.get(op_code)
 
-class BaseStatementParser(ABC):
-    @abstractmethod
-    def parse(self, label: str, params: str, context: dict):
-        pass
+class JCLParser(BaseParser):
+    FILE_TYPE = "jcl"
 
-@StatementRegistry.register("JOB")
-class JobParser(BaseStatementParser):
-    def parse(self, label: str, params: str, context: dict):
-        context["result"]["type"] = "JCL"
-        context["result"]["job_name"] = label
+    def __init__(self, library_path: str = "."):
+        self.library_path = library_path
+        self._unrecognized = []
+        self._warnings = []
 
-@StatementRegistry.register("SET")
-class SetParser(BaseStatementParser):
-    def parse(self, label: str, params: str, context: dict):
-        pairs = re.findall(r'(\w+)=([^\s,]+)', params)
-        for k, v in pairs:
-            context["parser_instance"].symbols[k] = v
+    def _get_logical_lines(self, filepath: str):
+        """Read and process JCL file into logical lines."""
+        try:
+            content = Path(filepath).read_text(encoding='utf-8', errors='replace')
+        except Exception as e:
+            logger.error(f"Failed to read {filepath}: {e}")
+            raise ParseError(f"Failed to read file: {e}")
+        
+        lines = content.splitlines()
+        logical_lines = []
+        current_stmt = ""
+        
+        for line in lines:
+            # Strip sequence numbers (columns 73-80)
+            line = line[:72]
+            
+            # Skip comments and non-JCL lines
+            if line.startswith('//*') or not line.startswith('//'):
+                continue
+            
+            content = line[2:].rstrip()
+            is_continuation = content.startswith(' ')
+            content = " " + content.lstrip() if is_continuation else content.lstrip()
 
-@StatementRegistry.register("EXEC")
-class ExecParser(BaseStatementParser):
-    def parse(self, label: str, params: str, context: dict):
+            # Handle continuation lines
+            if current_stmt.endswith(','):
+                current_stmt += content
+            else:
+                if current_stmt:
+                    logical_lines.append(current_stmt)
+                current_stmt = content
+        
+        if current_stmt:
+            logical_lines.append(current_stmt)
+        
+        return logical_lines
+
+    def _parse_exec_statement(self, label: str, params: str, result: dict, current_step: dict):
+        """Parse EXEC statement and extract dependency information."""
         # Extract Program or Procedure name
         target_match = re.search(r'(?:PGM|PROC)=([\w\d]+)', params, re.IGNORECASE)
         exec_name = target_match.group(1) if target_match else params.split(',')[0].strip()
         
+        # Determine if it's a program or procedure
         is_pgm = "PGM=" in params.upper() or ("," not in params and "=" not in params)
         
-        exec_params = {}
-        param_pairs = re.findall(r'(\w+)=([^\s,]+)', params)
-        for k, v in param_pairs:
-            if k not in ['PGM', 'PROC']: exec_params[k] = v
-
         step_obj = {
             "step_name": label,
-            "exec_target": exec_name,
-            "is_pgm": is_pgm,
-            # --- NEW DEPENDENCY KEY ---
             "dependency": {
                 "name": exec_name,
                 "type": "PROGRAM" if is_pgm else "PROCEDURE"
             },
-            "parameters": exec_params,
-            "dd_statements": [],
-            "overrides": []
+            "dd_statements": []
         }
         
-        # Add to top-level dependencies list for easy graph building
-        context["result"]["dependencies"].append(step_obj["dependency"])
+        # Add to top-level dependencies list
+        result["dependencies"].append(step_obj["dependency"])
+        result["steps"].append(step_obj)
+        
+        return step_obj
 
-        if context["in_proc_def"]:
-            context["result"]["definitions"][context["current_proc_name"]]["steps"].append(step_obj)
-        else:
-            context["result"]["steps"].append(step_obj)
-        context["current_step"] = step_obj
-
-@StatementRegistry.register("DD")
-class DdParser(BaseStatementParser):
-    def parse(self, label: str, params: str, context: dict):
-        dd_data = {"dd_name": label, "content": params}
-        current_step = context.get("current_step")
-
+    def _parse_dd_statement(self, label: str, params: str, current_step: Optional[dict]):
+        """Parse DD statement and extract DSN and DISP information."""
+        if not current_step:
+            self._warnings.append(f"DD statement '{label}' found without preceding EXEC step")
+            return
+        
+        dd_data = {"dd_name": label}
+        
         # Extract DSN for data dependency tracking
-        dsn_match = re.search(r'DSN=([A-Z0-9#@$.]+)', params, re.IGNORECASE)
+        dsn_match = re.search(r'DSN=([A-Z0-9#@$.()+-]+)', params, re.IGNORECASE)
         if dsn_match:
             dd_data["dsn"] = dsn_match.group(1)
-
+        
+        # Extract DISP (disposition)
         disp_match = re.search(r'DISP=\(([^)]+)\)', params, re.IGNORECASE)
         if disp_match:
             dd_data["disp"] = disp_match.group(1).split(',')[0].upper()
         elif "DISP=" in params.upper():
             # Handle simple DISP=SHR
-            dd_data["disp"] = re.search(r'DISP=([\w]+)', params, re.IGNORECASE).group(1).upper()
-
-        # Handle Concatenation
-        if label == "" and current_step and current_step["dd_statements"]:
-            last_dd = current_step["dd_statements"][-1]
-            if "concatenations" not in last_dd: last_dd["concatenations"] = []
-            last_dd["concatenations"].append(params)
+            simple_disp = re.search(r'DISP=([\w]+)', params, re.IGNORECASE)
+            if simple_disp:
+                dd_data["disp"] = simple_disp.group(1).upper()
         
-        # Handle Overrides
-        elif "." in label:
-            label_parts = label.split('.', 1)
-            step_ref, real_dd = label_parts[0], label_parts[1]
-            dd_data["dd_name"] = real_dd
-            for s in context["result"]["steps"]:
-                if s["step_name"] == step_ref:
-                    s["overrides"].append(dd_data)
-        
-        elif current_step:
+        # Only add DD if it has DSN (for dependency tracking)
+        if "dsn" in dd_data:
+            current_step["dd_statements"].append(dd_data)
+        elif label:  # Named DD without DSN
             current_step["dd_statements"].append(dd_data)
 
-class JCLParser(BaseParser):
-    FILE_TYPE = "jcl"
-    EBCDIC_CODEPAGES = ['cp1047', 'cp037']
-
-    def __init__(self, library_path: str = "."):
-        self.library_path = library_path
-        self.symbols = {}
-        self._unrecognized = []
-
-    def _detect_and_decode(self, raw_bytes: bytes) -> str:
-        for encoding in ['utf-8', 'ascii'] + self.EBCDIC_CODEPAGES:
-            try:
-                text = raw_bytes.decode(encoding)
-                if "//" in text: return text
-            except: continue
-        return raw_bytes.decode('utf-8', errors='replace')
-
-    def _resolve_symbols(self, text: str) -> str:
-        for var, val in self.symbols.items():
-            text = re.sub(f"&{var}\\.?", val, text)
-        return text
-
-    def _get_logical_lines(self, filepath: str):
-        raw_bytes = Path(filepath).read_bytes()
-        content = self._detect_and_decode(raw_bytes)
-        lines = content.splitlines()
-
-        logical_lines = []
-        current_stmt = ""
-        
-        for line in lines:
-            line = line[:72]
-            if line.startswith('//*') or not line.startswith('//'): continue
-            
-            content = line[2:].rstrip()
-            is_concatenation = content.startswith(' ')
-            content = " " + content.lstrip() if is_concatenation else content.lstrip()
-
-            if current_stmt.endswith(','):
-                current_stmt += content
-            else:
-                if current_stmt: logical_lines.append(current_stmt)
-                current_stmt = content
-        
-        if current_stmt: logical_lines.append(current_stmt)
-        return logical_lines
-
     def parse_file(self, filepath: str) -> dict:
+        """Parse JCL file and extract dependency-relevant information."""
         if not self.library_path:
             self.library_path = os.path.dirname(filepath)
 
@@ -179,68 +126,82 @@ class JCLParser(BaseParser):
             logger.info(f"Parsing: {filepath}")
             lines = self._get_logical_lines(filepath)
             
-            context = {
-                "result": {
-                    "file_name": os.path.basename(filepath),
-                    "type": "UNKNOWN",
-                    "definitions": {}, 
-                    "steps": [],
-                    "dependencies": [], # NEW: Consolidated list of all called items
-                    "includes": [],
-                    "_unrecognized": []
-                },
-                "current_step": None,
-                "in_proc_def": False,
-                "current_proc_name": "",
-                "parser_instance": self
+            result = {
+                "file_name": os.path.basename(filepath),
+                "type": "UNKNOWN",
+                "job_name": None,
+                "steps": [],
+                "dependencies": [],
+                "_unrecognized": [],
+                "_warnings": []
             }
-
-            keywords = ['JOB', 'PROC', 'PEND', 'EXEC', 'DD', 'SET', 'INCLUDE', 'IF', 'ELSE', 'ENDIF', 'THEN']
+            
+            current_step = None
+            keywords = ['JOB', 'EXEC', 'DD', 'PROC', 'PEND']
 
             for line in lines:
-                line = self._resolve_symbols(line)
+                # Parse line into label, operation, and parameters
                 raw_parts = re.split(r'\s+', line.strip(), maxsplit=2)
-                if not raw_parts or not raw_parts[0]: continue
+                if not raw_parts or not raw_parts[0]:
+                    continue
 
                 label, op, params = "", "", ""
+                
                 if len(raw_parts) >= 2 and raw_parts[1].upper() in keywords:
-                    label, op, params = (raw_parts[0], raw_parts[1].upper(), raw_parts[2] if len(raw_parts) > 2 else "")
+                    label = raw_parts[0]
+                    op = raw_parts[1].upper()
+                    params = raw_parts[2] if len(raw_parts) > 2 else ""
                 elif raw_parts[0].upper() in keywords:
                     op = raw_parts[0].upper()
                     params = raw_parts[1] if len(raw_parts) > 1 else ""
                 else:
-                    op, label, params = "DD", "", line.strip()
+                    # Assume DD statement without label
+                    op = "DD"
+                    label = ""
+                    params = line.strip()
 
+                # Process statements
                 if op == 'JOB':
-                    context["result"]["type"] = "JCL"
-                    context["result"]["job_name"] = label
+                    result["type"] = "JCL"
+                    result["job_name"] = label
+                
                 elif op == 'PROC':
-                    if context["result"]["type"] != "JCL": context["result"]["type"] = "PROC"
-                    if label:
-                        context["in_proc_def"] = True
-                        context["current_proc_name"] = label
-                        context["result"]["definitions"][label] = {"steps": []}
-                        continue
-                elif op == 'PEND':
-                    context["in_proc_def"] = False
-                    context["current_proc_name"] = ""
+                    if result["type"] != "JCL":
+                        result["type"] = "PROC"
+                    # Skip PROC definition tracking
                     continue
-
-                stmt_parser_class = StatementRegistry.get_parser(op)
-                if stmt_parser_class:
-                    stmt_parser_class().parse(label, params, context)
+                
+                elif op == 'PEND':
+                    # Skip PROC end marker
+                    continue
+                
+                elif op == 'EXEC':
+                    current_step = self._parse_exec_statement(label, params, result, current_step)
+                
+                elif op == 'DD':
+                    self._parse_dd_statement(label, params, current_step)
+                
                 else:
-                    self._unrecognized.append({"line": line, "reason": f"Unknown Op: {op}"})
+                    self._unrecognized.append({"line": line, "reason": f"Unknown operation: {op}"})
 
-            context["result"]["_unrecognized"] = self._unrecognized
-            return context["result"]
+            result["_unrecognized"] = self._unrecognized
+            result["_warnings"] = self._warnings
+            
+            return result
 
         except Exception as e:
             logger.error(f"Failed to parse {filepath}: {e}")
-            return {"file": filepath, "error": str(e)}
-        
+            return {
+                "file_name": os.path.basename(filepath),
+                "type": "ERROR",
+                "error": str(e),
+                "_unrecognized": self._unrecognized,
+                "_warnings": self._warnings
+            }
+
+
 def main():
-    parser = argparse.ArgumentParser(description='JCL Parser for Folder Locations')
+    parser = argparse.ArgumentParser(description='Simplified JCL Parser for Dependency Extraction')
     parser.add_argument('path', help='Path to JCL file or folder')
     parser.add_argument('-o', '--output', help='Output JSON file', default='output.json')
     args = parser.parse_args()
@@ -260,6 +221,7 @@ def main():
         json.dump(results, f, indent=2)
     
     print(f"Parsing complete. Results saved to {args.output}")
+
 
 if __name__ == '__main__':
     main()

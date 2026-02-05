@@ -157,54 +157,26 @@ class BaseSectionParser(ABC):
 
 class StructureParser(BaseSectionParser):
     def parse(self, statements: List[Dict], ctx: ParseContext) -> dict:
-        procs = []
-        block_stack = []
-        
+        program_id = None
+        first_proc = None
+
         for stmt in statements:
             text = stmt['text']
-            typ = stmt['type']
-            upper = text.upper()
-            
-            if typ == "LABEL" and ("PROC" in upper or "PROCEDURE" in upper):
+            # We only care about Labels that define a Procedure
+            if stmt['type'] == "LABEL" and ("PROC" in text.upper() or "PROCEDURE" in text.upper()):
                 label_match = re.match(r'([\w\$]+)\s*:', text)
-                proc_name = label_match.group(1).upper() if label_match else "UNKNOWN"
-                is_main = 'MAIN' in [o.upper() for o in self._extract_options(text)]
-                
-                procs.append({
-                    "name": proc_name,
-                    "line": stmt['line'],
-                    "type": "PROCEDURE",
-                    "is_main": is_main,
-                    "parameters": self._extract_params(text),
-                    "parent": block_stack[-1] if block_stack else None
-                })
-                block_stack.append(proc_name)
+                if label_match:
+                    current_name = label_match.group(1).upper()
+                    if not first_proc:
+                        first_proc = current_name
+                    
+                    # If this procedure is marked MAIN, it's the definitive Program ID
+                    if re.search(r'OPTIONS\s*\(\s*MAIN\s*\)', text, re.IGNORECASE):
+                        program_id = current_name
+                        break # Optimization: found the main entry point
 
-            elif "ENTRY" in upper and typ in ["LABEL", "STATEMENT"]:
-                entry_match = re.match(r'([\w\$]+)\s*:\s*ENTRY', text, re.IGNORECASE)
-                if entry_match:
-                    procs.append({
-                        "name": entry_match.group(1).upper(),
-                        "line": stmt['line'],
-                        "type": "ENTRY_POINT",
-                        "is_main": False,
-                        "parameters": self._extract_params(text),
-                        "parent": block_stack[-1] if block_stack else None
-                    })
-                
-            elif text.upper().startswith('END '):
-                 if block_stack: block_stack.pop()
-
-        program_name = next((p['name'] for p in procs if p.get('is_main')), procs[0]['name'] if procs else None)
-        return {"procedures": procs, "program_id": program_name}
-
-    def _extract_params(self, text: str) -> List[str]:
-        match = re.search(r'(?:PROC|PROCEDURE|ENTRY)\s*\((.*?)\)', text, re.IGNORECASE)
-        return [p.strip() for p in match.group(1).split(',')] if match else []
-
-    def _extract_options(self, text: str) -> List[str]:
-        match = re.search(r'OPTIONS\s*\((.*?)\)', text, re.IGNORECASE)
-        return [o.strip() for o in match.group(1).split(',')] if match else []
+        # Return only the program_id; use the first procedure found as a fallback
+        return {"program_id": program_id or first_proc}
 
 class DependenciesParser(BaseSectionParser):
     """
@@ -368,9 +340,7 @@ class PLIParser(BaseParser):
         return {
             'meta': {
                 'source_file': source_name, 
-                'file_type': SourceFileType.PLI.value,
-                'encoding': encoding,
-                'stmts': len(statements)
+                'file_type': SourceFileType.PLI.value
             },
             'structure': structure_data,
             'dependencies': dependencies_data,

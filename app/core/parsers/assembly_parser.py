@@ -114,212 +114,72 @@ class BaseSectionParser(ABC):
 # Enhanced Sections Parser (with register tracking for calls)
 # =============================================================================
 
-@ParserRegistry.register("sections")
+@ParserRegistry.register("warnings")
 class AssemblySectionsParser(BaseSectionParser):
-    """Handles control sections, instructions, USING/DROP, and register-tracked calls"""
-
+    """Preserves all internal logic for register tracking and unrecognized detection"""
     def parse(self, source: str, lines: List[Tuple[int, str, str]], is_free_format: bool) -> Dict[str, Any]:
-        result = {'sections': []}
-        current_section = {'name': 'UNNAMED', 'type': 'CSECT', 'instructions': [], 'usings': []}
-        result['sections'].append(current_section)
-
-        active_usings: Dict[str, Dict[str, Any]] = {}  # reg -> {'base': str, 'start_line': int}
-        registers: Dict[str, Dict[str, Any]] = {}      # reg -> {'value': str (symbol or literal), 'last_set': int}
+        external_calls = []
+        registers: Dict[str, Dict[str, Any]] = {}  # Logic preserved
 
         section_pat = re.compile(r'^\s*([A-Z0-9_]{1,63})\s+(CSECT|DSECT|RSECT|COM|LOCTR)\b', re.I)
-        inst_pat = re.compile(
-            r'^\s{0,8}([A-Z0-9_]{1,8})?\s{1,}([A-Z][A-Z0-9]{0,7})\s{0,}(.*?)(?:\s{2,}.*)?$',
-            re.I
-        )
-        using_pat = re.compile(r'USING\s+(.+?)\s*,\s*([0-9R, ]+)', re.I)
-        drop_pat   = re.compile(r'DROP\s+([0-9R, ]+)', re.I)
+        inst_pat = re.compile(r'^\s{0,8}([A-Z0-9_]{1,8})?\s{1,}([A-Z][A-Z0-9]{0,7})\s{0,}(.*?)(?:\s{2,}.*)?$', re.I)
 
         for line_num, text, original in lines:
-            # Strip comment
-            comment = None
+            # Comment stripping logic preserved
             if '*' in text:
-                text, cmt = re.split(r'\s*\*', text, maxsplit=1)
-                comment = cmt.strip() if cmt.strip() else None
+                text, _ = re.split(r'\s*\*', text, maxsplit=1)
             text = text.rstrip().strip()
 
-            # Section start
-            m = section_pat.match(text)
-            if m:
-                if active_usings:
-                    current_section['usings'].append({
-                        'active_at_end': list(active_usings.values()),
-                        'end_line': line_num - 1
-                    })
-                active_usings.clear()
-                registers.clear()  # Reset register tracking per section
-
-                name = (m.group(1) or 'UNNAMED').upper()
-                typ  = m.group(2).upper()
-                current_section = {'name': name, 'type': typ, 'instructions': [], 'usings': []}
-                result['sections'].append(current_section)
+            # Section identification logic (resets registers)
+            if section_pat.match(text):
+                registers.clear()
                 continue
 
-            # Instruction
             m = inst_pat.match(text)
             if m:
-                label = m.group(1).upper() if m.group(1) else None
-                op    = m.group(2).upper()
+                op = m.group(2).upper()
                 ops_str = m.group(3).strip()
-
-                is_known = op in KNOWN_OPS
-
                 operands = self._split_operands(ops_str)
 
-                inst = {
-                    'line': line_num,
-                    'label': label,
-                    'op': op,
-                    'operands': operands,
-                    'comment': comment,
-                    'category': 'instruction' if is_known else 'macro_or_unknown'
-                }
-
-                # === USING / DROP ===
-                if op == 'USING':
-                    um = using_pat.search(text)
-                    if um:
-                        base = um.group(1).strip()
-                        regs_str = um.group(2)
-                        regs = [r.strip() for r in re.split(r'\s*,\s*', regs_str) if r.strip()]
-                        for reg in regs:
-                            active_usings[reg] = {'base': base, 'start': line_num}
-                        current_section['usings'].append({
-                            'type': 'USING',
-                            'base_expr': base,
-                            'registers': regs,
-                            'line': line_num
-                        })
-                elif op == 'DROP':
-                    dm = drop_pat.search(text)
-                    if dm:
-                        regs_str = dm.group(1)
-                        if not regs_str.strip():
-                            dropped = list(active_usings.keys())
-                            active_usings.clear()
-                        else:
-                            dropped = [r.strip() for r in re.split(r'\s*,\s*', regs_str) if r.strip()]
-                            for r in dropped:
-                                active_usings.pop(r, None)
-                        current_section['usings'].append({
-                            'type': 'DROP',
-                            'registers': dropped,
-                            'line': line_num
-                        })
-
-                # === Register Tracking for Calls (R15 is common for program address) ===
+                # Register Tracking Logic preserved
                 if op == 'L' and len(operands) >= 2:
                     reg = operands[0]['raw'].upper()
                     value = operands[1]['raw'].upper()
                     if value.startswith('=V('):
                         symbol = re.sub(r'^=V\((.+?)\)$', r'\1', value).upper()
                         registers[reg] = {'type': 'V-constant', 'target': symbol, 'line': line_num}
-                    elif re.match(r'^[A-Z0-9_]+$', value):  # Direct symbol load
+                    elif re.match(r'^[A-Z0-9_]+$', value):
                         registers[reg] = {'type': 'direct-symbol', 'target': value, 'line': line_num}
 
-                # Detect BALR/BASR 14,Rx as call
+                # External call detection logic preserved
                 if op in ('BALR', 'BASR') and len(operands) >= 2:
                     ret_reg = operands[0]['raw'].upper()
                     target_reg = operands[1]['raw'].upper()
                     if ret_reg == '14' and target_reg in registers:
                         call_info = registers[target_reg]
-                        current_section.setdefault('external_calls', []).append({
+                        external_calls.append({
                             'target': call_info['target'],
                             'via_register': target_reg,
                             'load_type': call_info['type'],
                             'load_line': call_info['line'],
                             'call_line': line_num
                         })
-
-                current_section['instructions'].append(inst)
+                # Note: Instruction and Using/Drop appends removed to prune output
             else:
                 self._unrecognized.append({'line': line_num, 'text': text})
 
-        # Final usings
-        if active_usings:
-            current_section['usings'].append({
-                'active_at_end': list(active_usings.values()),
-                'end_line': lines[-1][0] if lines else 0
-            })
-
-        if len(result['sections']) > 1 and not result['sections'][0]['instructions']:
-            result['sections'].pop(0)
-
-        return result
-
-    # def _split_operands(self, s: str) -> List[Dict[str, Any]]:
-    #     if not s:
-    #         return []
-    #     operands = []
-    #     parts = []
-    #     current = []
-    #     paren = 0
-    #     for c in s + ',':
-    #         if c == ',' and paren == 0:
-    #             part = ''.join(current).strip()
-    #             if part:
-    #                 parts.append(part)
-    #             current = []
-    #         else:
-    #             current.append(c)
-    #             if c == '(': paren += 1
-    #             elif c == ')': paren = max(0, paren - 1)
-    #     for part in parts:
-    #         tokens = re.findall(
-    #             r"[A-Z0-9_]+|=[A-Z]?'[^']*?'|=[A-Z]\([^\)]+\)'[^']*?'|[\(\)\+\-\*/=']|[0-9A-F]+",
-    #             part, re.I
-    #         )
-    #         operands.append({'raw': part, 'tokens': tokens})
-    #     return operands
+        return {'external_calls': external_calls}
 
     def _split_operands(self, s: str) -> List[Dict[str, Any]]:
-        if not s:
-            return []
-        # Remove extra spaces around commas
+        if not s: return []
         s = re.sub(r'\s*,\s*', ',', s)
         operands = []
         for part in s.split(','):
             part = part.strip()
-            if not part:
-                continue
-            tokens = re.findall(
-                r"[A-Z0-9_]+|=[A-Z]?'[^']*?'|=[A-Z]\([^\)]+\)'[^']*?'|[\(\)\+\-\*/=']|[0-9A-F]+",
-                part, re.I
-            )
+            if not part: continue
+            tokens = re.findall(r"[A-Z0-9_]+|=[A-Z]?'[^']*?'|=[A-Z]\([^\)]+\)'[^']*?'|[\(\)\+\-\*/=']|[0-9A-F]+", part, re.I)
             operands.append({'raw': part, 'tokens': tokens})
         return operands
-
-# =============================================================================
-# Symbols Parser (enhanced literal detection)
-# =============================================================================
-
-@ParserRegistry.register("symbols")
-class SymbolsParser(BaseSectionParser):
-    def parse(self, source: str, lines: List[Tuple[int, str, str]], is_free: bool) -> Dict:
-        result = {'symbols': {}, 'literals': []}
-        equ_pat = re.compile(r'^\s*([A-Z0-9_]+)\s+EQU\s+(.*)', re.I)
-        lit_pat = re.compile(r'=[A-Z0-9]\'[^\']*?\'|=[A-Z]\([^\)]+\)\'[^\']*?\'|=[V]\([A-Z0-9_]+\)', re.I)
-
-        for ln, txt, _ in lines:
-            no_cmt = re.sub(r'\s*\*.*$', '', txt).strip()
-            m = equ_pat.match(no_cmt)
-            if m:
-                result['symbols'][m.group(1).upper()] = {
-                    'type': 'equate', 'value': m.group(2).strip(), 'line': ln
-                }
-            for lit in lit_pat.findall(no_cmt):
-                result['literals'].append({'value': lit, 'line': ln})
-
-        return result
-
-# =============================================================================
-# Enhanced Dependencies Parser (now includes file I/O & DB2)
-# =============================================================================
-
 
 @ParserRegistry.register("dependencies")
 class DependenciesParser(BaseSectionParser):

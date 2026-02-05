@@ -114,3 +114,37 @@ async def get_codegen_file_content(project_id: uuid.UUID, file_id: str):
     
     return content
 
+
+@router.get("/projects/{project_id}/codegen/local/download")
+async def download_codegen_zip(project_id: uuid.UUID):
+    """Download the generated code as a zip file.
+    
+    Only available when code_migration_status is 'completed'.
+    Returns 409 if status is not completed.
+    Returns 404 if project not found.
+    """
+    from fastapi.responses import Response
+    from app.db.base import async_session_factory
+    from app.db.models.project import Project
+    
+    async with async_session_factory() as session:
+        project = await session.get(Project, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if project.code_migration_status != "completed":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Download unavailable. Status: {project.code_migration_status}"
+            )
+    
+    service = CodegenLocalService(project_id)
+    project_name = await service._get_project_name()
+    zip_bytes = service.create_zip(project_name)
+    safe_name = project_name.replace(" ", "_")
+    
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}-local.zip"'}
+    )
+

@@ -37,8 +37,6 @@ from app.services.summarizer.prompts import (
     CA7_PROMPT,
     REXX_CHUNK_PROMPT,
     PARMLIB_CHUNK_PROMPT,
-    CSV_PROMPT,             
-    FIXED_LENGTH_PROMPT,
 )
 from app.services.summarizer.generator import generate_file_summaries_md
 
@@ -56,7 +54,6 @@ class SummarizerService:
     """Service for generating file summaries via LLM using DB-driven strategies."""
     
     MAX_RETRIES = 3
-    FLATFILE_SAMPLE_LINES = 100  # Number of lines to sample for flat files
 
     def __init__(self, project_id: uuid.UUID, session: AsyncSession):
         """
@@ -147,20 +144,6 @@ class SummarizerService:
                 is_rolling=True,  # Rolling summarization for large parmlib files
                 parser_type="parmlib"
             ),
-
-            # Flat File Strategies - Work with raw content, single pass, no chunking
-            SourceFileType.CSV: ProcessingStrategy(
-                chunker_cls=CopybookChunker,  # Reuse simple chunker for single-pass
-                prompt_template=CSV_PROMPT,
-                is_rolling=False,  # Single pass
-                parser_type="csv"
-            ),
-            SourceFileType.FIXED_LENGTH: ProcessingStrategy(
-                chunker_cls=CopybookChunker,  # Reuse simple chunker for single-pass
-                prompt_template=FIXED_LENGTH_PROMPT,
-                is_rolling=False,  # Single pass
-                parser_type="fixed_length"
-            ),
         }
 
     async def generate(self) -> dict:
@@ -229,9 +212,6 @@ class SummarizerService:
         """Generic summarizer that follows the provided strategy."""
         logger.info(f"Summarizing {strategy.parser_type} file: {filepath.name}")
         
-        # FLAT FILE HANDLING: Sample first N lines only
-        if strategy.parser_type in ["csv", "fixed_length"]:
-            return await self._summarize_flatfile_from_raw(filepath, strategy)
         
         # Handle traditional chunker-based processing
          # 1. SPECIAL CASE: Assembly Line Count Logic
@@ -288,49 +268,6 @@ class SummarizerService:
         logger.info(f"Completed summarization for {filepath.name}")
         return self._parse_structured_summary(filepath.name, strategy.parser_type, summary)
 
-    # Flat file raw content summarization
-    async def _summarize_flatfile_from_raw(self, filepath: Path, strategy: ProcessingStrategy) -> dict:
-        """Summarize flat file by sampling first N lines of raw content.
-        
-        This approach:
-        - Reads only the first 50-100 lines (configurable)
-        - Includes headers/structure for context
-        - Avoids token overflow from large data files
-        - Works independently of parser output
-        """
-        logger.info(f"Summarizing flat file from raw content: {filepath.name}")
-        
-        try:
-            # Read file with error handling for encoding
-            try:
-                content = filepath.read_text(encoding='utf-8', errors='replace')
-            except Exception as e:
-                logger.warning(f"UTF-8 read failed, trying latin-1: {e}")
-                content = filepath.read_text(encoding='latin-1', errors='replace')
-            
-            # Sample first N lines
-            lines = content.split('\n')
-            sample_lines = lines[:self.FLATFILE_SAMPLE_LINES]
-            sample_content = '\n'.join(sample_lines)
-            
-            total_lines = len(lines)
-            logger.info(
-                f"Sampled {len(sample_lines)} of {total_lines} lines "
-                f"from {filepath.name}"
-            )
-            
-            # Build prompt with sampled content
-            prompt = strategy.prompt_template.format(content=sample_content)
-            
-            # Call LLM
-            summary = await self._call_llm_with_retry(prompt)
-            
-            # Parse and return
-            return self._parse_structured_summary(filepath.name, strategy.parser_type, summary)
-            
-        except Exception as e:
-            logger.error(f"Failed to summarize flat file {filepath.name}: {e}")
-            return {}
 
     async def _call_llm_with_retry(self, prompt: str) -> str:
         """Call LLM with exponential backoff retry."""
@@ -367,7 +304,6 @@ class SummarizerService:
             "workload_identity": [], # for CA7
             "dependencies_triggers": [], # for CA7
             "operational_rules": [], # for CA7
-            "data_characteristics": [],  # For flat files
             "configuration_areas": [],   # For parmlib
             "key_parameters": [],        # For parmlib
         }
@@ -424,13 +360,10 @@ class SummarizerService:
                 current_section = "configuration_areas"
             elif lower_line.startswith("key parameters:"):
                 current_section = "key_parameters"
-            # Flat file specific section
-            elif lower_line.startswith("data characteristics:"):
-                current_section = "data_characteristics"
             elif line.startswith("- "):
                 item = line[2:].strip()
                 # Define all sections that expect a list of bullet points
-                list_sections = ["functionalities", "key_operations", "notes", "key_fields", "register_usage", "steps", "main_datasets", "table_structure", "workload_identity", "dependencies_triggers", "operational_rules", "data_characteristics", "configuration_areas", "key_parameters"]
+                list_sections = ["functionalities", "key_operations", "notes", "key_fields", "register_usage", "steps", "main_datasets", "table_structure", "workload_identity", "dependencies_triggers", "operational_rules", "configuration_areas", "key_parameters"]
                 if current_section in list_sections:
                     parsed[current_section].append(item)
             elif current_section == "purpose" and not line.endswith(":"):

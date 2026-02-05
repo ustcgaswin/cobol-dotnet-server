@@ -3,11 +3,12 @@ from loguru import logger
 from app.core.chunkers.base import BaseChunker
 from app.core.exceptions import ChunkError
 
+
 class JclChunker(BaseChunker):
-    """Chunker for JCL (Job Control Language) and PROCs.
+    """Simplified chunker for JCL (Job Control Language) and PROCs.
     
-    This chunker mirrors the logic in JCLParser to ensure consistency 
-    between stored chunks and parsed dependencies.
+    This chunker provides preprocessed JCL content for parsing,
+    matching the simplified parser logic.
     """
     
     SUPPORTED_EXTENSIONS = [".jcl", ".proc", ".cntl", ".prc"]
@@ -38,7 +39,7 @@ class JclChunker(BaseChunker):
         return chunks
     
     def _preprocess_source(self, content: str) -> str:
-        """Clean JCL source code to match Parser logic.
+        """Clean JCL source code.
         
         1. Strips sequence numbers (cols 73-80).
         2. Removes comments (//*).
@@ -48,8 +49,10 @@ class JclChunker(BaseChunker):
         processed = []
         
         for line in lines:
+            # Strip sequence numbers
             line = line[:72]
 
+            # Skip comments and non-JCL lines
             if line.startswith('//*') or not line.startswith('//'):
                 continue
 

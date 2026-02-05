@@ -43,27 +43,6 @@ def search_cobol_docs(question: str) -> str:
     return result["answer"]
 
 
-@tool("search_flatfile_docs")
-def search_flatfile_docs(question: str) -> str:
-    """Search flat file format documentation to answer questions.
-    
-    Use this tool specifically for questions about:
-    - CSV format specifications, delimiters, and parsing rules
-    - Fixed-length file layouts and record structures
-    - COBOL copybook formats and field definitions
-    - Common mainframe flat file patterns and EBCDIC encoding
-    - Data type inference and validation rules
-    - Industry-standard file formats (banking, healthcare, retail)
-    - Flat file migration best practices
-    
-    Args:
-        question: The flat file related question to answer
-        
-    Returns:
-        An answer synthesized from flat file documentation
-    """
-    result = rag_service.ask(question, source_folder="flat_files")
-    return result["answer"]
 
 @tool("search_parmlib_docs")
 def search_parmlib_docs(question: str) -> str:

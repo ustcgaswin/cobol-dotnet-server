@@ -9,10 +9,8 @@ from app.core.parsers.pli_copybook_parser import PLICopybookParser
 from app.core.parsers.dclgen_parser import DclgenParser
 from app.core.parsers.jcl_parser import JCLParser
 from app.core.parsers.ca7_parser import CA7Parser
-from app.core.parsers.bind_parser import BindParser
 from app.core.parsers.parmlib_parser import PARMLIBParser
 from app.core.parsers.rexx_parser import REXXParser
-from app.core.parsers.flatfile_parser import CSVParser, FixedLengthParser
 from app.core.parsers.assembly_parser import AssemblyParser # <--- 1. Import
 
 
@@ -26,9 +24,6 @@ PARSER_REGISTRY: dict[str, type[BaseParser]] = {
     SourceFileType.JCL.value: JCLParser,
     SourceFileType.PROC.value: JCLParser,
     SourceFileType.CA7.value: CA7Parser,
-    SourceFileType.BIND.value: BindParser,
-    SourceFileType.CSV.value: CSVParser,
-    SourceFileType.FIXED_LENGTH.value: FixedLengthParser,
     SourceFileType.PARMLIB.value: PARMLIBParser,
     SourceFileType.REXX.value: REXXParser,
     SourceFileType.ASSEMBLY.value: AssemblyParser, 
@@ -38,7 +33,7 @@ def get_parser(file_type: str) -> BaseParser:
     """Get a parser instance for the given file type.
     
     Args:
-        file_type: Type of file to parse (e.g., "cobol", "pli", "csv", "fixed_length")
+        file_type: Type of file to parse (e.g., "cobol", "pli")
         
     Returns:
         Parser instance for the file type
@@ -60,15 +55,12 @@ __all__ = [
     "CopybookParser",
     "PLIParser",
     "PLICopybookParser",
-    "CSVParser",
-    "FixedLengthParser",
     "SourceFileType",
     "PARSER_REGISTRY",
     "REXXParser",
     "get_parser",
     "JCLParser",
     "CA7Parser",
-    "BindParser",
     "PARMLIBParser",
     "AssemblyParser",
     "DclgenParser",

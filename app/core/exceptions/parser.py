@@ -1,4 +1,4 @@
-"""Parser-related exceptions."""
+"""Parser-related exceptions - Final simplified version."""
 
 
 class ParserException(Exception):
@@ -38,6 +38,7 @@ class ParseError(ParserException):
         super().__init__(message)
 
 
+# COBOL/Copybook exceptions
 class InvalidSyntaxError(ParseError):
     """Raised when invalid COBOL syntax is encountered."""
     pass
@@ -63,81 +64,29 @@ class CopybookParseError(ParseError):
     pass
 
 
+# CA-7 exceptions
 class CA7ParseError(Exception):
     """Base exception for CA-7 parsing errors."""
     pass
 
-class BindParseError(Exception):
-    """Base exception for Bind parsing errors."""
-    pass
 
-class FlatFileParseError(ParseError):
-    """Base exception for flat file parsing errors."""
-    pass
-
-
-class CSVParseError(FlatFileParseError):
-    """Raised when CSV parsing fails."""
-    pass
-
-
-class FixedLengthParseError(FlatFileParseError):
-    """Raised when fixed-length file parsing fails."""
-    pass
-
-
-class EmptyFileError(FlatFileParseError):
-    """Raised when file contains no valid data."""
-    pass
-
-
-class SchemaInferenceError(FlatFileParseError):
-    """Raised when schema cannot be inferred."""
-    pass
-
-
-class InvalidLayoutError(FlatFileParseError):
-    """Raised when provided layout is invalid."""
-    pass
-
-
-class EncodingDetectionError(FlatFileParseError):
-    """Raised when encoding cannot be determined."""
-    pass
-
-
+# PARMLIB exceptions (SIMPLIFIED - removed InvalidStatementError, SectionParseError, UtilityCommandError)
 class PARMLIBParseError(ParseError):
     """Base exception for PARMLIB parsing failures."""
     pass
 
 
-class InvalidStatementError(PARMLIBParseError):
-    """Raised when a PARMLIB statement has invalid syntax."""
-    pass
-
-
-class SectionParseError(PARMLIBParseError):
-    """Raised when section parsing fails."""
-    pass
-
-
-class UtilityCommandError(PARMLIBParseError):
-    """Raised when utility command parsing fails."""
-    pass
-
+# REXX exceptions (SIMPLIFIED)
 class REXXParseError(ParseError):
     """Raised when REXX parsing fails."""
     pass
 
 
-class InvalidREXXSyntaxError(ParseError):
-    """Raised when invalid REXX syntax is encountered."""
+# General file parsing exceptions
+class EncodingDetectionError(ParseError):
+    """Raised when encoding cannot be determined."""
     pass
 
-
-class UnsupportedREXXFeatureError(ParseError):
-    """Raised when an unsupported REXX feature is encountered."""
-    pass
 
 class EmptyFileError(ParseError):
     """Exception raised when a file is empty or contains no valid data.
@@ -149,61 +98,3 @@ class EmptyFileError(ParseError):
     
     def __init__(self, message: str, filename: str = None):
         super().__init__(message, filename)
-
-
-class InvalidLayoutError(ParseError):
-    """Exception raised when a fixed-length file layout is invalid.
-    
-    Attributes:
-        message: Description of the error
-        filename: Path to the file being parsed
-    """
-    
-    def __init__(self, message: str, filename: str = None):
-        super().__init__(message, filename)
-
-
-class SchemaInferenceError(ParseError):
-    """Exception raised when schema inference fails.
-    
-    Attributes:
-        message: Description of the error
-        filename: Path to the file being parsed
-        column_name: Column where inference failed
-    """
-    
-    def __init__(self, message: str, filename: str = None, column_name: str = None):
-        super().__init__(message, filename)
-        self.column_name = column_name
-
-
-class LLMAugmentationError(ParseError):
-    """Exception raised when LLM augmentation fails.
-    
-    Attributes:
-        message: Description of the error
-        filename: File being augmented
-        retry_count: Number of retries attempted
-        llm_error: Original error from LLM call
-    """
-    
-    def __init__(
-        self,
-        message: str,
-        filename: str = None,
-        retry_count: int = None,
-        llm_error: Exception = None
-    ):
-        super().__init__(message, filename)
-        self.retry_count = retry_count
-        self.llm_error = llm_error
-    
-    def __str__(self):
-        parts = [self.args[0]]
-        if self.filename:
-            parts.append(f"File: {self.filename}")
-        if self.retry_count:
-            parts.append(f"Retries: {self.retry_count}")
-        if self.llm_error:
-            parts.append(f"LLM Error: {str(self.llm_error)[:100]}")
-        return " | ".join(parts)
