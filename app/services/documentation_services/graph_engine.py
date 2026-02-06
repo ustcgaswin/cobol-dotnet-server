@@ -289,3 +289,39 @@ class GraphAnalyzer:
         except Exception as e:
             logger.error(f"Failed to generate Mermaid PNG: {e}")
             return False
+        
+    def generate_context_diagram(self) -> str:
+        """
+        Generates a high-level System Context diagram.
+        Shows: External Inputs -> [Mainframe System] -> External Outputs
+        """
+        inputs = set()
+        outputs = set()
+
+        for node in self.graph.nodes():
+            if not (node.startswith("FILE:") or node.startswith("DD:")):
+                continue
+                
+            in_degree = self.graph.in_degree(node)
+            out_degree = self.graph.out_degree(node)
+            
+            if in_degree == 0 and out_degree > 0:
+                inputs.add(self._sanitize_node(node))
+            elif out_degree == 0 and in_degree > 0:
+                outputs.add(self._sanitize_node(node))
+
+        inputs = list(inputs)[:5]
+        outputs = list(outputs)[:5]
+        
+        lines = ["graph LR"]
+        lines.append("    subgraph Mainframe_System")
+        lines.append("        Core_Logic[Core Application Logic]")
+        lines.append("    end")
+        
+        for i in inputs:
+            lines.append(f"    {i}({i}) --> Core_Logic")
+        
+        for o in outputs:
+            lines.append(f"    Core_Logic --> {o}({o})")
+            
+        return "\n".join(lines)
