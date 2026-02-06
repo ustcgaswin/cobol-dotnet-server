@@ -771,12 +771,139 @@ class DocTemplateWithTOC(SimpleDocTemplate):
             elif style_name == 'Heading2':
                 self.notify('TOCEntry', (1, text, self.page))
 
+# class BaseBuilder:
+#     def __init__(self, summaries: List[FileSummary], metrics: SystemMetrics, graph_analyzer, system_summary: Dict = None, images: Dict[str, str] = None):
+#         self.summaries = summaries
+#         self.metrics = metrics
+#         self.system_summary = system_summary or {}
+#         self.graph_analyzer = graph_analyzer
+        
+#         # --- Multi-Image Handling ---
+#         self.images = images or {}
+#         self.context_image_path = self.images.get('context')
+#         self.architecture_image_path = self.images.get('architecture')
+#         self.functional_image_path = self.images.get('functional')
+        
+#         # Data Slicing
+#         self.jcl_files = [s for s in summaries if s.file_type == 'JCL']
+#         self.code_files = [s for s in summaries if s.file_type in ['COBOL', 'PLI', 'ASSEMBLY', 'REXX']]
+#         self.data_files = [s for s in summaries if s.file_type in ['DCLGEN', 'SQL', 'COPYBOOK', 'PLI_COPYBOOK']]
+#         self.configs = [s for s in summaries if s.file_type in ['PARMLIB', 'CONTROL_CARD']]
+
+#         # Styles Setup
+#         styles = getSampleStyleSheet()
+#         self.styleN = styles['Normal']
+#         self.styleN.fontSize = 10
+#         self.styleN.leading = 12
+        
+#         self.styleH1 = ParagraphStyle(
+#             'Heading1', parent=styles['Heading1'], 
+#             fontSize=16, leading=20, spaceBefore=18, spaceAfter=12, 
+#             textColor=colors.HexColor("#003366")
+#         )
+#         self.styleH2 = ParagraphStyle(
+#             'Heading2', parent=styles['Heading2'], 
+#             fontSize=13, leading=16, spaceBefore=12, spaceAfter=6, 
+#             textColor=colors.HexColor("#404040")
+#         )
+#         self.styleH3 = ParagraphStyle(
+#             'Heading3', parent=styles['Heading3'], 
+#             fontSize=11, leading=14, spaceBefore=10, spaceAfter=4, 
+#             textColor=colors.HexColor("#606060")
+#         )
+#         self.styleH4 = ParagraphStyle(
+#             'Heading4', parent=styles['Normal'], 
+#             fontSize=10, leading=12, spaceBefore=6, spaceAfter=2, 
+#             fontName='Helvetica-BoldOblique'
+#         )
+        
+#         self.elements = []
+
+#     def save(self, path: str):
+#         doc = DocTemplateWithTOC(
+#             path, pagesize=A4,
+#             rightMargin=20*mm, leftMargin=20*mm,
+#             topMargin=20*mm, bottomMargin=20*mm
+#         )
+#         story = []
+#         story.append(Spacer(1, 60*mm))
+#         story.append(Paragraph(self.title_text, ParagraphStyle('Title', parent=self.styleH1, fontSize=24, alignment=TA_CENTER)))
+#         story.append(Spacer(1, 10*mm))
+#         story.append(Paragraph("System Reference Document", ParagraphStyle('SubTitle', parent=self.styleN, fontSize=16, alignment=TA_CENTER)))
+#         story.append(PageBreak())
+#         story.append(Paragraph("Table of Contents", self.styleH1))
+#         story.append(doc.toc)
+#         story.append(PageBreak())
+#         story.extend(self.elements)
+#         doc.multiBuild(story)
+
+#     def h1(self, text):
+#         self.elements.append(PageBreak())
+#         self.elements.append(Paragraph(text, self.styleH1))
+
+#     def h2(self, text):
+#         self.elements.append(Paragraph(text, self.styleH2))
+
+#     def h3(self, text):
+#         self.elements.append(Paragraph(text, self.styleH3))
+    
+#     def h4(self, text):
+#         self.elements.append(Paragraph(text, self.styleH4))
+
+#     def para(self, text):
+#         if not text: return
+#         clean_text = str(text).replace('\n', '<br/>')
+#         self.elements.append(Paragraph(clean_text, self.styleN))
+#         self.elements.append(Spacer(1, 2*mm))
+
+#     def bullet_list(self, items: List[str]):
+#         if not items: return
+#         list_items = [ListItem(Paragraph(str(item).strip("[]'"), self.styleN)) for item in items]
+#         self.elements.append(ListFlowable(list_items, bulletType='bullet', start='•', leftIndent=15, bulletFontSize=12))
+#         self.elements.append(Spacer(1, 3*mm))
+
+#     def image(self, path, width=160*mm):
+#         if not path or not Path(path).exists():
+#             self.para("<i>[Diagram Image Not Available]</i>")
+#             return
+#         try:
+#             img = Image(path)
+#             aspect = img.drawHeight / img.drawWidth
+#             img.drawWidth = width
+#             img.drawHeight = width * aspect
+#             self.elements.append(img)
+#             self.elements.append(Spacer(1, 5*mm))
+#         except Exception as e:
+#             logger.error(f"Failed to embed image: {e}")
+#             self.para("<i>[Error rendering diagram file]</i>")
+
+#     def table(self, headers: List[str], rows: List[List[str]], col_widths=None):
+#         if not rows:
+#             self.para("<i>No data available.</i>")
+#             return
+#         data = [[Paragraph(f"<b>{h}</b>", self.styleN) for h in headers]]
+#         for row in rows:
+#             data.append([Paragraph(str(cell), self.styleN) for cell in row])
+#         t = Table(data, colWidths=col_widths, repeatRows=1)
+#         t.setStyle(TableStyle([
+#             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E6E6E6")),
+#             ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+#             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+#             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+#             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+#             ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+#             ('TOPPADDING', (0, 0), (-1, -1), 6),
+#         ]))
+#         self.elements.append(t)
+#         self.elements.append(Spacer(1, 6*mm))
+
 class BaseBuilder:
     def __init__(self, summaries: List[FileSummary], metrics: SystemMetrics, graph_analyzer, system_summary: Dict = None, images: Dict[str, str] = None):
         self.summaries = summaries
         self.metrics = metrics
         self.system_summary = system_summary or {}
         self.graph_analyzer = graph_analyzer
+        # self.title_text = "Mainframe Documentation" # Default
         
         # --- Multi-Image Handling ---
         self.images = images or {}
@@ -811,31 +938,36 @@ class BaseBuilder:
             fontSize=11, leading=14, spaceBefore=10, spaceAfter=4, 
             textColor=colors.HexColor("#606060")
         )
+
         self.styleH4 = ParagraphStyle(
             'Heading4', parent=styles['Normal'], 
             fontSize=10, leading=12, spaceBefore=6, spaceAfter=2, 
             fontName='Helvetica-BoldOblique'
         )
+
+    
         
         self.elements = []
 
-    def save(self, path: str):
-        doc = DocTemplateWithTOC(
-            path, pagesize=A4,
-            rightMargin=20*mm, leftMargin=20*mm,
-            topMargin=20*mm, bottomMargin=20*mm
+    def bullet(self, text):
+        """Renders a single bullet point (Fixes the AttributeError)."""
+        if not text: return
+        self.bullet_list([text])
+
+    def bullet_list(self, items: List[str]):
+        """Renders a list of items as bullets."""
+        if not items: return
+        list_items = [ListItem(Paragraph(str(item).strip("[]'"), self.styleN)) for item in items]
+        self.elements.append(
+            ListFlowable(list_items, bulletType='bullet', start='•', leftIndent=15, bulletFontSize=12)
         )
-        story = []
-        story.append(Spacer(1, 60*mm))
-        story.append(Paragraph(self.title_text, ParagraphStyle('Title', parent=self.styleH1, fontSize=24, alignment=TA_CENTER)))
-        story.append(Spacer(1, 10*mm))
-        story.append(Paragraph("System Reference Document", ParagraphStyle('SubTitle', parent=self.styleN, fontSize=16, alignment=TA_CENTER)))
-        story.append(PageBreak())
-        story.append(Paragraph("Table of Contents", self.styleH1))
-        story.append(doc.toc)
-        story.append(PageBreak())
-        story.extend(self.elements)
-        doc.multiBuild(story)
+        self.elements.append(Spacer(1, 3*mm))
+
+    def para(self, text):
+        if not text: return
+        # Wrap text in Paragraph for ReportLab
+        self.elements.append(Paragraph(str(text).replace('\n', '<br/>'), self.styleN))
+        self.elements.append(Spacer(1, 2*mm))
 
     def h1(self, text):
         self.elements.append(PageBreak())
@@ -850,21 +982,32 @@ class BaseBuilder:
     def h4(self, text):
         self.elements.append(Paragraph(text, self.styleH4))
 
-    def para(self, text):
-        if not text: return
-        clean_text = str(text).replace('\n', '<br/>')
-        self.elements.append(Paragraph(clean_text, self.styleN))
-        self.elements.append(Spacer(1, 2*mm))
+    def table(self, headers: List[str], rows: List[List[str]], col_widths=None):
+        if not rows:
+            self.elements.append(Paragraph("<i>No data available.</i>", self.styleN))
+            return
+        
+        data = [[Paragraph(f"<b>{h}</b>", self.styleN) for h in headers]]
+        for row in rows:
+            data.append([Paragraph(str(cell), self.styleN) for cell in row])
+        
+        # If col_widths not provided, use standard distribution
+        if not col_widths:
+            col_widths = [170*mm / len(headers)] * len(headers)
 
-    def bullet_list(self, items: List[str]):
-        if not items: return
-        list_items = [ListItem(Paragraph(str(item).strip("[]'"), self.styleN)) for item in items]
-        self.elements.append(ListFlowable(list_items, bulletType='bullet', start='•', leftIndent=15, bulletFontSize=12))
-        self.elements.append(Spacer(1, 3*mm))
+        t = Table(data, colWidths=col_widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E6E6E6")),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ]))
+        self.elements.append(t)
+        self.elements.append(Spacer(1, 6*mm))
 
     def image(self, path, width=160*mm):
         if not path or not Path(path).exists():
-            self.para("<i>[Diagram Image Not Available]</i>")
             return
         try:
             img = Image(path)
@@ -874,28 +1017,30 @@ class BaseBuilder:
             self.elements.append(img)
             self.elements.append(Spacer(1, 5*mm))
         except Exception as e:
-            logger.error(f"Failed to embed image: {e}")
-            self.para("<i>[Error rendering diagram file]</i>")
+            logger.error(f"Image error: {e}")
 
-    def table(self, headers: List[str], rows: List[List[str]], col_widths=None):
-        if not rows:
-            self.para("<i>No data available.</i>")
-            return
-        data = [[Paragraph(f"<b>{h}</b>", self.styleN) for h in headers]]
-        for row in rows:
-            data.append([Paragraph(str(cell), self.styleN) for cell in row])
-        t = Table(data, colWidths=col_widths, repeatRows=1)
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E6E6E6")),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ]))
-        self.elements.append(t)
-        self.elements.append(Spacer(1, 6*mm))
+    def save(self, path: str):
+        doc = DocTemplateWithTOC(
+            path, pagesize=A4,
+            rightMargin=20*mm, leftMargin=20*mm,
+            topMargin=20*mm, bottomMargin=20*mm
+        )
+        story = []
+        # Title Page
+        story.append(Spacer(1, 60*mm))
+        story.append(Paragraph(self.title_text, ParagraphStyle('Title', parent=self.styleH1, fontSize=24, alignment=TA_CENTER)))
+        story.append(Spacer(1, 10*mm))
+        story.append(Paragraph("Project Reference Document", self.styleN))
+        story.append(PageBreak())
+        
+        # TOC
+        story.append(Paragraph("Table of Contents", self.styleH1))
+        story.append(doc.toc)
+        story.append(PageBreak())
+        
+        # Content
+        story.extend(self.elements)
+        doc.multiBuild(story)
 
 class TechnicalSpecBuilder(BaseBuilder):
     def __init__(self, *args, **kwargs):
@@ -1106,7 +1251,7 @@ class FunctionalSpecBuilder(BaseBuilder):
         self._render_ops()                 # 6
         self._render_appendices()          # 7
         
-        return self.pdf
+        # return self.pdf
 
     def _render_doc_control(self):
         self.h1("1. Document Control")
