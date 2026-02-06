@@ -261,34 +261,44 @@ class GraphAnalyzer:
         """Cleans node names for Mermaid syntax."""
         return name.replace('.', '_').replace('-', '_').replace(':', '_').replace(' ', '')
     
-    def generate_mermaid_png(self, output_path: str):
+    def render_mermaid_code_to_png(self, mermaid_code: str, output_path: str) -> bool:
+        """
+        Generic helper to convert any Mermaid string to a PNG file.
+        Used for Context, Architecture, and Functional diagrams.
+        """
         import base64
         import requests
         import urllib3
 
-        # Disable the warning in logs for unverified HTTPS requests
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        mermaid_code = self.generate_mermaid_diagram()
+        if not mermaid_code:
+            logger.error("No mermaid code provided for rendering")
+            return False
+
+        # Ensure the string is encoded properly for the URL
         graphbytes = mermaid_code.encode("utf8")
-        base64_bytes = base64.b64encode(graphbytes)
+        base64_bytes = base64.urlsafe_b64encode(graphbytes)
         base64_string = base64_bytes.decode("ascii")
         
         url = "https://mermaid.ink/img/" + base64_string
         
         try:
-            # Added verify=False to bypass SSL check
             response = requests.get(url, verify=False, timeout=30)
             if response.status_code == 200:
                 with open(output_path, 'wb') as f:
                     f.write(response.content)
                 return True
             else:
-                logger.error(f"Mermaid API returned status code {response.status_code}")
+                logger.error(f"Mermaid API error {response.status_code} for {output_path}")
                 return False
         except Exception as e:
-            logger.error(f"Failed to generate Mermaid PNG: {e}")
+            logger.error(f"Failed to generate PNG at {output_path}: {e}")
             return False
+    
+    def generate_mermaid_png(self, output_path: str):
+        """Standard Architecture Diagram (backward compatibility)."""
+        return self.render_mermaid_code_to_png(self.generate_mermaid_diagram(), output_path)
         
     def generate_context_diagram(self) -> str:
         """

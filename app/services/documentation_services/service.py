@@ -552,29 +552,54 @@ class DocumentationService:
             output_dir = self.artifacts_path / str(project_id)
             output_dir.mkdir(parents=True, exist_ok=True)
             
-            graph_img_path = output_dir / "architecture.png"
-            # Assuming you added generate_mermaid_png to GraphAnalyzer as discussed previously
-            # If not, comment this line out.
-            # analyzer.generate_mermaid_png(str(graph_img_path)) 
-            success = analyzer.generate_mermaid_png(str(graph_img_path)) 
+            image_paths = {}
+            success = None
+
+            # A. Technical Architecture Diagram (2.3)
+            arch_path = output_dir / "architecture.png"
+            if analyzer.generate_mermaid_png(str(arch_path)):
+                image_paths['architecture'] = str(arch_path)
+                success = str(arch_path)
+
+            # B. System Context Diagram (1.4)
+            ctx_path = output_dir / "context.png"
+            ctx_mermaid = analyzer.generate_context_diagram()
+            if analyzer.render_mermaid_code_to_png(ctx_mermaid, str(ctx_path)):
+                image_paths['context'] = str(ctx_path)
+                success = str(arch_path)
+
+            # C. Functional Sequence Diagram (Functional 3.1)
+            # Extracted from the LLM response in system_overview_json
+            func_mermaid = system_overview_json.get('functional_flow_diagram', {}).get('mermaid_code')
+            if func_mermaid:
+                func_path = output_dir / "functional_flow.png"
+                if analyzer.render_mermaid_code_to_png(func_mermaid, str(func_path)):
+                    image_paths['functional'] = str(func_path)
+                    success = str(arch_path)
 
             if success:
-                logger.info(f"🎨 Successfully generated graph image at {graph_img_path}")
+                logger.info(f"Successfully generated graph image at {success}")
             else:
-                logger.warning("⚠️ Failed to generate graph image via Mermaid API")
+                logger.warning("Failed to generate graph image via Mermaid API")
 
-            # 10. Build Real PDFs
+            # 10. Build Real PDFs with the Images dict
             if mode in ["ALL", "TECHNICAL"]:
                 logger.info("Building Technical Specification...")
-                tech_builder = TechnicalSpecBuilder(all_summaries, metrics, analyzer, system_summary=system_overview_json)
-                tech_builder.graph_image_path = str(graph_img_path) if graph_img_path.exists() else None
+                tech_builder = TechnicalSpecBuilder(
+                    all_summaries, metrics, analyzer, 
+                    system_summary=system_overview_json,
+                    images=image_paths # Passing the dict with 3 images
+                )
                 tech_builder.build()
                 tech_builder.save(str(output_dir / "Technical_Specifications.pdf"))
 
             if mode in ["ALL", "FUNCTIONAL"]:
                 logger.info("Building Functional Specification...")
-                func_builder = FunctionalSpecBuilder(all_summaries, metrics, analyzer, system_summary=system_overview_json)
-                func_builder.graph_image_path = str(graph_img_path) if graph_img_path.exists() else None
+                func_builder = FunctionalSpecBuilder(
+                    all_summaries, metrics, analyzer, 
+                    system_summary=system_overview_json,
+                    images=image_paths # Passing the dict with 3 images
+                )
                 func_builder.build()
                 func_builder.save(str(output_dir / "Functional_Specifications.pdf"))
 
@@ -585,7 +610,7 @@ class DocumentationService:
             logger.info(f"{mode} pipeline complete for project {project_id}")
 
         except Exception as e:
-            logger.exception(f"❌ Agentic Pipeline failed for project {project_id}: {e}")
+            logger.exception(f"Agentic Pipeline failed for project {project_id}: {e}")
             await self._update_project_status(project_id, mode, ProjectStatus.FAILED)
 
     async def _process_single_file(self, agent_app, project_id: uuid.UUID, file_record: SourceFile, mode: str) -> Dict:
