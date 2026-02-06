@@ -545,6 +545,9 @@ class DocumentationService:
                 type_counts[s.file_type] = type_counts.get(s.file_type, 0) + 1
             metrics = analyzer.get_metrics(len(all_summaries), type_counts)
 
+            # Call the LLM to get the combined system overview
+            system_overview_json = await self._generate_system_summary(metrics, all_summaries)
+
             # 9. Generate Graph Image (Needed for PDF)
             output_dir = self.artifacts_path / str(project_id)
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -563,14 +566,14 @@ class DocumentationService:
             # 10. Build Real PDFs
             if mode in ["ALL", "TECHNICAL"]:
                 logger.info("Building Technical Specification...")
-                tech_builder = TechnicalSpecBuilder(all_summaries, metrics, analyzer)
+                tech_builder = TechnicalSpecBuilder(all_summaries, metrics, analyzer, system_summary=system_overview_json)
                 tech_builder.graph_image_path = str(graph_img_path) if graph_img_path.exists() else None
                 tech_builder.build()
                 tech_builder.save(str(output_dir / "Technical_Specifications.pdf"))
 
             if mode in ["ALL", "FUNCTIONAL"]:
                 logger.info("Building Functional Specification...")
-                func_builder = FunctionalSpecBuilder(all_summaries, metrics, analyzer)
+                func_builder = FunctionalSpecBuilder(all_summaries, metrics, analyzer, system_summary=system_overview_json)
                 func_builder.graph_image_path = str(graph_img_path) if graph_img_path.exists() else None
                 func_builder.build()
                 func_builder.save(str(output_dir / "Functional_Specifications.pdf"))
