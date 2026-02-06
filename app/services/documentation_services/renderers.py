@@ -947,8 +947,9 @@ class TechnicalSpecBuilder(BaseBuilder):
     def _intro(self):
         self.h1("1. Introduction")
         self.h2("1.1 Purpose")
-        self.para("This document provides a detailed technical reference for the existing system, generated via automated static analysis of the codebase.")
-        
+        # self.para("This document provides a detailed technical reference for the existing system, generated via automated static analysis of the codebase.")
+        self.para(self.system_summary.get('business_purpose', "Technical reference generated via static analysis of the codebase."))
+
         self.h2("1.2 Scope of Analysis")
         self.para("The following components were analyzed:")
         rows = [[k, str(v)] for k, v in self.metrics.files_by_type.items()]
@@ -959,7 +960,13 @@ class TechnicalSpecBuilder(BaseBuilder):
         self.para(f"Identified technologies: {techs}")
         
         self.h2("1.4 System Context Diagram")
-        self.para("Refer to Section 2.1 for the architectural visual.")
+        # self.para("Refer to Section 2.1 for the architectural visual.")
+        # FIX: Directly show the image if available, else descriptive text
+        if self.graph_image_path:
+            self.image(self.graph_image_path)
+            self.para("Figure 1: System Context and Boundaries")
+        else:
+            self.para("Context diagram could not be generated from the available source code dependencies.")
         
         self.h2("1.5 Acronyms & Definitions")
         glossary = []
@@ -1035,9 +1042,18 @@ class TechnicalSpecBuilder(BaseBuilder):
             self.para("No PROCs found.")
 
         self.h2("3.3 Job Dependencies")
-        self.para("Dependencies inferred from dataset usage (Producer -> Consumer):")
+        # self.para("Dependencies inferred from dataset usage (Producer -> Consumer):")
         # Placeholder for complex dependency chain text
-        self.para("Refer to Process Flow diagram.")
+        # self.para("Refer to Process Flow diagram.")
+        chains = []
+        for u, v, d in self.graph_analyzer.graph.edges(data=True):
+            if d.get('type') in ['TRIGGER', 'EXEC_PGM', 'EXEC_PROC']:
+                chains.append([u, v, d.get('type')])
+        
+        if chains:
+            self.table(["Source Job/File", "Target Component", "Relationship"], chains[:20], [60*mm, 60*mm, 40*mm])
+        else:
+            self.para("No automated job chains identified.")
 
         self.h2("3.4 Utility & Control Specifications")
         if self.configs:
@@ -1056,6 +1072,8 @@ class TechnicalSpecBuilder(BaseBuilder):
                 if params and isinstance(params[0], dict):
                     rows = [[p.get('name'), p.get('value'), p.get('description')] for p in params]
                     self.table(["Param", "Value", "Desc"], rows, [40*mm, 40*mm, 90*mm])
+        else:
+            self.para("No utilities identified")
 
     def _logic(self):
         self.h1("4. Application Logic Specification")
@@ -1149,27 +1167,25 @@ class FunctionalSpecBuilder(BaseBuilder):
         self._appx()
 
     def _intro(self):
-        self.h1("2. Introduction")
-        self.h2("2.1 Business Overview")
+        self.h1("1. Introduction")
+        self.h2("1.1 Business Overview")
         self.para(self.system_summary.get('business_purpose', 'N/A'))
         
-        self.h2("2.2 System Purpose")
-        self.para("The system facilitates core transaction processing, validation, and reporting.")
         
-        self.h2("2.3 Scope")
+        self.h2("1.2 Scope")
         self.para("Included modules: " + ", ".join(list(set([s.file_type for s in self.summaries]))))
         
-        self.h2("2.4 Glossary")
+        self.h2("1.3 Glossary")
         glossary = self.system_summary.get('glossary', [])
         if glossary:
             rows = [[g.get('term',''), g.get('definition','')] for g in glossary]
             self.table(["Term", "Definition"], rows, [40*mm, 130*mm])
 
     def _flows(self):
-        self.h1("3. High-Level Functional Flows")
+        self.h1("2. High-Level Functional Flows")
         
         # 3.1 Diagram
-        self.h2("3.1 Process Diagram")
+        self.h2("2.1 Process Diagram")
         flow = self.system_summary.get('functional_flow_diagram', {})
         if flow.get('description'): self.para(flow['description'])
         
@@ -1181,7 +1197,7 @@ class FunctionalSpecBuilder(BaseBuilder):
             self.para("No flow steps defined.")
 
         # 3.2 Groups
-        self.h2("3.2 Core Functional Groups")
+        self.h2("2.2 Core Functional Groups")
         
         # Grouping Logic
         tx_progs = []
@@ -1194,29 +1210,29 @@ class FunctionalSpecBuilder(BaseBuilder):
             elif any(x in text for x in ['REPORT', 'PRINT', 'DISPLAY']): rpt_progs.append(p.filename)
             elif any(x in text for x in ['BACKUP', 'ARCHIVE', 'DELETE']): maint_progs.append(p.filename)
 
-        self.h3("3.2.1 Transaction Processing Group")
+        self.h3("2.2.1 Transaction Processing Group")
         self.bullet_list(tx_progs)
         
-        self.h3("3.2.2 Reporting & Analysis Group")
+        self.h3("2.2.2 Reporting & Analysis Group")
         self.bullet_list(rpt_progs)
         
-        self.h3("3.2.3 Data Maintenance Group")
+        self.h3("2.2.3 Data Maintenance Group")
         self.bullet_list(maint_progs)
 
-        self.h2("3.3 Reporting & Extraction Process")
+        self.h2("2.3 Reporting & Extraction Process")
         self.para("See Interface Specification -> Reporting Outputs.")
 
     def _logic(self):
-        self.h1("4. Detailed Functional Logic")
+        self.h1("3. Detailed Functional Logic")
         
-        self.h2("4.1 Business Rules & Validations")
+        self.h2("3.1 Business Rules & Validations")
         for prog in self.code_files:
             scope = prog.business_overview.get('scope', [])
             if scope:
                 self.h3(f"{prog.filename}")
                 self.bullet_list(scope)
 
-        self.h2("4.2 Data Management Functions")
+        self.h2("3.2 Data Management Functions")
         
         # Logic to split CRUD types
         inserts, updates, deletes = [], [], []
@@ -1226,25 +1242,25 @@ class FunctionalSpecBuilder(BaseBuilder):
             if 'UPDATE' in ops or 'REWRITE' in ops: updates.append(prog.filename)
             if 'DELETE' in ops: deletes.append(prog.filename)
 
-        self.h3("4.2.1 Create/Insert Logic")
+        self.h3("3.2.1 Create/Insert Logic")
         self.bullet_list(inserts)
-        self.h3("4.2.2 Update Logic")
+        self.h3("3.2.2 Update Logic")
         self.bullet_list(updates)
-        self.h3("4.2.3 Deletion Logic")
+        self.h3("3.2.3 Deletion Logic")
         self.bullet_list(deletes)
 
-        self.h2("4.3 Transformations")
+        self.h2("3.3 Transformations")
         self.para("Data format conversions detected in COBOL logic.")
 
     def _interfaces(self):
-        self.h1("5. Interface Specification")
+        self.h1("4. Interface Specification")
         
-        self.h2("5.1 User Interfaces")
+        self.h2("4.1 User Interfaces")
         cics = [p.filename for p in self.code_files if 'CICS' in str(p.technical_analysis).upper()]
         if cics: self.para(f"Online modules: {', '.join(cics)}")
         else: self.para("Batch Only.")
 
-        self.h2("5.2 External Dependencies")
+        self.h2("4.2 External Dependencies")
         inputs = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
@@ -1254,7 +1270,7 @@ class FunctionalSpecBuilder(BaseBuilder):
             unique = [list(x) for x in set(tuple(x) for x in inputs)]
             self.table(["Input File", "Consumed By"], unique[:15], [100*mm, 70*mm])
 
-        self.h2("5.3 Reporting Outputs")
+        self.h2("4.3 Reporting Outputs")
         reports = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
@@ -1262,7 +1278,7 @@ class FunctionalSpecBuilder(BaseBuilder):
                     reports.append([str(ds.get('dataset')), jcl.filename])
         self.table(["Report", "Generated By"], reports, [100*mm, 70*mm])
 
-        self.h2("5.4 Downstream Feeds")
+        self.h2("4.4 Downstream Feeds")
         feeds = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
@@ -1271,24 +1287,24 @@ class FunctionalSpecBuilder(BaseBuilder):
         self.table(["Output File", "Generated By"], feeds[:15], [100*mm, 70*mm])
 
     def _ops(self):
-        self.h1("6. Operational Functions")
+        self.h1("5. Operational Functions")
         freq = self.system_summary.get('schedule_frequency', {})
         self.para(f"Frequency: {freq.get('frequency', 'N/A')}")
         self.para(f"Window: {freq.get('sla_window', 'N/A')}")
         
-        self.h2("6.3 Backup")
+        self.h2("5.3 Backup")
         backups = [j.filename for j in self.jcl_files if 'BACKUP' in str(j.business_overview).upper()]
         self.bullet_list(backups)
 
     def _appx(self):
-        self.h1("7. Appendices")
-        self.h2("7.1 Data Dictionary")
+        self.h1("6. Appendices")
+        self.h2("6.1 Data Dictionary")
         for copy in self.data_files:
             ent = copy.business_overview.get('key_data_entities', [])
             if ent:
                 self.h3(copy.filename)
                 self.bullet_list(ent)
-        self.h2("7.2 Report Catalog")
+        self.h2("6.2 Report Catalog")
         reports = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
