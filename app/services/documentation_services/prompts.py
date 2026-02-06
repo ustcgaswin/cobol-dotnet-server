@@ -133,6 +133,9 @@ REQUIRED JSON STRUCTURE:
             "File I/O details",
             "Subroutine calls"
         ],
+        "data_interactions": [
+            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+        ],
         "technical_notes": [
             "Error handling specifics",
             "Performance notes"
@@ -166,6 +169,9 @@ REQUIRED JSON STRUCTURE:
     "technical_analysis": {{
         "functional_capabilities": ["Specific procedure logic"],
         "key_operations": ["I/O and Calls"],
+        "data_interactions": [
+            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+        ],
         "technical_notes": ["Memory/Pointer notes"]
     }}
 }}
@@ -211,6 +217,9 @@ REQUIRED JSON STRUCTURE:
             "Macros used (GETMAIN, WTOR, LINK)",
             "System services accessed"
         ],
+        "data_interactions": [
+            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+        ],
         "technical_notes": [
             "Reentrancy considerations",
             "Addressing modes (AMODE/RMODE)"
@@ -254,6 +263,9 @@ REQUIRED JSON STRUCTURE:
         "external_utilities": [
             "TSO Commands (ALLOC, FREE)",
             "ISPF Services (FTOPEN, FTCLOSE)"
+        ],
+        "data_interactions": [
+            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
         "technical_notes": [
             "Parsing logic",

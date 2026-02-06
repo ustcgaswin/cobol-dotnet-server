@@ -970,7 +970,8 @@ class BaseBuilder:
         self.elements.append(Spacer(1, 2*mm))
 
     def h1(self, text):
-        self.elements.append(PageBreak())
+        if self.elements:  # Only add page break if this isn't the first item
+            self.elements.append(PageBreak())
         self.elements.append(Paragraph(text, self.styleH1))
 
     def h2(self, text):
@@ -1030,7 +1031,7 @@ class BaseBuilder:
         story.append(Spacer(1, 60*mm))
         story.append(Paragraph(self.title_text, ParagraphStyle('Title', parent=self.styleH1, fontSize=24, alignment=TA_CENTER)))
         story.append(Spacer(1, 10*mm))
-        story.append(Paragraph("Project Reference Document", self.styleN))
+        story.append(Paragraph("Project Reference Document", ParagraphStyle('SubTitle', parent=self.styleN, fontSize=16, alignment=TA_CENTER)))
         story.append(PageBreak())
         
         # TOC
