@@ -261,31 +261,77 @@ class GraphAnalyzer:
         """Cleans node names for Mermaid syntax."""
         return name.replace('.', '_').replace('-', '_').replace(':', '_').replace(' ', '')
     
-    def generate_mermaid_png(self, output_path: str):
+    def render_mermaid_code_to_png(self, mermaid_code: str, output_path: str) -> bool:
+        """
+        Generic helper to convert any Mermaid string to a PNG file.
+        Used for Context, Architecture, and Functional diagrams.
+        """
         import base64
         import requests
         import urllib3
 
-        # Disable the warning in logs for unverified HTTPS requests
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        mermaid_code = self.generate_mermaid_diagram()
+        if not mermaid_code:
+            logger.error("No mermaid code provided for rendering")
+            return False
+
+        # Ensure the string is encoded properly for the URL
         graphbytes = mermaid_code.encode("utf8")
-        base64_bytes = base64.b64encode(graphbytes)
+        base64_bytes = base64.urlsafe_b64encode(graphbytes)
         base64_string = base64_bytes.decode("ascii")
         
         url = "https://mermaid.ink/img/" + base64_string
         
         try:
-            # Added verify=False to bypass SSL check
             response = requests.get(url, verify=False, timeout=30)
             if response.status_code == 200:
                 with open(output_path, 'wb') as f:
                     f.write(response.content)
                 return True
             else:
-                logger.error(f"Mermaid API returned status code {response.status_code}")
+                logger.error(f"Mermaid API error {response.status_code} for {output_path}")
                 return False
         except Exception as e:
-            logger.error(f"Failed to generate Mermaid PNG: {e}")
+            logger.error(f"Failed to generate PNG at {output_path}: {e}")
             return False
+    
+    def generate_mermaid_png(self, output_path: str):
+        """Standard Architecture Diagram (backward compatibility)."""
+        return self.render_mermaid_code_to_png(self.generate_mermaid_diagram(), output_path)
+        
+    def generate_context_diagram(self) -> str:
+        """
+        Generates a high-level System Context diagram.
+        Shows: External Inputs -> [Mainframe System] -> External Outputs
+        """
+        inputs = set()
+        outputs = set()
+
+        for node in self.graph.nodes():
+            if not (node.startswith("FILE:") or node.startswith("DD:")):
+                continue
+                
+            in_degree = self.graph.in_degree(node)
+            out_degree = self.graph.out_degree(node)
+            
+            if in_degree == 0 and out_degree > 0:
+                inputs.add(self._sanitize_node(node))
+            elif out_degree == 0 and in_degree > 0:
+                outputs.add(self._sanitize_node(node))
+
+        inputs = list(inputs)[:5]
+        outputs = list(outputs)[:5]
+        
+        lines = ["graph LR"]
+        lines.append("    subgraph Mainframe_System")
+        lines.append("        Core_Logic[Core Application Logic]")
+        lines.append("    end")
+        
+        for i in inputs:
+            lines.append(f"    {i}({i}) --> Core_Logic")
+        
+        for o in outputs:
+            lines.append(f"    Core_Logic --> {o}({o})")
+            
+        return "\n".join(lines)
