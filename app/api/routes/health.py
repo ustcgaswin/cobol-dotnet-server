@@ -15,6 +15,7 @@ from app.api.schemas.common import APIResponse
 from app.config.settings import settings
 from app.core.exceptions import DatabaseHealthCheckError
 from app.config.llm import get_llm, get_llm_manager, CODEGEN
+from app.config.llm.models import DEFAULT_LLM_MODEL, DEFAULT_EMBEDDINGS_MODEL
 
 router = APIRouter(tags=["Health"])
 
@@ -128,14 +129,14 @@ async def llm_health_check() -> APIResponse[LLMHealthStatus]:
                 llm=LLMHealth(
                     status="not_configured",
                     instance_name="none",
-                    temperature=settings.LLM_TEMPERATURE,
-                    max_tokens=settings.LLM_MAX_TOKENS,
+                    temperature=DEFAULT_LLM_MODEL.config.temperature,
+                    max_tokens=DEFAULT_LLM_MODEL.config.max_tokens,
                     timeout=int(settings.LLM_TIMEOUT),
                 ),
                 embeddings=EmbeddingHealth(
                     status="not_configured",
                     instance_name="none",
-                    dimension=settings.EMBEDDING_DIMENSION,
+                    dimension=DEFAULT_EMBEDDINGS_MODEL.config.dimensions,
                 ),
                 available_instances=[],
                 timestamp=datetime.utcnow(),
@@ -178,14 +179,14 @@ async def llm_health_check() -> APIResponse[LLMHealthStatus]:
             llm=LLMHealth(
                 status=llm_status,
                 instance_name=test_instance,
-                temperature=settings.LLM_TEMPERATURE,
-                max_tokens=settings.LLM_MAX_TOKENS,
-                timeout=int(settings.LLM_TIMEOUT),
+                temperature=llm.temperature,
+                max_tokens=llm.max_tokens,
+                timeout=int(llm.timeout),
             ),
             embeddings=EmbeddingHealth(
                 status=embeddings_status,
                 instance_name=test_instance,
-                dimension=settings.EMBEDDING_DIMENSION,
+                dimension=DEFAULT_EMBEDDINGS_MODEL.config.dimensions,
             ),
             available_instances=available,
             timestamp=datetime.utcnow(),
