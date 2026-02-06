@@ -1,7 +1,6 @@
 """Health check endpoints for API monitoring."""
 
 from datetime import datetime
-import traceback
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -14,8 +13,7 @@ from app.api.dependencies import get_db
 from app.api.schemas.common import APIResponse
 from app.config.settings import settings
 from app.core.exceptions import DatabaseHealthCheckError
-from app.config.llm import get_llm, get_llm_manager, CODEGEN
-from app.config.llm.models import DEFAULT_LLM_MODEL, DEFAULT_EMBEDDINGS_MODEL
+from app.config.llm import get_llm_manager
 
 router = APIRouter(tags=["Health"])
 
@@ -44,11 +42,17 @@ class EmbeddingHealth(BaseModel):
     dimension: int
 
 
+class InstanceHealth(BaseModel):
+    """Health status for a single instance (LLM + Embeddings)."""
+    name: str
+    llm: str  # "connected", "unhealthy", "skipped"
+    embeddings: str  # "connected", "unhealthy", "skipped"
+
+
 class LLMHealthStatus(BaseModel):
-    """Overall LLM health status."""
-    status: str
-    llm: LLMHealth
-    embeddings: EmbeddingHealth
+    """Overall LLM health status with all instances."""
+    status: str  # "healthy", "degraded", "unhealthy", "not_configured"
+    instances: list[InstanceHealth]
     available_instances: list[str]
     timestamp: datetime
 
@@ -117,7 +121,8 @@ async def llm_health_check() -> APIResponse[LLMHealthStatus]:
     """
     Deep health check for LLM and embeddings.
     
-    Tests the first available instance by making actual API calls.
+    Tests ALL available instances by making actual API calls.
+    Returns per-instance health status.
     """
     manager = get_llm_manager()
     available = manager.get_available_instances()
@@ -126,68 +131,64 @@ async def llm_health_check() -> APIResponse[LLMHealthStatus]:
         return APIResponse.ok(
             LLMHealthStatus(
                 status="not_configured",
-                llm=LLMHealth(
-                    status="not_configured",
-                    instance_name="none",
-                    temperature=DEFAULT_LLM_MODEL.config.temperature,
-                    max_tokens=DEFAULT_LLM_MODEL.config.max_tokens,
-                    timeout=int(settings.LLM_TIMEOUT),
-                ),
-                embeddings=EmbeddingHealth(
-                    status="not_configured",
-                    instance_name="none",
-                    dimension=DEFAULT_EMBEDDINGS_MODEL.config.dimensions,
-                ),
+                instances=[],
                 available_instances=[],
                 timestamp=datetime.utcnow(),
             )
         )
     
-    # Test first available instance
-    test_instance = available[0]
+    instance_results: list[InstanceHealth] = []
     
-    # ---- LLM (REAL CALL) ----
-    try:
-        llm = manager.get_llm(test_instance)
-        response = llm.invoke("Reply with OK only.")
-        content = getattr(response, "content", "")
-        llm_status = "connected" if "OK" in str(content) else "unhealthy"
-    except Exception:
-        logger.error("LLM health check failed")
-        logger.error(traceback.format_exc())
-        llm_status = "unhealthy"
-
-    # ---- Embeddings ----
-    try:
-        embeddings = manager.get_embeddings(test_instance)
-        embeddings.embed_query("ping")
-        embeddings_status = "connected"
-    except Exception:
-        logger.error("Embeddings health check failed")
-        logger.error(traceback.format_exc())
-        embeddings_status = "unhealthy"
-
-    overall_status = (
-        "healthy"
-        if llm_status == "connected" and embeddings_status == "connected"
-        else "degraded"
+    for instance_name in available:
+        llm_status = "skipped"
+        embeddings_status = "skipped"
+        
+        # ---- Test LLM ----
+        try:
+            llm = manager.get_llm(instance_name)
+            response = llm.invoke("Reply with OK only.")
+            content = getattr(response, "content", "")
+            llm_status = "connected" if "OK" in str(content).upper() else "unhealthy"
+        except Exception as e:
+            logger.warning(f"LLM health check failed for {instance_name}: {e}")
+            llm_status = "unhealthy"
+        
+        # ---- Test Embeddings ----
+        try:
+            embeddings = manager.get_embeddings(instance_name)
+            embeddings.embed_query("ping")
+            embeddings_status = "connected"
+        except Exception as e:
+            logger.warning(f"Embeddings health check failed for {instance_name}: {e}")
+            embeddings_status = "unhealthy"
+        
+        instance_results.append(InstanceHealth(
+            name=instance_name,
+            llm=llm_status,
+            embeddings=embeddings_status,
+        ))
+    
+    # Determine overall status
+    all_connected = all(
+        i.llm == "connected" and i.embeddings == "connected" 
+        for i in instance_results
     )
-
+    any_connected = any(
+        i.llm == "connected" or i.embeddings == "connected" 
+        for i in instance_results
+    )
+    
+    if all_connected:
+        overall_status = "healthy"
+    elif any_connected:
+        overall_status = "degraded"
+    else:
+        overall_status = "unhealthy"
+    
     return APIResponse.ok(
         LLMHealthStatus(
             status=overall_status,
-            llm=LLMHealth(
-                status=llm_status,
-                instance_name=test_instance,
-                temperature=llm.temperature,
-                max_tokens=llm.max_tokens,
-                timeout=int(llm.timeout),
-            ),
-            embeddings=EmbeddingHealth(
-                status=embeddings_status,
-                instance_name=test_instance,
-                dimension=DEFAULT_EMBEDDINGS_MODEL.config.dimensions,
-            ),
+            instances=instance_results,
             available_instances=available,
             timestamp=datetime.utcnow(),
         )

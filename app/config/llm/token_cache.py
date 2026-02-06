@@ -22,7 +22,7 @@ class TokenCache:
     
     Features:
     - Lazy refresh: Token is only fetched when needed
-    - Buffer time: Refreshes token before actual expiry to prevent edge cases
+    - Buffer time: Refreshes token before actual expiry
     - Thread-safe: Uses locks for both sync and async contexts
     - Invalidation: Token can be invalidated on 401 responses
     """
@@ -37,17 +37,6 @@ class TokenCache:
         ssl_verify: bool = False,
         buffer_seconds: int = 60
     ):
-        """Initialize token cache.
-        
-        Args:
-            instance_name: Name of this instance (for logging)
-            client_id: OAuth2 client ID
-            client_secret: OAuth2 client secret
-            auth_url: OAuth2 token endpoint URL
-            scope: OAuth2 scope for token request
-            ssl_verify: Whether to verify SSL certificates
-            buffer_seconds: Refresh token this many seconds before expiry
-        """
         self.instance_name = instance_name
         self.client_id = client_id
         self.client_secret = client_secret
@@ -58,13 +47,7 @@ class TokenCache:
         
         self._token: CachedToken | None = None
         self._sync_lock = threading.Lock()
-        self._async_lock: asyncio.Lock | None = None  # Created lazily
-        
-        logger.debug(
-            f"[TokenCache:{self.instance_name}] Initialized | "
-            f"auth_url={self.auth_url} | client_id={self.client_id[:8]}*** | "
-            f"scope={self.scope} | ssl_verify={self.ssl_verify}"
-        )
+        self._async_lock: asyncio.Lock | None = None
     
     def _get_async_lock(self) -> asyncio.Lock:
         """Lazily create async lock (must be in event loop context)."""
@@ -73,65 +56,31 @@ class TokenCache:
         return self._async_lock
     
     def _is_expired(self) -> bool:
-        """Check if token is missing or needs refresh (including buffer)."""
+        """Check if token is missing or needs refresh."""
         if self._token is None:
-            logger.debug(f"[TokenCache:{self.instance_name}] No cached token found")
             return True
         
         current_time = time.time()
         effective_expiry = self._token.expires_at - self.buffer_seconds
-        is_expired = current_time >= effective_expiry
-        
-        if is_expired:
-            logger.debug(
-                f"[TokenCache:{self.instance_name}] Token expired/expiring | "
-                f"current_time={current_time:.0f} | expires_at={self._token.expires_at:.0f} | "
-                f"buffer={self.buffer_seconds}s"
-            )
-        else:
-            remaining = effective_expiry - current_time
-            logger.debug(
-                f"[TokenCache:{self.instance_name}] Token valid | "
-                f"expires_in={remaining:.0f}s | token=...{self._token.access_token[-20:]}"
-            )
-        
-        return is_expired
+        return current_time >= effective_expiry
     
     def invalidate(self) -> None:
         """Clear cached token (call on 401 response)."""
-        logger.warning(f"[TokenCache:{self.instance_name}] INVALIDATING cached token (401 received)")
+        logger.warning(f"[TokenCache:{self.instance_name}] Token invalidated (401)")
         self._token = None
     
     # ---- Sync Methods ----
     
     def get_token(self) -> str:
-        """Get valid token, refreshing if needed (sync).
-        
-        Returns:
-            Valid access token string
-            
-        Raises:
-            requests.HTTPError: If token fetch fails
-        """
-        logger.debug(f"[TokenCache:{self.instance_name}] get_token() called (sync)")
-        
+        """Get valid token, refreshing if needed (sync)."""
         with self._sync_lock:
             if self._is_expired():
-                logger.info(f"[TokenCache:{self.instance_name}] Token refresh required, fetching new token...")
                 self._token = self._fetch_token_sync()
-            else:
-                logger.debug(f"[TokenCache:{self.instance_name}] Using cached token")
-            
             return self._token.access_token
     
     def _fetch_token_sync(self) -> CachedToken:
         """Fetch new token via sync HTTP request."""
-        logger.info(
-            f"[TokenCache:{self.instance_name}] >>> POST {self.auth_url} | "
-            f"grant_type=client_credentials | client_id={self.client_id[:8]}***"
-        )
-        
-        start_time = time.time()
+        logger.info(f"[TokenCache:{self.instance_name}] Fetching new token...")
         
         try:
             response = requests.post(
@@ -146,65 +95,32 @@ class TokenCache:
                 timeout=30,
                 verify=self.ssl_verify,
             )
-            
-            elapsed = time.time() - start_time
-            logger.info(
-                f"[TokenCache:{self.instance_name}] <<< Response: {response.status_code} | "
-                f"elapsed={elapsed:.2f}s"
-            )
-            
             response.raise_for_status()
             
             data = response.json()
             expires_in = data.get("expires_in", 3600)
             expires_at = time.time() + expires_in
-            access_token = data["access_token"]
             
-            logger.info(
-                f"[TokenCache:{self.instance_name}] Token acquired | "
-                f"expires_in={expires_in}s | token=...{access_token[-20:]}"
-            )
+            logger.info(f"[TokenCache:{self.instance_name}] Token acquired (expires_in={expires_in}s)")
             
-            return CachedToken(access_token=access_token, expires_at=expires_at)
+            return CachedToken(access_token=data["access_token"], expires_at=expires_at)
             
         except requests.RequestException as e:
-            elapsed = time.time() - start_time
-            logger.error(
-                f"[TokenCache:{self.instance_name}] Token fetch FAILED | "
-                f"error={type(e).__name__}: {str(e)[:100]} | elapsed={elapsed:.2f}s"
-            )
+            logger.error(f"[TokenCache:{self.instance_name}] Token fetch failed: {e}")
             raise
     
     # ---- Async Methods ----
     
     async def get_token_async(self) -> str:
-        """Get valid token, refreshing if needed (async).
-        
-        Returns:
-            Valid access token string
-            
-        Raises:
-            httpx.HTTPStatusError: If token fetch fails
-        """
-        logger.debug(f"[TokenCache:{self.instance_name}] get_token_async() called")
-        
+        """Get valid token, refreshing if needed (async)."""
         async with self._get_async_lock():
             if self._is_expired():
-                logger.info(f"[TokenCache:{self.instance_name}] Token refresh required (async), fetching...")
                 self._token = await self._fetch_token_async()
-            else:
-                logger.debug(f"[TokenCache:{self.instance_name}] Using cached token (async)")
-            
             return self._token.access_token
     
     async def _fetch_token_async(self) -> CachedToken:
         """Fetch new token via async HTTP request."""
-        logger.info(
-            f"[TokenCache:{self.instance_name}] >>> POST {self.auth_url} (async) | "
-            f"grant_type=client_credentials | client_id={self.client_id[:8]}***"
-        )
-        
-        start_time = time.time()
+        logger.info(f"[TokenCache:{self.instance_name}] Fetching new token (async)...")
         
         try:
             async with httpx.AsyncClient(verify=self.ssl_verify) as client:
@@ -219,31 +135,16 @@ class TokenCache:
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                     timeout=30,
                 )
-                
-                elapsed = time.time() - start_time
-                logger.info(
-                    f"[TokenCache:{self.instance_name}] <<< Response: {response.status_code} | "
-                    f"elapsed={elapsed:.2f}s (async)"
-                )
-                
                 response.raise_for_status()
             
             data = response.json()
             expires_in = data.get("expires_in", 3600)
             expires_at = time.time() + expires_in
-            access_token = data["access_token"]
             
-            logger.info(
-                f"[TokenCache:{self.instance_name}] Token acquired (async) | "
-                f"expires_in={expires_in}s | token=...{access_token[-20:]}"
-            )
+            logger.info(f"[TokenCache:{self.instance_name}] Token acquired (expires_in={expires_in}s)")
             
-            return CachedToken(access_token=access_token, expires_at=expires_at)
+            return CachedToken(access_token=data["access_token"], expires_at=expires_at)
             
         except httpx.RequestError as e:
-            elapsed = time.time() - start_time
-            logger.error(
-                f"[TokenCache:{self.instance_name}] Token fetch FAILED (async) | "
-                f"error={type(e).__name__}: {str(e)[:100]} | elapsed={elapsed:.2f}s"
-            )
+            logger.error(f"[TokenCache:{self.instance_name}] Token fetch failed: {e}")
             raise
