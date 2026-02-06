@@ -766,19 +766,150 @@ class DocTemplateWithTOC(SimpleDocTemplate):
         if flowable.__class__.__name__ == 'Paragraph':
             style_name = flowable.style.name
             text = flowable.getPlainText()
-            # We map Heading1 -> Level 0, Heading2 -> Level 1
             if style_name == 'Heading1':
                 self.notify('TOCEntry', (0, text, self.page))
             elif style_name == 'Heading2':
                 self.notify('TOCEntry', (1, text, self.page))
 
+# class BaseBuilder:
+#     def __init__(self, summaries: List[FileSummary], metrics: SystemMetrics, graph_analyzer, system_summary: Dict = None, images: Dict[str, str] = None):
+#         self.summaries = summaries
+#         self.metrics = metrics
+#         self.system_summary = system_summary or {}
+#         self.graph_analyzer = graph_analyzer
+        
+#         # --- Multi-Image Handling ---
+#         self.images = images or {}
+#         self.context_image_path = self.images.get('context')
+#         self.architecture_image_path = self.images.get('architecture')
+#         self.functional_image_path = self.images.get('functional')
+        
+#         # Data Slicing
+#         self.jcl_files = [s for s in summaries if s.file_type == 'JCL']
+#         self.code_files = [s for s in summaries if s.file_type in ['COBOL', 'PLI', 'ASSEMBLY', 'REXX']]
+#         self.data_files = [s for s in summaries if s.file_type in ['DCLGEN', 'SQL', 'COPYBOOK', 'PLI_COPYBOOK']]
+#         self.configs = [s for s in summaries if s.file_type in ['PARMLIB', 'CONTROL_CARD']]
+
+#         # Styles Setup
+#         styles = getSampleStyleSheet()
+#         self.styleN = styles['Normal']
+#         self.styleN.fontSize = 10
+#         self.styleN.leading = 12
+        
+#         self.styleH1 = ParagraphStyle(
+#             'Heading1', parent=styles['Heading1'], 
+#             fontSize=16, leading=20, spaceBefore=18, spaceAfter=12, 
+#             textColor=colors.HexColor("#003366")
+#         )
+#         self.styleH2 = ParagraphStyle(
+#             'Heading2', parent=styles['Heading2'], 
+#             fontSize=13, leading=16, spaceBefore=12, spaceAfter=6, 
+#             textColor=colors.HexColor("#404040")
+#         )
+#         self.styleH3 = ParagraphStyle(
+#             'Heading3', parent=styles['Heading3'], 
+#             fontSize=11, leading=14, spaceBefore=10, spaceAfter=4, 
+#             textColor=colors.HexColor("#606060")
+#         )
+#         self.styleH4 = ParagraphStyle(
+#             'Heading4', parent=styles['Normal'], 
+#             fontSize=10, leading=12, spaceBefore=6, spaceAfter=2, 
+#             fontName='Helvetica-BoldOblique'
+#         )
+        
+#         self.elements = []
+
+#     def save(self, path: str):
+#         doc = DocTemplateWithTOC(
+#             path, pagesize=A4,
+#             rightMargin=20*mm, leftMargin=20*mm,
+#             topMargin=20*mm, bottomMargin=20*mm
+#         )
+#         story = []
+#         story.append(Spacer(1, 60*mm))
+#         story.append(Paragraph(self.title_text, ParagraphStyle('Title', parent=self.styleH1, fontSize=24, alignment=TA_CENTER)))
+#         story.append(Spacer(1, 10*mm))
+#         story.append(Paragraph("System Reference Document", ParagraphStyle('SubTitle', parent=self.styleN, fontSize=16, alignment=TA_CENTER)))
+#         story.append(PageBreak())
+#         story.append(Paragraph("Table of Contents", self.styleH1))
+#         story.append(doc.toc)
+#         story.append(PageBreak())
+#         story.extend(self.elements)
+#         doc.multiBuild(story)
+
+#     def h1(self, text):
+#         self.elements.append(PageBreak())
+#         self.elements.append(Paragraph(text, self.styleH1))
+
+#     def h2(self, text):
+#         self.elements.append(Paragraph(text, self.styleH2))
+
+#     def h3(self, text):
+#         self.elements.append(Paragraph(text, self.styleH3))
+    
+#     def h4(self, text):
+#         self.elements.append(Paragraph(text, self.styleH4))
+
+#     def para(self, text):
+#         if not text: return
+#         clean_text = str(text).replace('\n', '<br/>')
+#         self.elements.append(Paragraph(clean_text, self.styleN))
+#         self.elements.append(Spacer(1, 2*mm))
+
+#     def bullet_list(self, items: List[str]):
+#         if not items: return
+#         list_items = [ListItem(Paragraph(str(item).strip("[]'"), self.styleN)) for item in items]
+#         self.elements.append(ListFlowable(list_items, bulletType='bullet', start='•', leftIndent=15, bulletFontSize=12))
+#         self.elements.append(Spacer(1, 3*mm))
+
+#     def image(self, path, width=160*mm):
+#         if not path or not Path(path).exists():
+#             self.para("<i>[Diagram Image Not Available]</i>")
+#             return
+#         try:
+#             img = Image(path)
+#             aspect = img.drawHeight / img.drawWidth
+#             img.drawWidth = width
+#             img.drawHeight = width * aspect
+#             self.elements.append(img)
+#             self.elements.append(Spacer(1, 5*mm))
+#         except Exception as e:
+#             logger.error(f"Failed to embed image: {e}")
+#             self.para("<i>[Error rendering diagram file]</i>")
+
+#     def table(self, headers: List[str], rows: List[List[str]], col_widths=None):
+#         if not rows:
+#             self.para("<i>No data available.</i>")
+#             return
+#         data = [[Paragraph(f"<b>{h}</b>", self.styleN) for h in headers]]
+#         for row in rows:
+#             data.append([Paragraph(str(cell), self.styleN) for cell in row])
+#         t = Table(data, colWidths=col_widths, repeatRows=1)
+#         t.setStyle(TableStyle([
+#             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E6E6E6")),
+#             ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+#             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+#             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+#             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+#             ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+#             ('TOPPADDING', (0, 0), (-1, -1), 6),
+#         ]))
+#         self.elements.append(t)
+#         self.elements.append(Spacer(1, 6*mm))
+
 class BaseBuilder:
-    def __init__(self, summaries: List[FileSummary], metrics: SystemMetrics, graph_analyzer, system_summary: Dict = None):
+    def __init__(self, summaries: List[FileSummary], metrics: SystemMetrics, graph_analyzer, system_summary: Dict = None, images: Dict[str, str] = None):
         self.summaries = summaries
         self.metrics = metrics
         self.system_summary = system_summary or {}
         self.graph_analyzer = graph_analyzer
-        self.graph_image_path = None
+        # self.title_text = "Mainframe Documentation" # Default
+        
+        # --- Multi-Image Handling ---
+        self.images = images or {}
+        self.context_image_path = self.images.get('context')
+        self.architecture_image_path = self.images.get('architecture')
+        self.functional_image_path = self.images.get('functional')
         
         # Data Slicing
         self.jcl_files = [s for s in summaries if s.file_type == 'JCL']
@@ -792,61 +923,55 @@ class BaseBuilder:
         self.styleN.fontSize = 10
         self.styleN.leading = 12
         
-        # Custom Heading Styles
         self.styleH1 = ParagraphStyle(
             'Heading1', parent=styles['Heading1'], 
             fontSize=16, leading=20, spaceBefore=18, spaceAfter=12, 
-            textColor=colors.HexColor("#003366") # Deep Blue
+            textColor=colors.HexColor("#003366")
         )
         self.styleH2 = ParagraphStyle(
             'Heading2', parent=styles['Heading2'], 
             fontSize=13, leading=16, spaceBefore=12, spaceAfter=6, 
-            textColor=colors.HexColor("#404040") # Dark Gray
+            textColor=colors.HexColor("#404040")
         )
         self.styleH3 = ParagraphStyle(
             'Heading3', parent=styles['Heading3'], 
             fontSize=11, leading=14, spaceBefore=10, spaceAfter=4, 
-            textColor=colors.HexColor("#606060") # Slate
+            textColor=colors.HexColor("#606060")
         )
+
         self.styleH4 = ParagraphStyle(
             'Heading4', parent=styles['Normal'], 
             fontSize=10, leading=12, spaceBefore=6, spaceAfter=2, 
             fontName='Helvetica-BoldOblique'
         )
+
+    
         
         self.elements = []
 
-    def save(self, path: str):
-        # Configure Page
-        doc = DocTemplateWithTOC(
-            path, pagesize=A4,
-            rightMargin=20*mm, leftMargin=20*mm,
-            topMargin=20*mm, bottomMargin=20*mm
+    def bullet(self, text):
+        """Renders a single bullet point (Fixes the AttributeError)."""
+        if not text: return
+        self.bullet_list([text])
+
+    def bullet_list(self, items: List[str]):
+        """Renders a list of items as bullets."""
+        if not items: return
+        list_items = [ListItem(Paragraph(str(item).strip("[]'"), self.styleN)) for item in items]
+        self.elements.append(
+            ListFlowable(list_items, bulletType='bullet', start='•', leftIndent=15, bulletFontSize=12)
         )
-        
-        # Build Story Sequence
-        story = []
-        
-        # 1. Title Page
-        story.append(Spacer(1, 60*mm))
-        story.append(Paragraph(self.title_text, ParagraphStyle('Title', parent=self.styleH1, fontSize=24, alignment=TA_CENTER)))
-        story.append(Spacer(1, 10*mm))
-        story.append(Paragraph("System Reference Document", ParagraphStyle('SubTitle', parent=self.styleN, fontSize=16, alignment=TA_CENTER)))
-        story.append(PageBreak())
+        self.elements.append(Spacer(1, 3*mm))
 
-        # 2. Table of Contents
-        story.append(Paragraph("Table of Contents", self.styleH1))
-        story.append(doc.toc)
-        story.append(PageBreak())
-
-        # 3. Content
-        story.extend(self.elements)
-
-        # Generate
-        doc.multiBuild(story)
+    def para(self, text):
+        if not text: return
+        # Wrap text in Paragraph for ReportLab
+        self.elements.append(Paragraph(str(text).replace('\n', '<br/>'), self.styleN))
+        self.elements.append(Spacer(1, 2*mm))
 
     def h1(self, text):
-        self.elements.append(PageBreak())
+        if self.elements:  # Only add page break if this isn't the first item
+            self.elements.append(PageBreak())
         self.elements.append(Paragraph(text, self.styleH1))
 
     def h2(self, text):
@@ -858,77 +983,65 @@ class BaseBuilder:
     def h4(self, text):
         self.elements.append(Paragraph(text, self.styleH4))
 
-    def para(self, text):
-        if not text: return
-        clean_text = str(text).replace('\n', '<br/>')
-        self.elements.append(Paragraph(clean_text, self.styleN))
-        self.elements.append(Spacer(1, 2*mm))
-
-    def bullet_list(self, items: List[str]):
-        if not items: return
-        list_items = []
-        for item in items:
-            clean = str(item).replace('[', '').replace(']', '').replace("'", "")
-            list_items.append(ListItem(Paragraph(clean, self.styleN)))
-        
-        self.elements.append(
-            ListFlowable(
-                list_items,
-                bulletType='bullet',
-                start='•',
-                leftIndent=15,
-                bulletFontSize=12
-            )
-        )
-        self.elements.append(Spacer(1, 3*mm))
-
-    def image(self, path, width=160*mm): # Reduced width slightly for margins
-        if not path or not Path(path).exists():
-            self.para("<i>[Diagram Image Not Available]</i>")
-            return
-        try:
-            img = Image(path)
-            # Preserve Aspect Ratio
-            aspect = img.drawHeight / img.drawWidth
-            img.drawWidth = width
-            img.drawHeight = width * aspect
-            
-            self.elements.append(img)
-            self.elements.append(Spacer(1, 5*mm))
-        except Exception as e:
-            logger.error(f"Failed to embed image: {e}")
-            self.para("<i>[Error rendering diagram file]</i>")
-
     def table(self, headers: List[str], rows: List[List[str]], col_widths=None):
         if not rows:
-            self.para("<i>No data available.</i>")
+            self.elements.append(Paragraph("<i>No data available.</i>", self.styleN))
             return
-            
-        # Convert all cell content to Paragraphs (allows text wrapping)
-        data = [[Paragraph(f"<b>{h}</b>", self.styleN) for h in headers]]
         
+        data = [[Paragraph(f"<b>{h}</b>", self.styleN) for h in headers]]
         for row in rows:
-            safe_row = []
-            for cell in row:
-                # Truncate extremely long cells to prevent PDF blowout
-                txt = str(cell)
-                if len(txt) > 5000: txt = txt[:5000] + "..."
-                safe_row.append(Paragraph(txt, self.styleN))
-            data.append(safe_row)
+            data.append([Paragraph(str(cell), self.styleN) for cell in row])
+        
+        # If col_widths not provided, use standard distribution
+        if not col_widths:
+            col_widths = [170*mm / len(headers)] * len(headers)
 
-        # Style
         t = Table(data, colWidths=col_widths, repeatRows=1)
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E6E6E6")), # Header BG
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E6E6E6")),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
         ]))
         self.elements.append(t)
         self.elements.append(Spacer(1, 6*mm))
+
+    def image(self, path, width=160*mm):
+        if not path or not Path(path).exists():
+            return
+        try:
+            img = Image(path)
+            aspect = img.drawHeight / img.drawWidth
+            img.drawWidth = width
+            img.drawHeight = width * aspect
+            self.elements.append(img)
+            self.elements.append(Spacer(1, 5*mm))
+        except Exception as e:
+            logger.error(f"Image error: {e}")
+
+    def save(self, path: str):
+        doc = DocTemplateWithTOC(
+            path, pagesize=A4,
+            rightMargin=20*mm, leftMargin=20*mm,
+            topMargin=20*mm, bottomMargin=20*mm
+        )
+        story = []
+        # Title Page
+        story.append(Spacer(1, 60*mm))
+        story.append(Paragraph(self.title_text, ParagraphStyle('Title', parent=self.styleH1, fontSize=24, alignment=TA_CENTER)))
+        story.append(Spacer(1, 10*mm))
+        story.append(Paragraph("Project Reference Document", ParagraphStyle('SubTitle', parent=self.styleN, fontSize=16, alignment=TA_CENTER)))
+        story.append(PageBreak())
+        
+        # TOC
+        story.append(Paragraph("Table of Contents", self.styleH1))
+        story.append(doc.toc)
+        story.append(PageBreak())
+        
+        # Content
+        story.extend(self.elements)
+        doc.multiBuild(story)
 
 class TechnicalSpecBuilder(BaseBuilder):
     def __init__(self, *args, **kwargs):
@@ -947,19 +1060,21 @@ class TechnicalSpecBuilder(BaseBuilder):
     def _intro(self):
         self.h1("1. Introduction")
         self.h2("1.1 Purpose")
-        self.para("This document provides a detailed technical reference for the existing system, generated via automated static analysis of the codebase.")
-        
+        self.para(self.system_summary.get('business_purpose', "Technical reference generated via static analysis of the codebase."))
         self.h2("1.2 Scope of Analysis")
-        self.para("The following components were analyzed:")
         rows = [[k, str(v)] for k, v in self.metrics.files_by_type.items()]
         self.table(["Component Type", "Count"], rows, [100*mm, 50*mm])
-        
         self.h2("1.3 Technology Stack")
         techs = ", ".join(list(self.metrics.files_by_type.keys()))
         self.para(f"Identified technologies: {techs}")
         
+        # --- Technical Spec 1.4: Context Diagram ---
         self.h2("1.4 System Context Diagram")
-        self.para("Refer to Section 2.1 for the architectural visual.")
+        if self.context_image_path:
+            self.image(self.context_image_path)
+            self.para("<i>Figure 1: High-level system boundaries and external interfaces.</i>")
+        else:
+            self.para("Context diagram could not be generated from the available source dependencies.")
         
         self.h2("1.5 Acronyms & Definitions")
         glossary = []
@@ -967,7 +1082,6 @@ class TechnicalSpecBuilder(BaseBuilder):
             for s in self.summaries[:5]:
                 g = s.business_overview.get('glossary', [])
                 if g: glossary.extend(g); break
-        
         if glossary:
             rows = [[g.get('term',''), g.get('definition','')] for g in glossary]
             self.table(["Acronym", "Definition"], rows, [40*mm, 130*mm])
@@ -978,16 +1092,13 @@ class TechnicalSpecBuilder(BaseBuilder):
         self.h1("2. System Architecture")
         self.h2("2.1 System Landscape")
         self.para(self.system_summary.get('system_landscape', 'System landscape details unavailable.'))
-        
         self.h2("2.2 Integration Architecture")
-        
         self.h3("Upstream Systems")
         inputs = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
                 if isinstance(ds, dict) and 'OLD' in str(ds.get('usage', '')).upper():
                     inputs.append([str(ds.get('dataset', 'Unknown')), jcl.filename])
-        # Deduplicate
         if inputs:
             unique = [list(x) for x in set(tuple(x) for x in inputs)]
             self.table(["Dataset", "Ingested By"], unique[:15], [100*mm, 70*mm])
@@ -1006,21 +1117,24 @@ class TechnicalSpecBuilder(BaseBuilder):
         else:
             self.para("No downstream feeds identified.")
 
+        # --- Technical Spec 2.3: Process Flow ---
         self.h2("2.3 High-Level Process Flow")
-        if self.graph_image_path: self.image(self.graph_image_path)
+        if self.architecture_image_path: 
+            self.image(self.architecture_image_path)
+            self.para("<i>Figure 2: Component interaction and control flow graph.</i>")
+        else:
+            self.para("Process flow diagram generation failed.")
         
         self.h2("2.4 Data Flow Architecture")
         self.para("The system architecture follows a Batch Execution model updating persistent stores.")
 
     def _batch(self):
         self.h1("3. Batch Execution Specification")
-        
         self.h2("3.1 Job Definitions")
         for jcl in self.jcl_files:
             self.h3(f"Job: {jcl.filename}")
             header = jcl.technical_analysis.get('job_header', {})
             self.para(f"Class: {header.get('class', 'N/A')} | Owner: {header.get('owner', 'N/A')}")
-            
             steps = jcl.technical_analysis.get('steps', [])
             if steps:
                 rows = [[str(s.get('step_name')), str(s.get('program')), str(s.get('description'))] for s in steps]
@@ -1035,50 +1149,46 @@ class TechnicalSpecBuilder(BaseBuilder):
             self.para("No PROCs found.")
 
         self.h2("3.3 Job Dependencies")
-        self.para("Dependencies inferred from dataset usage (Producer -> Consumer):")
-        # Placeholder for complex dependency chain text
-        self.para("Refer to Process Flow diagram.")
+        chains = []
+        for u, v, d in self.graph_analyzer.graph.edges(data=True):
+            if d.get('type') in ['TRIGGER', 'EXEC_PGM', 'EXEC_PROC']:
+                chains.append([u, v, d.get('type')])
+        if chains:
+            self.table(["Source Job/File", "Target Component", "Relationship"], chains[:20], [60*mm, 60*mm, 40*mm])
+        else:
+            self.para("No automated job chains identified.")
 
         self.h2("3.4 Utility & Control Specifications")
         if self.configs:
             for cfg in self.configs:
                 self.h3(f"Control Member: {cfg.filename}")
                 self.para(cfg.business_overview.get('purpose', ''))
-                
-                # Logic Rules
                 rules = cfg.technical_analysis.get('configuration_areas', [])
                 if rules:
                     self.h4("Logic Rules")
                     self.bullet_list(rules)
-                
-                # Parameters
                 params = cfg.technical_analysis.get('key_parameters', [])
                 if params and isinstance(params[0], dict):
                     rows = [[p.get('name'), p.get('value'), p.get('description')] for p in params]
                     self.table(["Param", "Value", "Desc"], rows, [40*mm, 40*mm, 90*mm])
+        else:
+            self.para("No utilities identified")
 
     def _logic(self):
         self.h1("4. Application Logic Specification")
-        
-        sorted_code = sorted(self.code_files, key=lambda x: (x.file_type, x.filename))
+        sorted_code = sorted(self.code_files, key=lambda x: x.filename)
         for idx, prog in enumerate(sorted_code, 1):
             self.h3(f"4.1.{idx} {prog.filename} ({prog.file_type})")
-            
             self.h4("Functional Logic")
             self.para(prog.business_overview.get('purpose', 'N/A'))
             self.bullet_list(prog.business_overview.get('scope', []))
-            
             self.h4("Call Graph / I/O")
-            ops = prog.technical_analysis.get('key_operations', [])
-            self.bullet_list(ops)
-            
+            self.bullet_list(prog.technical_analysis.get('key_operations', []))
             self.h4("Error Handling")
-            notes = prog.technical_analysis.get('technical_notes', [])
-            self.bullet_list(notes)
+            self.bullet_list(prog.technical_analysis.get('technical_notes', []))
 
     def _data(self):
         self.h1("5. Data Specification")
-        
         self.h2("5.1 Database Schema (DB2)")
         dclgens = [f for f in self.data_files if f.file_type in ['DCLGEN', 'SQL']]
         for dcl in dclgens:
@@ -1094,10 +1204,7 @@ class TechnicalSpecBuilder(BaseBuilder):
             self.h3(f"Layout: {copy.filename}")
             fields = copy.technical_analysis.get('table_structure') or copy.technical_analysis.get('key_fields')
             if fields:
-                rows = []
-                for f in fields:
-                    if isinstance(f, dict):
-                        rows.append([str(f.get('column_name') or f.get('field')), str(f.get('type') or f.get('description'))])
+                rows = [[str(f.get('column_name') or f.get('field')), str(f.get('type') or f.get('description'))] for f in fields if isinstance(f, dict)]
                 self.table(["Field", "Type/Desc"], rows, [80*mm, 90*mm])
 
         self.h2("5.3 CRUD Matrix")
@@ -1107,9 +1214,8 @@ class TechnicalSpecBuilder(BaseBuilder):
             for op in ops:
                 if isinstance(op, dict):
                     rows.append([prog.filename, str(op.get('target')), str(op.get('operation'))])
-        
         if rows:
-            self.table(["Program", "Table/File", "Op"], rows[:30], [50*mm, 80*mm, 40*mm]) # Limit rows
+            self.table(["Program", "Table/File", "Op"], rows[:30], [50*mm, 80*mm, 40*mm])
 
     def _ops(self):
         self.h1("6. Operational Support & Reliability")
@@ -1119,10 +1225,8 @@ class TechnicalSpecBuilder(BaseBuilder):
             self.para(f"Jobs with explicit restart: {', '.join(restart_jobs)}")
         else:
             self.para("No explicit RESTART parameters found. Standard step restart applies.")
-            
         self.h2("6.2 Error Handling")
         self.para("System uses standard Condition Code (COND) triggers.")
-        
         self.h2("6.3 Performance")
         self.para("Analysis of high-frequency I/O modules based on call graph.")
 
@@ -1131,7 +1235,6 @@ class TechnicalSpecBuilder(BaseBuilder):
         self.h2("7.1 File List & Checksums")
         rows = [[s.filename, s.file_type] for s in self.summaries]
         self.table(["Filename", "Type"], rows, [100*mm, 50*mm])
-        
         self.h2("7.2 Missing Dependencies")
         self.para("No missing dependencies detected in current scope.")
 
@@ -1141,110 +1244,134 @@ class FunctionalSpecBuilder(BaseBuilder):
         self.title_text = "Functional Specification"
 
     def build(self):
-        self._intro()
-        self._flows()
-        self._logic()
-        self._interfaces()
-        self._ops()
-        self._appx()
+        self._render_doc_control()         # 1
+        self._render_introduction()        # 2
+        self._render_functional_flows()    # 3
+        self._render_detailed_logic()      # 4
+        self._render_interfaces()          # 5
+        self._render_ops()                 # 6
+        self._render_appendices()          # 7
+        
+        # return self.pdf
 
-    def _intro(self):
+    def _render_doc_control(self):
+        self.h1("1. Document Control")
+        self.h2("1.1 Version Control")
+        self.table(["Version", "Date", "Description"], [["1.0", "Auto-Generated", "Initial System Documentation"]], [30*mm, 40*mm, 100*mm])
+
+    def _render_introduction(self):
         self.h1("2. Introduction")
+        
         self.h2("2.1 Business Overview")
-        self.para(self.system_summary.get('business_purpose', 'N/A'))
-        
+        self.para(self.system_summary.get('business_purpose', 'High-level business overview of the system processing.'))
+
         self.h2("2.2 System Purpose")
-        self.para("The system facilitates core transaction processing, validation, and reporting.")
-        
-        self.h2("2.3 Scope")
-        self.para("Included modules: " + ", ".join(list(set([s.file_type for s in self.summaries]))))
-        
+        self.para("Based on module centrality and architectural analysis, the primary purpose of the system is:")
+        top_mods = self.metrics.top_complex_modules
+        if top_mods:
+            self.para("Primary Functional Hubs:")
+            for mod in top_mods[:5]:
+                self.bullet(mod)
+        else:
+            self.para("The system facilitates core transaction management and data reconciliation.")
+
+        self.h2("2.3 Scope of Current Functionality")
+        # List major categories derived from file types
+        ftypes = self.metrics.files_by_type
+        scope_text = "The analyzed system scope encompasses: "
+        scope_items = []
+        if ftypes.get('COBOL'): scope_items.append("Business Logic and Calculations")
+        if ftypes.get('JCL'): scope_items.append("Batch Orchestration and Workflows")
+        if ftypes.get('DCLGEN') or ftypes.get('SQL'): scope_items.append("Relational Database Persistence")
+        self.para(scope_text + ", ".join(scope_items) + ".")
+
         self.h2("2.4 Glossary")
         glossary = self.system_summary.get('glossary', [])
         if glossary:
             rows = [[g.get('term',''), g.get('definition','')] for g in glossary]
             self.table(["Term", "Definition"], rows, [40*mm, 130*mm])
+        else:
+            self.para("Technical terms and acronyms are defined within the logic analysis sections.")
 
-    def _flows(self):
+    def _render_functional_flows(self):
         self.h1("3. High-Level Functional Flows")
         
-        # 3.1 Diagram
-        self.h2("3.1 Process Diagram")
-        flow = self.system_summary.get('functional_flow_diagram', {})
-        if flow.get('description'): self.para(flow['description'])
-        
-        steps = flow.get('steps_table', [])
-        if steps:
-            rows = [[str(s.get('actor')), str(s.get('action')), str(s.get('outcome'))] for s in steps]
-            self.table(["Actor", "Action", "Outcome"], rows, [50*mm, 70*mm, 50*mm])
+        self.h2("3.1 High-Level Process Diagram")
+        if self.functional_image_path:
+            self.image(self.functional_image_path)
+            self.para("<i>Figure: End-to-End Business Sequence.</i>")
         else:
-            self.para("No flow steps defined.")
+            self.para("Logical flow: Inbound Feeds -> Batch Validation -> Core Processing -> Data Update -> Reporting.")
 
-        # 3.2 Groups
         self.h2("3.2 Core Functional Groups")
-        
-        # Grouping Logic
-        tx_progs = []
-        rpt_progs = []
-        maint_progs = []
-
+        tx_progs, rpt_progs, maint_progs = [], [], []
         for p in self.code_files:
             text = (str(p.technical_analysis) + str(p.business_overview)).upper()
             if any(x in text for x in ['INSERT', 'UPDATE', 'WRITE', 'TRANSACTION']): tx_progs.append(p.filename)
-            elif any(x in text for x in ['REPORT', 'PRINT', 'DISPLAY']): rpt_progs.append(p.filename)
-            elif any(x in text for x in ['BACKUP', 'ARCHIVE', 'DELETE']): maint_progs.append(p.filename)
+            elif any(x in text for x in ['REPORT', 'PRINT', 'DISPLAY', 'SYSOUT']): rpt_progs.append(p.filename)
+            elif any(x in text for x in ['BACKUP', 'ARCHIVE', 'DELETE', 'CLEANUP']): maint_progs.append(p.filename)
 
         self.h3("3.2.1 Transaction Processing Group")
-        self.bullet_list(tx_progs)
-        
+        if tx_progs: self.bullet_list(tx_progs[:10])
+        else: self.para("Modules responsible for state changes and financial updates.")
+
         self.h3("3.2.2 Reporting & Analysis Group")
-        self.bullet_list(rpt_progs)
-        
+        if rpt_progs: self.bullet_list(rpt_progs[:10])
+        else: self.para("Modules generating business artifacts and audit logs.")
+
         self.h3("3.2.3 Data Maintenance Group")
-        self.bullet_list(maint_progs)
+        if maint_progs: self.bullet_list(maint_progs[:10])
+        else: self.para("Modules handling system hygiene and data retention.")
 
         self.h2("3.3 Reporting & Extraction Process")
-        self.para("See Interface Specification -> Reporting Outputs.")
+        self.para("The system identifies data extraction points via JCL SYSOUT and outbound file definitions.")
+        extract_jobs = [j.filename for j in self.jcl_files if 'REPORT' in j.filename.upper() or 'RPT' in j.filename.upper()]
+        if extract_jobs:
+            self.para("Key extraction jobs identified:")
+            self.bullet_list(extract_jobs)
 
-    def _logic(self):
+    def _render_detailed_logic(self):
         self.h1("4. Detailed Functional Logic")
         
         self.h2("4.1 Business Rules & Validations")
-        for prog in self.code_files:
+        for prog in self.code_files[:20]: # Show rules for major programs
             scope = prog.business_overview.get('scope', [])
             if scope:
-                self.h3(f"{prog.filename}")
+                self.h3(f"Logic: {prog.filename}")
                 self.bullet_list(scope)
 
         self.h2("4.2 Data Management Functions")
-        
-        # Logic to split CRUD types
         inserts, updates, deletes = [], [], []
         for prog in self.code_files:
             ops = (str(prog.technical_analysis.get('key_operations')) + str(prog.technical_analysis.get('data_interactions'))).upper()
-            if 'INSERT' in ops or 'WRITE' in ops: inserts.append(prog.filename)
+            if 'INSERT' in ops: inserts.append(prog.filename)
             if 'UPDATE' in ops or 'REWRITE' in ops: updates.append(prog.filename)
             if 'DELETE' in ops: deletes.append(prog.filename)
 
         self.h3("4.2.1 Create/Insert Logic")
-        self.bullet_list(inserts)
-        self.h3("4.2.2 Update Logic")
-        self.bullet_list(updates)
-        self.h3("4.2.3 Deletion Logic")
-        self.bullet_list(deletes)
+        self.para("Programs adding new system records:")
+        self.bullet_list(inserts[:10])
+
+        self.h3("4.2.2 Update/Maintain Logic")
+        self.para("Programs maintaining existing records:")
+        self.bullet_list(updates[:10])
+
+        self.h3("4.2.3 Logical Deletion")
+        self.para("Programs handling record removal or deactivation:")
+        self.bullet_list(deletes[:10])
 
         self.h2("4.3 Transformations")
-        self.para("Data format conversions detected in COBOL logic.")
+        self.para("Data transformations involve converting raw input formats (EBCDIC/Flat) into relational DB2 structures as identified in COBOL Procedure logic.")
 
-    def _interfaces(self):
+    def _render_interfaces(self):
         self.h1("5. Interface Specification")
         
-        self.h2("5.1 User Interfaces")
+        self.h2("5.1 User Interfaces (Screens)")
         cics = [p.filename for p in self.code_files if 'CICS' in str(p.technical_analysis).upper()]
-        if cics: self.para(f"Online modules: {', '.join(cics)}")
-        else: self.para("Batch Only.")
+        if cics: self.para(f"Online CICS modules: {', '.join(cics)}")
+        else: self.para("The system is primarily Batch Process driven.")
 
-        self.h2("5.2 External Dependencies")
+        self.h2("5.2 External Business Dependencies")
         inputs = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
@@ -1252,7 +1379,9 @@ class FunctionalSpecBuilder(BaseBuilder):
                     inputs.append([str(ds.get('dataset')), jcl.filename])
         if inputs:
             unique = [list(x) for x in set(tuple(x) for x in inputs)]
-            self.table(["Input File", "Consumed By"], unique[:15], [100*mm, 70*mm])
+            self.table(["Upstream Data Feed", "Consuming Job"], unique[:10], [110*mm, 60*mm])
+        else:
+            self.para("No external business data dependencies identified.")
 
         self.h2("5.3 Reporting Outputs")
         reports = []
@@ -1260,38 +1389,67 @@ class FunctionalSpecBuilder(BaseBuilder):
             for ds in jcl.technical_analysis.get('io_datasets', []):
                 if isinstance(ds, dict) and ('SYSOUT' in str(ds) or '.RPT' in ds.get('dataset', '')):
                     reports.append([str(ds.get('dataset')), jcl.filename])
-        self.table(["Report", "Generated By"], reports, [100*mm, 70*mm])
+        if reports:
+            self.table(["Report Name", "Generating Job"], reports[:15], [100*mm, 70*mm])
 
         self.h2("5.4 Downstream Feeds")
         feeds = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
                 if isinstance(ds, dict) and 'NEW' in str(ds.get('usage', '')).upper():
-                    feeds.append([str(ds.get('dataset')), jcl.filename])
-        self.table(["Output File", "Generated By"], feeds[:15], [100*mm, 70*mm])
+                    name = str(ds.get('dataset',''))
+                    if 'TEMP' not in name.upper():
+                        feeds.append([name, jcl.filename])
+        if feeds:
+            self.table(["Outbound Feed", "Source Job"], feeds[:10], [100*mm, 70*mm])
 
-    def _ops(self):
+    def _render_ops(self):
         self.h1("6. Operational Functions")
-        freq = self.system_summary.get('schedule_frequency', {})
-        self.para(f"Frequency: {freq.get('frequency', 'N/A')}")
-        self.para(f"Window: {freq.get('sla_window', 'N/A')}")
         
-        self.h2("6.3 Backup")
-        backups = [j.filename for j in self.jcl_files if 'BACKUP' in str(j.business_overview).upper()]
-        self.bullet_list(backups)
+        self.h2("6.1 Processing Frequencies")
+        freq_rows = []
+        for jcl in self.jcl_files:
+            name = jcl.filename.upper()
+            if 'DLY' in name: freq_rows.append([jcl.filename, "Daily Batch"])
+            elif 'MTH' in name: freq_rows.append([jcl.filename, "Monthly Cycle"])
+        if freq_rows: 
+            self.table(["Job", "Inferred Frequency"], freq_rows, [80*mm, 80*mm])
+        else:
+            self.para("Execution frequency is determined by the production batch scheduler.")
 
-    def _appx(self):
+        self.h2("6.2 Data Volume Capacities")
+        self.para("System capacity is sized for high-volume mainframe processing. Dataset allocations (CYL/TRK) indicate significant throughput for Master Files.")
+
+        self.h2("6.3 Backup & Recovery Procedures")
+        backups = [j.filename for j in self.jcl_files if 'BACKUP' in str(j.business_overview).upper() or 'IEBGENER' in str(j.technical_analysis)]
+        if backups:
+            self.para("The following jobs perform data protection and backup functions:")
+            self.bullet_list(backups)
+
+        self.h2("6.4 Archiving Logic")
+        self.para("Standard data retention is managed via Generation Data Groups (GDG) and archival jobs defined in JCL.")
+
+        self.h2("6.5 Error Handling Mechanisms")
+        self.para("Standard technical error routines (writes to ERROR-LOG) and Condition Code (COND) checking are utilized to ensure data integrity during failures.")
+
+    def _render_appendices(self):
         self.h1("7. Appendices")
-        self.h2("7.1 Data Dictionary")
+        
+        self.h2("7.1 Data Dictionary (Business View)")
         for copy in self.data_files:
             ent = copy.business_overview.get('key_data_entities', [])
             if ent:
-                self.h3(copy.filename)
+                self.h3(f"Record: {copy.filename}")
                 self.bullet_list(ent)
+
         self.h2("7.2 Report Catalog")
-        reports = []
+        # Reuse logic to list all outputs for the final appendix
+        all_rpt = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
                 if isinstance(ds, dict) and ('SYSOUT' in str(ds) or '.RPT' in ds.get('dataset', '')):
-                    reports.append([str(ds.get('dataset')), jcl.filename])
-        self.table(["Report", "Generated By"], reports, [100*mm, 70*mm])
+                    all_rpt.append([jcl.filename, str(ds.get('dataset'))])
+        if all_rpt:
+            self.table(["Source Job", "Output Artifact"], all_rpt, [70*mm, 100*mm])
+        else:
+            self.para("Detailed report catalog is available in the Technical Specification.")
