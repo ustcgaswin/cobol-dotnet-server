@@ -45,7 +45,7 @@ class LLMModel(Enum):
     # Primary models
     GPT4O_DEV = ModelConfig(
         name="gpt-40-dev",
-        max_tokens=16384,
+        max_tokens=4096,  # 128k context / 4k output
         temperature=0.1,
         description="Primary model for complex code generation tasks"
     )
@@ -57,13 +57,42 @@ class LLMModel(Enum):
         description="Fast model for simple tasks and summarization"
     )
     
-    # Add more models as needed:
-    # GPT4_TURBO = ModelConfig(
-    #     name="gpt-4-turbo",
-    #     max_tokens=8192,
-    #     temperature=0.1,
-    #     description="Balanced model for general use"
-    # )
+    # Superior model for complex tasks
+    GPT4_1 = ModelConfig(
+        name="gpt-4.1-20250414-gs",
+        max_tokens=32768,  # 1M context / 32k output
+        temperature=0.1,
+        description="Superior model for complex reasoning and coding"
+    )
+
+    # Efficient model for standard tasks (Default for services)
+    GPT4_1_MINI = ModelConfig(
+        name="gpt-4.1-mini-20250414-gs",
+        max_tokens=32768,  # 1M context / 32k output
+        temperature=0.1,
+        description="Efficient and capable model for standard tasks"
+    )
+
+    GPT4_1_NANO = ModelConfig(
+        name="gpt-4.1-nano-20250414-gs",
+        max_tokens=32768,  # 1M context / 32k output
+        temperature=0.1,
+        description="Ultra-efficient model for simple tasks"
+    )
+
+    GPT4_TURBO = ModelConfig(
+        name="gpt-4-turbo",
+        max_tokens=4096,  # 128k context / 4k output
+        temperature=0.1,
+        description="Balanced model for general use"
+    )
+
+    CLAUDE_3_SONNET = ModelConfig(
+        name="anthropic.claude-3-sonnet-20240229-v1:0",
+        max_tokens=4096,  # 200k context / 4k output
+        temperature=0.1,
+        description="High capability model (Anthropic)"
+    )
     
     @property
     def config(self) -> ModelConfig:

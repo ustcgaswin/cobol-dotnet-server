@@ -81,7 +81,7 @@ class SummarizerService:
         self.project_storage = settings.get_storage_path() / str(project_id)
         self.output_dir = settings.get_artifacts_path() / str(project_id)
         self.summaries_dir = self.output_dir / "summaries"
-        self.llm = get_llm(DOCGEN, model=LLMModel.GPT4O_DEV)
+        self.llm = get_llm(DOCGEN, model=LLMModel.GPT4_1_MINI)
 
         # Define the strategies for supported Enums
         self.strategies = {

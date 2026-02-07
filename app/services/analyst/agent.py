@@ -89,7 +89,7 @@ def create_analyst_agent(tools: list, project_id: str):
         Compiled LangGraph agent
     """
     # Get LLM from config
-    model = get_llm(DOCGEN, model=LLMModel.GPT4O_DEV)
+    model = get_llm(DOCGEN, model=LLMModel.GPT4_1_MINI)
     
     # Bind tools to model
     tools_by_name = {tool.name: tool for tool in tools}

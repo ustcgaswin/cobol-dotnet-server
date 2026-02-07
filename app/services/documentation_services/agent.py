@@ -116,7 +116,7 @@
         
 #         if mode == "ALL":
 #             return "generate_functional"
-#         elif mode == "TECHNICAL":
+#       llm = get_llm(DOCGEN, model=LLMModel.GPT4_1_MINI)CHNICAL":
 #             return "render_docx"
         
 #         # Should not happen if logic above is correct, but safe fallback
