@@ -1,19 +1,27 @@
 """Custom LLM client with OAuth2 authentication.
 
 Implements LangChain's BaseChatModel for full compatibility with
-LangChain/LangGraph agents and chains.
+LangChain/LangGraph agents and chains, including tool calling.
 """
 
 import asyncio
+import json
 import time
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Sequence
 
 import httpx
 import requests
 from langchain_core.callbacks import CallbackManagerForLLMRun, AsyncCallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import Field
 
@@ -36,6 +44,7 @@ class OAuthLLMClient(BaseChatModel):
     - OAuth2 token management with automatic refresh
     - Retry on 401, 429, 502 errors
     - Automatic usage statistics tracking
+    - Tool calling support (OpenAI-compatible)
     - Both sync and async support
     """
     
@@ -69,18 +78,66 @@ class OAuthLLMClient(BaseChatModel):
         }
     
     def _format_messages(self, messages: List[BaseMessage]) -> list[dict]:
-        """Convert LangChain messages to API format."""
+        """Convert LangChain messages to OpenAI API format."""
         formatted = []
         for msg in messages:
             if isinstance(msg, SystemMessage):
-                role = "system"
+                formatted.append({"role": "system", "content": msg.content})
+            
             elif isinstance(msg, HumanMessage):
-                role = "user"
+                formatted.append({"role": "user", "content": msg.content})
+            
             elif isinstance(msg, AIMessage):
-                role = "assistant"
+                # AI message - may include tool_calls
+                message_dict = {"role": "assistant"}
+                
+                if msg.content:
+                    message_dict["content"] = msg.content
+                else:
+                    message_dict["content"] = None
+                
+                # Include tool_calls if present
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    message_dict["tool_calls"] = [
+                        {
+                            "id": tc.get("id", tc.get("name", "")),
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["args"]) if isinstance(tc["args"], dict) else tc["args"],
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ]
+                
+                formatted.append(message_dict)
+            
+            elif isinstance(msg, ToolMessage):
+                # Tool response message
+                formatted.append({
+                    "role": "tool",
+                    "content": msg.content,
+                    "tool_call_id": msg.tool_call_id,
+                })
+            
             else:
-                role = "user"
-            formatted.append({"role": role, "content": msg.content})
+                # Fallback for unknown message types
+                formatted.append({"role": "user", "content": str(msg.content)})
+        
+        return formatted
+    
+    def _format_tools(self, tools: Sequence[BaseTool]) -> list[dict]:
+        """Convert LangChain tools to OpenAI API format."""
+        formatted = []
+        for tool in tools:
+            formatted.append({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "parameters": tool.args_schema.schema() if tool.args_schema else {"type": "object", "properties": {}},
+                },
+            })
         return formatted
     
     def _log_error_response(self, status_code: int, response: requests.Response) -> None:
@@ -103,7 +160,7 @@ class OAuthLLMClient(BaseChatModel):
             f"[LLM:{self.instance_name}] Got {status_code} | response={body}"
         )
     
-    def _call_with_retry(self, messages: list[dict]) -> dict:
+    def _call_with_retry(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         """Make API call with retry logic (sync)."""
         token = self.token_cache.get_token()
         
@@ -118,6 +175,10 @@ class OAuthLLMClient(BaseChatModel):
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
             }
+            
+            # Include tools if provided
+            if tools:
+                payload["tools"] = tools
             
             response = requests.post(
                 self.endpoint_url,
@@ -155,7 +216,7 @@ class OAuthLLMClient(BaseChatModel):
         
         raise RuntimeError(f"[{self.instance_name}] Failed to call LLM after {MAX_RETRIES} retries")
     
-    async def _call_with_retry_async(self, messages: list[dict]) -> dict:
+    async def _call_with_retry_async(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         """Make API call with retry logic (async)."""
         token = await self.token_cache.get_token_async()
         
@@ -171,6 +232,10 @@ class OAuthLLMClient(BaseChatModel):
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
                 }
+                
+                # Include tools if provided
+                if tools:
+                    payload["tools"] = tools
                 
                 response = await client.post(
                     self.endpoint_url,
@@ -207,6 +272,36 @@ class OAuthLLMClient(BaseChatModel):
         
         raise RuntimeError(f"[{self.instance_name}] Failed to call LLM after {MAX_RETRIES} retries")
     
+    def _parse_response(self, data: dict) -> AIMessage:
+        """Parse API response into AIMessage with optional tool_calls."""
+        # API returns payload.choices structure
+        message = data["payload"]["choices"][0]["message"]
+        
+        content = message.get("content") or ""
+        tool_calls_raw = message.get("tool_calls")
+        
+        # Parse tool_calls if present
+        tool_calls = []
+        if tool_calls_raw:
+            for tc in tool_calls_raw:
+                func = tc.get("function", {})
+                args = func.get("arguments", "{}")
+                
+                # Parse arguments - they come as JSON string
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {}
+                
+                tool_calls.append({
+                    "id": tc.get("id", ""),
+                    "name": func.get("name", ""),
+                    "args": args,
+                })
+        
+        return AIMessage(content=content, tool_calls=tool_calls)
+    
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -215,18 +310,22 @@ class OAuthLLMClient(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         """Sync generation - required by BaseChatModel."""
-        formatted = self._format_messages(messages)
+        formatted_messages = self._format_messages(messages)
+        
+        # Format tools if provided (from bind_tools)
+        tools = kwargs.get("tools")
+        formatted_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
         
         try:
-            data = self._call_with_retry(formatted)
-            
-            # Parse response - API returns payload.choices structure
-            content = data["payload"]["choices"][0]["message"]["content"]
+            data = self._call_with_retry(formatted_messages, formatted_tools)
+            ai_message = self._parse_response(data)
             
             self.stats_tracker.record_request(self.instance_name, "llm", success=True)
             
             return ChatResult(
-                generations=[ChatGeneration(message=AIMessage(content=content))]
+                generations=[ChatGeneration(message=ai_message)]
             )
         except Exception as e:
             self.stats_tracker.record_request(self.instance_name, "llm", success=False)
@@ -241,18 +340,22 @@ class OAuthLLMClient(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         """Async generation."""
-        formatted = self._format_messages(messages)
+        formatted_messages = self._format_messages(messages)
+        
+        # Format tools if provided (from bind_tools)
+        tools = kwargs.get("tools")
+        formatted_tools = None
+        if tools:
+            formatted_tools = self._format_tools(tools)
         
         try:
-            data = await self._call_with_retry_async(formatted)
-            
-            # Parse response - API returns payload.choices structure
-            content = data["payload"]["choices"][0]["message"]["content"]
+            data = await self._call_with_retry_async(formatted_messages, formatted_tools)
+            ai_message = self._parse_response(data)
             
             self.stats_tracker.record_request(self.instance_name, "llm", success=True)
             
             return ChatResult(
-                generations=[ChatGeneration(message=AIMessage(content=content))]
+                generations=[ChatGeneration(message=ai_message)]
             )
         except Exception as e:
             self.stats_tracker.record_request(self.instance_name, "llm", success=False)
