@@ -1,6 +1,7 @@
-"""FAISS vector store implementation."""
+"""FAISS vector store implementation with batching."""
 
 import shutil
+import time
 from pathlib import Path
 
 from langchain_community.vectorstores import FAISS
@@ -11,8 +12,13 @@ from loguru import logger
 from app.core.vector_store.base import BaseVectorStore
 
 
+# Batching configuration
+BATCH_SIZE = 10  # Documents per batch
+BATCH_DELAY = 10.0  # Seconds between batches (prevents 429 rate limits)
+
+
 class FAISSVectorStore(BaseVectorStore):
-    """FAISS-based vector store with persistence."""
+    """FAISS-based vector store with persistence and rate-limit-aware batching."""
     
     def __init__(self, embeddings: Embeddings, index_path: str):
         """Initialize FAISS store.
@@ -26,19 +32,29 @@ class FAISSVectorStore(BaseVectorStore):
         self._store: FAISS | None = None
     
     def add_documents(self, documents: list[Document]) -> int:
-        """Add documents to the store."""
+        """Add documents to the store with batching to avoid rate limits."""
         if not documents:
             return 0
         
-        if self._store is None:
-            # Create new store from documents
-            self._store = FAISS.from_documents(documents, self.embeddings)
-        else:
-            # Add to existing store
-            self._store.add_documents(documents)
+        total_docs = len(documents)
+        total_batches = (total_docs + BATCH_SIZE - 1) // BATCH_SIZE
+        logger.info(f"Indexing {total_docs} documents in {total_batches} batches")
         
-        logger.info(f"Added {len(documents)} documents to FAISS store")
-        return len(documents)
+        # Process in batches
+        for i in range(0, total_docs, BATCH_SIZE):
+            batch = documents[i:i + BATCH_SIZE]
+            
+            if self._store is None:
+                self._store = FAISS.from_documents(batch, self.embeddings)
+            else:
+                self._store.add_documents(batch)
+            
+            # Delay between batches (skip delay after last batch)
+            if i + BATCH_SIZE < total_docs:
+                time.sleep(BATCH_DELAY)
+        
+        logger.info(f"Indexed {total_docs} documents")
+        return total_docs
     
     def similarity_search(
         self, query: str, k: int = 4, filter: dict | None = None
@@ -98,4 +114,3 @@ class FAISSVectorStore(BaseVectorStore):
     def is_loaded(self) -> bool:
         """Check if store is loaded in memory."""
         return self._store is not None
-

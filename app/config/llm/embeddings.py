@@ -71,6 +71,8 @@ class OAuthEmbeddings(BaseModel, Embeddings):
         token = self.token_cache.get_token()
         
         for attempt in range(MAX_RETRIES):
+            if attempt == 0:
+                logger.info(f"[Embeddings:{self.instance_name}] Embedding {len(texts)} texts")
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
@@ -127,6 +129,8 @@ class OAuthEmbeddings(BaseModel, Embeddings):
         
         async with httpx.AsyncClient(verify=self.ssl_verify) as client:
             for attempt in range(MAX_RETRIES):
+                if attempt == 0:
+                    logger.info(f"[Embeddings:{self.instance_name}] Embedding {len(texts)} texts")
                 headers = {
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
