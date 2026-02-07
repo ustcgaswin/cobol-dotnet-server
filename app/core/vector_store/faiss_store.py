@@ -43,6 +43,9 @@ class FAISSVectorStore(BaseVectorStore):
         # Process in batches
         for i in range(0, total_docs, BATCH_SIZE):
             batch = documents[i:i + BATCH_SIZE]
+            batch_num = i // BATCH_SIZE + 1
+            
+            logger.info(f"Batch {batch_num}/{total_batches} - embedding {len(batch)} docs")
             
             if self._store is None:
                 self._store = FAISS.from_documents(batch, self.embeddings)
