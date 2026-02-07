@@ -77,6 +77,18 @@ class OAuthLLMClient(BaseChatModel):
             "max_tokens": self.max_tokens,
         }
     
+    def bind_tools(
+        self,
+        tools: Sequence[BaseTool],
+        **kwargs: Any,
+    ) -> "OAuthLLMClient":
+        """Bind tools to the model for tool calling.
+        
+        Returns a new Runnable that will pass tools to _generate/_agenerate.
+        """
+        from langchain_core.runnables import RunnableBinding
+        return RunnableBinding(bound=self, kwargs={"tools": tools, **kwargs})
+    
     def _format_messages(self, messages: List[BaseMessage]) -> list[dict]:
         """Convert LangChain messages to OpenAI API format."""
         formatted = []
