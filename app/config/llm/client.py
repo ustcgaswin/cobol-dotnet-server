@@ -103,10 +103,13 @@ class OAuthLLMClient(BaseChatModel):
                 # AI message - may include tool_calls
                 message_dict = {"role": "assistant"}
                 
+                # Content should be string (empty is OK) or null only if tool_calls present
                 if msg.content:
                     message_dict["content"] = msg.content
+                elif hasattr(msg, "tool_calls") and msg.tool_calls:
+                    message_dict["content"] = None  # OpenAI spec: null OK when tool_calls present
                 else:
-                    message_dict["content"] = None
+                    message_dict["content"] = ""  # Empty string when no tool_calls
                 
                 # Include tool_calls if present
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
@@ -223,6 +226,16 @@ class OAuthLLMClient(BaseChatModel):
                 time.sleep(DEFAULT_RETRY_WAIT)
                 continue
             
+            # Handle 400 - bad request (log request AND response for debugging)
+            if response.status_code == 400:
+                logger.error(f"[LLM:{self.instance_name}] 400 Bad Request")
+                logger.error(f"[LLM:{self.instance_name}] REQUEST payload: {json.dumps(payload, indent=2, default=str)}")
+                try:
+                    resp_body = response.json()
+                except Exception:
+                    resp_body = response.text[:1000]
+                logger.error(f"[LLM:{self.instance_name}] RESPONSE body: {resp_body}")
+            
             response.raise_for_status()
             return response.json()
         
@@ -278,6 +291,16 @@ class OAuthLLMClient(BaseChatModel):
                     logger.warning(f"[LLM:{self.instance_name}] Bad gateway, waiting {DEFAULT_RETRY_WAIT}s (attempt {attempt + 1}/{MAX_RETRIES})")
                     await asyncio.sleep(DEFAULT_RETRY_WAIT)
                     continue
+                
+                # Handle 400 - bad request (log request AND response for debugging)
+                if response.status_code == 400:
+                    logger.error(f"[LLM:{self.instance_name}] 400 Bad Request")
+                    logger.error(f"[LLM:{self.instance_name}] REQUEST payload: {json.dumps(payload, indent=2, default=str)}")
+                    try:
+                        resp_body = response.json()
+                    except Exception:
+                        resp_body = response.text[:1000]
+                    logger.error(f"[LLM:{self.instance_name}] RESPONSE body: {resp_body}")
                 
                 response.raise_for_status()
                 return response.json()
