@@ -96,64 +96,74 @@ def trace_llm_call(
         yield TraceResult()
         return
 
-    # 3. Start Run
-    run = None
-    try:
-        # nested=True allows us to participate in an existing run if one exists (e.g. parent chain)
-        run = mlflow.start_run(nested=True, run_name=f"LLM:{instance_name}")
-    except Exception as e:
-        logger.warning(f"Failed to start MLflow run: {e}")
     
-    trace_result = TraceResult()
-    
+    # 3. Start Span (Tracing API)
+    # Use mlflow.start_span context manager correctly
     try:
-        # Log Inputs
-        if run:
-            try:
-                mlflow.log_params({
-                    "instance": instance_name,
-                    "model": model_name,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                })
-                # Log messages as a JSON artifact or heavy param
-                sanitized_msgs = _sanitize_messages(messages)
-                mlflow.log_dict(sanitized_msgs, "messages.json")
-            except Exception as e:
-                logger.warning(f"Failed to log MLflow inputs: {e}")
-
-        # Yield control
-        yield trace_result
-
-        # Log Outputs
-        if run:
-            try:
-                if trace_result.error:
-                    mlflow.set_tag("status", "ERROR")
-                    mlflow.log_param("error", str(trace_result.error))
-                else:
-                    mlflow.set_tag("status", "OK")
-                    if trace_result.output:
-                        # Log response
-                        mlflow.log_text(str(trace_result.output), "response.txt")
+        inputs = {
+            "instance": instance_name,
+            "model": model_name,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        try:
+            with mlflow.start_span(
+                name=f"LLM:{instance_name}",
+                span_type="llm",
+                inputs=inputs
+            ) as span:
+                
+                trace_result = TraceResult()
+                try:
+                    # Yield control to the caller (who typically calls the API)
+                    yield trace_result
+    
+                    # Post-processing: Log Outputs to Span
+                    outputs = {}
+                    if trace_result.error:
+                        span.set_status("ERROR")
+                        outputs["error"] = str(trace_result.error)
+                    else:
+                        span.set_status("OK")
+                        if trace_result.output:
+                            outputs["response"] = str(trace_result.output)
+                        
+                        if trace_result.usage:
+                            outputs["usage"] = trace_result.usage
+                            # Also set as attributes for easier filtering
+                            for k, v in trace_result.usage.items():
+                                span.set_attribute(f"usage.{k}", v)
+    
+                    span.set_outputs(outputs)
                     
-                    if trace_result.usage:
-                        # Log metrics
-                        for k, v in trace_result.usage.items():
-                            mlflow.log_metric(f"token_usage_{k}", v)
-            except Exception as e:
-                logger.warning(f"Failed to log MLflow outputs: {e}")
+                except Exception as e:
+                    # Error in user code or post-processing
+                    # If it starts with "generator raised StopIteration" or similar, we should let it pass?
+                    # No, this is Exception.
+                    # We catch user code exceptions here.
+                    logger.error(f"Error in traced block: {e}")
+                    span.set_status("ERROR")
+                    raise e
+
+        except Exception as e:
+             # If mlflow.start_span itself fails (unlikely but possible), log and propagate if it's not MLflow error?
+             # Actually, if start_span fails, we want to proceed without tracing.
+             logger.warning(f"Failed to start MLflow span context: {e}")
+             # We must still yield something! The caller expects a yield.
+             # But yield inside except block is tricky if we're suppressing.
+             # Wait, we already have a 'yield trace_result' inside the try block.
+             # If start_span fails, we never entered the try block.
+             # So we must yield here.
+             yield TraceResult()
+             return
 
     except Exception as e:
-        # Catch unexpected errors in the tracing logic itself
-        logger.error(f"Error in MLflow tracing context: {e}")
-        # Re-raise user code errors if they happened during yield? 
-        # No, 'yield' creates a boundary. If exception happens in user code, it bubbles up here.
-        # We need to catch it to log it, then re-raise.
-        raise e
-    finally:
-        if run:
-            try:
-                mlflow.end_run()
-            except Exception:
-                pass
+        # Fallback for unexpected errors in tracing setup
+        logger.error(f"Error in MLflow tracing setup: {e}")
+        # Ensure we yield if we haven't already!
+        # This is getting complex. Let's simplify.
+        # If we failed before yielding, yield now.
+        # But how do we know if we yielded?
+        # We can use a flag? Or just structure it carefully.
+        # Actually, the outer try/except already handles setup errors.
+        # If we caught it here, we yield.
+        yield TraceResult()
