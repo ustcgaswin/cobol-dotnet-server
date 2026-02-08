@@ -99,7 +99,6 @@ def trace_llm_call(
     
     # 3. Start Span (Tracing API)
     # Use mlflow.start_span context manager correctly
-    try:
         inputs = {
             "instance": instance_name,
             "model": model_name,
@@ -108,13 +107,13 @@ def trace_llm_call(
             "messages": _sanitize_messages(messages)
         }
         
-        with mlflow.start_span(
-            name=f"LLM:{instance_name}",
-            span_type="llm",
-            inputs=inputs
-        ) as span:
-            
-            trace_result = TraceResult()
+        trace_result = TraceResult()
+        try:
+            with mlflow.start_span(
+                name=f"LLM:{instance_name}",
+                span_type="llm"
+            ) as span:
+                span.set_inputs(inputs)
             try:
                 # Yield control to the caller (who typically calls the API)
                 yield trace_result
