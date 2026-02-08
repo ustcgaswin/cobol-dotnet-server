@@ -270,6 +270,8 @@ def trace_tool(tool: Any) -> Any:
     if not settings.MLFLOW_ENABLED:
         return tool
 
+    import functools
+    
     # Avoid double-wrapping
     if getattr(tool, "_is_traced", False):
         return tool
@@ -290,6 +292,7 @@ def trace_tool(tool: Any) -> Any:
         except Exception:
             return {"error": "failed_to_serialize_inputs"}
 
+    @functools.wraps(original_run)
     def wrapped_run(*args, **kwargs):
         inputs = _get_inputs(*args, **kwargs)
         with trace_execution(f"Tool: {tool.name}", inputs=inputs, span_type="tool") as trace:
@@ -301,6 +304,7 @@ def trace_tool(tool: Any) -> Any:
                 trace.set_error(e)
                 raise
 
+    @functools.wraps(original_arun)
     async def wrapped_arun(*args, **kwargs):
         inputs = _get_inputs(*args, **kwargs)
         with trace_execution(f"Tool: {tool.name}", inputs=inputs, span_type="tool") as trace:
