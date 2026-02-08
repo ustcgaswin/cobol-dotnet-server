@@ -23,7 +23,7 @@ from app.services.codegen_local.tools.status_tools import create_status_tools
 from app.services.codegen_local.tools.source_file_tools import create_source_file_tools
 from app.services.codegen_local.tools.system_context_tools import create_system_context_tools
 from app.services.analyst.service import AnalystService
-from app.config.llm.tracing import trace_execution
+from app.config.llm.tracing import trace_execution, trace_tool
 
 
 class CodegenLocalService:
@@ -327,6 +327,9 @@ class CodegenLocalService:
                 system_context_tools +
                 rag_tools
             )
+            
+            # Wrap tools with tracing
+            all_tools = [trace_tool(t) for t in all_tools]
             
             # Create agent
             agent = create_codegen_agent(

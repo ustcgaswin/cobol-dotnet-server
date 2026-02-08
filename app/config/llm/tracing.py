@@ -259,3 +259,62 @@ def trace_execution(
                 span_ctx.__exit__(exc_type, exc_val, exc_tb)
             except Exception as exit_ex:
                 logger.error(f"Failed to close MLflow span '{name}': {exit_ex}")
+
+
+def trace_tool(tool: Any) -> Any:
+    """Wraps a LangChain tool to trace its execution with MLflow.
+    
+    Monkey-patches the tool's _run and _arun methods to add spans.
+    This provides visibility into WHICH tool is calling the LLM.
+    """
+    if not settings.MLFLOW_ENABLED:
+        return tool
+
+    # Avoid double-wrapping
+    if getattr(tool, "_is_traced", False):
+        return tool
+        
+    original_run = tool._run
+    original_arun = tool._arun
+    
+    def _get_inputs(*args, **kwargs):
+        """Helper to safely capture inputs."""
+        try:
+            # Simple heuristic: args[0] is usually the input string/dict
+            inputs = {}
+            if args:
+                inputs["arg_0"] = str(args[0])
+            if kwargs:
+                inputs.update({k: str(v) for k, v in kwargs.items()})
+            return inputs
+        except Exception:
+            return {"error": "failed_to_serialize_inputs"}
+
+    def wrapped_run(*args, **kwargs):
+        inputs = _get_inputs(*args, **kwargs)
+        with trace_execution(f"Tool: {tool.name}", inputs=inputs, span_type="tool") as trace:
+            try:
+                result = original_run(*args, **kwargs)
+                trace.set_result(str(result)) # Tools return strings usually
+                return result
+            except Exception as e:
+                trace.set_error(e)
+                raise
+
+    async def wrapped_arun(*args, **kwargs):
+        inputs = _get_inputs(*args, **kwargs)
+        with trace_execution(f"Tool: {tool.name}", inputs=inputs, span_type="tool") as trace:
+            try:
+                result = await original_arun(*args, **kwargs)
+                trace.set_result(str(result))
+                return result
+            except Exception as e:
+                trace.set_error(e)
+                raise
+
+    # Patch the methods
+    tool._run = wrapped_run
+    tool._arun = wrapped_arun
+    tool._is_traced = True
+    
+    return tool
