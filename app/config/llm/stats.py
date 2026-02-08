@@ -25,17 +25,22 @@ class InstanceStats:
     total_requests: int = 0
     successful_requests: int = 0
     failed_requests: int = 0
+    
+    # Token usage
+    total_tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class LLMStats:
     """Thread-safe usage statistics tracker.
     
-    Tracks request counts and timing for all LLM and Embeddings instances.
+    Tracks request counts, timing, and token usage for all LLM and Embeddings instances.
     Stats are stored in-memory and reset on server restart.
     
     Usage:
         stats = LLMStats()
-        stats.record_request("codegen", "llm", success=True)
+        stats.record_request("codegen", "llm", success=True, tokens={"total": 100, "prompt": 80, "completion": 20})
         all_stats = stats.get_all_stats()
         aggregate = stats.get_aggregate_stats()
     """
@@ -48,7 +53,8 @@ class LLMStats:
         self, 
         instance_name: str, 
         resource_type: str,  # "llm" or "embeddings"
-        success: bool
+        success: bool,
+        tokens: dict[str, int] | None = None
     ) -> None:
         """Record a request for an instance.
         
@@ -59,6 +65,7 @@ class LLMStats:
             instance_name: Name of the instance (e.g., "codegen")
             resource_type: "llm" or "embeddings"
             success: Whether the request succeeded
+            tokens: Optional dict with "total", "prompt", "completion" token counts
         """
         with self._lock:
             key = f"{instance_name}:{resource_type}"
@@ -81,6 +88,12 @@ class LLMStats:
                 stats.successful_requests += 1
             else:
                 stats.failed_requests += 1
+            
+            # Record tokens if provided
+            if tokens:
+                stats.total_tokens += tokens.get("total", 0)
+                stats.prompt_tokens += tokens.get("prompt", 0)
+                stats.completion_tokens += tokens.get("completion", 0)
     
     def get_all_stats(self) -> list[InstanceStats]:
         """Get stats for all instances.
@@ -115,15 +128,25 @@ class LLMStats:
             - successful_requests: Total successful
             - failed_requests: Total failed
             - success_rate: Percentage of successful requests (0-100)
+            - total_tokens: Sum of all tokens used
+            - prompt_tokens: Sum of prompt tokens
+            - completion_tokens: Sum of completion tokens
         """
         with self._lock:
             total = sum(s.total_requests for s in self._stats.values())
             successful = sum(s.successful_requests for s in self._stats.values())
             failed = sum(s.failed_requests for s in self._stats.values())
             
+            total_tokens = sum(s.total_tokens for s in self._stats.values())
+            prompt_tokens = sum(s.prompt_tokens for s in self._stats.values())
+            completion_tokens = sum(s.completion_tokens for s in self._stats.values())
+            
             return {
                 "total_requests": total,
                 "successful_requests": successful,
                 "failed_requests": failed,
                 "success_rate": round((successful / total * 100), 2) if total > 0 else 0.0,
+                "total_tokens": total_tokens,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
             }

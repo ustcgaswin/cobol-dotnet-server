@@ -5,7 +5,7 @@ Implements LangChain's Embeddings interface for full compatibility.
 
 import asyncio
 import time
-from typing import List
+from typing import List, Tuple, Any
 
 import httpx
 import requests
@@ -66,7 +66,16 @@ class OAuthEmbeddings(BaseModel, Embeddings):
             f"[Embeddings:{self.instance_name}] Got {status_code} | response={body}"
         )
     
-    def _call_with_retry(self, texts: List[str]) -> List[List[float]]:
+    def _extract_usage(self, data: dict) -> dict[str, int]:
+        """Extract token usage from response."""
+        usage = data.get("usage") or data.get("payload", {}).get("usage") or {}
+        return {
+            "total": usage.get("total_tokens", 0),
+            "prompt": usage.get("prompt_tokens", 0),
+            "completion": usage.get("completion_tokens", 0),
+        }
+
+    def _call_with_retry(self, texts: List[str]) -> Tuple[List[List[float]], dict[str, int]]:
         """Make API call with retry logic (sync)."""
         token = self.token_cache.get_token()
         
@@ -116,12 +125,13 @@ class OAuthEmbeddings(BaseModel, Embeddings):
             # Parse response - API returns payload.data structure
             data = response.json()
             embeddings = [item["embedding"] for item in data["payload"]["data"]]
+            usage = self._extract_usage(data)
             
-            return embeddings
+            return embeddings, usage
         
         raise RuntimeError(f"[{self.instance_name}] Failed to get embeddings after {MAX_RETRIES} retries")
     
-    async def _call_with_retry_async(self, texts: List[str]) -> List[List[float]]:
+    async def _call_with_retry_async(self, texts: List[str]) -> Tuple[List[List[float]], dict[str, int]]:
         """Make API call with retry logic (async)."""
         token = await self.token_cache.get_token_async()
         
@@ -171,16 +181,17 @@ class OAuthEmbeddings(BaseModel, Embeddings):
                 # Parse response - API returns payload.data structure
                 data = response.json()
                 embeddings = [item["embedding"] for item in data["payload"]["data"]]
+                usage = self._extract_usage(data)
                 
-                return embeddings
+                return embeddings, usage
         
         raise RuntimeError(f"[{self.instance_name}] Failed to get embeddings after {MAX_RETRIES} retries")
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Embed a list of documents (sync)."""
         try:
-            result = self._call_with_retry(texts)
-            self.stats_tracker.record_request(self.instance_name, "embeddings", success=True)
+            result, usage = self._call_with_retry(texts)
+            self.stats_tracker.record_request(self.instance_name, "embeddings", success=True, tokens=usage)
             return result
         except Exception as e:
             self.stats_tracker.record_request(self.instance_name, "embeddings", success=False)
@@ -194,8 +205,8 @@ class OAuthEmbeddings(BaseModel, Embeddings):
     async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
         """Embed a list of documents (async)."""
         try:
-            result = await self._call_with_retry_async(texts)
-            self.stats_tracker.record_request(self.instance_name, "embeddings", success=True)
+            result, usage = await self._call_with_retry_async(texts)
+            self.stats_tracker.record_request(self.instance_name, "embeddings", success=True, tokens=usage)
             return result
         except Exception as e:
             self.stats_tracker.record_request(self.instance_name, "embeddings", success=False)

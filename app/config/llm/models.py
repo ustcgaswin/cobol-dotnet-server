@@ -93,6 +93,62 @@ class LLMModel(Enum):
         temperature=0.1,
         description="High capability model (Anthropic)"
     )
+
+    CLAUDE_SONNET_4_5 = ModelConfig(
+        name="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        max_tokens=8192,
+        temperature=0.1,
+        description="Next-gen Anthropic model"
+    )
+
+    GPT5 = ModelConfig(
+        name="gpt-5-20250807-gs",
+        max_tokens=32768,
+        temperature=0.1,
+        description="Next generation GPT model"
+    )
+
+    GPT5_NANO = ModelConfig(
+        name="gpt-5-nano-20250807-gs",
+        max_tokens=32768,
+        temperature=0.1,
+        description="Ultra-efficient next-gen model"
+    )
+
+    GPT4O_MINI = ModelConfig(
+        name="gpt-4o-mini-20240718-dzs",
+        max_tokens=16384,
+        temperature=0.1,
+        description="Efficient GPT-4o variant"
+    )
+
+    GPT4O_STD = ModelConfig(
+        name="gpt-4o-20240806-std",
+        max_tokens=16384,
+        temperature=0.1,
+        description="Standard GPT-4o model"
+    )
+
+    O4_MINI = ModelConfig(
+        name="o4-mini-20250416-gs",
+        max_tokens=32768,
+        temperature=1.0, # Reasoning models often use higher temp or fixed
+        description="Reasoning model mini variant"
+    )
+
+    O3 = ModelConfig(
+        name="o3-20250416-gs",
+        max_tokens=100000,
+        temperature=1.0,
+        description="Reasoning model O3"
+    )
+
+    O3_MINI = ModelConfig(
+        name="o3-mini",
+        max_tokens=100000,
+        temperature=1.0,
+        description="Reasoning model O3 Mini"
+    )
     
     @property
     def config(self) -> ModelConfig:
@@ -120,6 +176,12 @@ class EmbeddingsModel(Enum):
         name="text-embedding-ada-002-2-gs",
         dimensions=1536,
         description="Primary embeddings model"
+    )
+
+    TEXT_3_LARGE = EmbeddingsModelConfig(
+        name="text-embedding-3-large-1-gs",
+        dimensions=3072,
+        description="Large embeddings model v3"
     )
     
     @property

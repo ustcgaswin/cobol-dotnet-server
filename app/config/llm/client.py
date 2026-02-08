@@ -337,6 +337,16 @@ class OAuthLLMClient(BaseChatModel):
         
         return AIMessage(content=content, tool_calls=tool_calls)
     
+    def _extract_usage(self, data: dict) -> dict[str, int]:
+        """Extract token usage from response."""
+        # Check top-level usage or nested payload usage
+        usage = data.get("usage") or data.get("payload", {}).get("usage") or {}
+        return {
+            "total": usage.get("total_tokens", 0),
+            "prompt": usage.get("prompt_tokens", 0),
+            "completion": usage.get("completion_tokens", 0),
+        }
+
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -356,8 +366,11 @@ class OAuthLLMClient(BaseChatModel):
         try:
             data = self._call_with_retry(formatted_messages, formatted_tools)
             ai_message = self._parse_response(data)
+            usage = self._extract_usage(data)
             
-            self.stats_tracker.record_request(self.instance_name, "llm", success=True)
+            self.stats_tracker.record_request(
+                self.instance_name, "llm", success=True, tokens=usage
+            )
             
             return ChatResult(
                 generations=[ChatGeneration(message=ai_message)]
@@ -386,8 +399,11 @@ class OAuthLLMClient(BaseChatModel):
         try:
             data = await self._call_with_retry_async(formatted_messages, formatted_tools)
             ai_message = self._parse_response(data)
+            usage = self._extract_usage(data)
             
-            self.stats_tracker.record_request(self.instance_name, "llm", success=True)
+            self.stats_tracker.record_request(
+                self.instance_name, "llm", success=True, tokens=usage
+            )
             
             return ChatResult(
                 generations=[ChatGeneration(message=ai_message)]
