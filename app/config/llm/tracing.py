@@ -174,3 +174,88 @@ def trace_llm_call(
                 span_ctx.__exit__(exc_type, exc_val, exc_tb)
             except Exception as exit_ex:
                 logger.error(f"Failed to close MLflow span: {exit_ex}")
+
+
+@contextmanager
+def trace_execution(
+    name: str,
+    inputs: Optional[Dict[str, Any]] = None,
+    span_type: str = "chain"
+) -> Iterator[TraceResult]:
+    """Context manager for high-level execution tracing (e.g. Agent runs).
+    
+    Creates a parent span that wraps multiple LLM calls.
+    """
+    # 1. Feature Flag Check
+    if not settings.MLFLOW_ENABLED:
+        yield TraceResult()
+        return
+
+    # 2. Safe Import
+    try:
+        import mlflow
+    except ImportError:
+        yield TraceResult()
+        return
+
+    trace_result = TraceResult()
+    span = None
+    span_ctx = None
+
+    try:
+        # Get the context manager but don't enter yet
+        span_ctx = mlflow.start_span(
+            name=name,
+            span_type=span_type
+        )
+        # Manually enter to isolate startup errors
+        span = span_ctx.__enter__()
+        if inputs:
+            span.set_inputs(inputs)
+    except Exception as e:
+        logger.warning(f"Failed to start MLflow span '{name}': {e}")
+        yield trace_result
+        return
+
+    # If we are here, span is active.
+    try:
+        # Yield control to the caller
+        yield trace_result
+
+        # Success path
+        outputs = {}
+        if trace_result.error:
+            span.set_status("ERROR")
+            outputs["error"] = str(trace_result.error)
+        else:
+            span.set_status("OK")
+            if trace_result.output:
+                # Truncate if too long (agents can return huge state)
+                s_output = str(trace_result.output)
+                if len(s_output) > 5000:
+                    outputs["result"] = s_output[:5000] + "... (truncated)"
+                else:
+                    outputs["result"] = s_output
+        
+        span.set_outputs(outputs)
+
+    except Exception as user_ex:
+        # Exception raised by the caller
+        try:
+            span.set_status("ERROR")
+            span.set_outputs({"error": str(user_ex)})
+            logger.error(f"Error in traced execution '{name}': {user_ex}")
+        except Exception:
+            pass
+        
+        raise user_ex
+
+    finally:
+        # Exit the span context
+        if span_ctx:
+            try:
+                import sys
+                exc_type, exc_val, exc_tb = sys.exc_info()
+                span_ctx.__exit__(exc_type, exc_val, exc_tb)
+            except Exception as exit_ex:
+                logger.error(f"Failed to close MLflow span '{name}': {exit_ex}")

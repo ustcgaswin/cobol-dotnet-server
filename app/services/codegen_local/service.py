@@ -23,6 +23,7 @@ from app.services.codegen_local.tools.status_tools import create_status_tools
 from app.services.codegen_local.tools.source_file_tools import create_source_file_tools
 from app.services.codegen_local.tools.system_context_tools import create_system_context_tools
 from app.services.analyst.service import AnalystService
+from app.config.llm.tracing import trace_execution
 
 
 class CodegenLocalService:
@@ -360,15 +361,30 @@ class CodegenLocalService:
             # Create codegen logs directory path
             codegen_logs_path = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / project_id_str / "codegen_logs"
             
-            result = await agent.ainvoke(
-                {
-                    "messages": [initial_message],
+            # Trace the entire agent execution as a parent span
+            with trace_execution(
+                name="Codegen Agent Run",
+                inputs={
                     "project_id": project_id_str,
-                    "iteration_count": 0,
-                    "codegen_logs_path": str(codegen_logs_path),
+                    "project_name": project_name,
+                    "iteration_limit": 1000
                 },
-                config={"recursion_limit": 1000},
-            )
+                span_type="chain"
+            ) as trace:
+                try:
+                    result = await agent.ainvoke(
+                        {
+                            "messages": [initial_message],
+                            "project_id": project_id_str,
+                            "iteration_count": 0,
+                            "codegen_logs_path": str(codegen_logs_path),
+                        },
+                        config={"recursion_limit": 1000},
+                    )
+                    trace.set_result(result)
+                except Exception as e:
+                    trace.set_error(e)
+                    raise
             
             # Clean up build artifacts before marking complete
             self._cleanup_build_artifacts(output_path)
