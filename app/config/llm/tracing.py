@@ -99,51 +99,78 @@ def trace_llm_call(
     
     # 3. Start Span (Tracing API)
     # Use mlflow.start_span context manager correctly
-        inputs = {
-            "instance": instance_name,
-            "model": model_name,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "messages": _sanitize_messages(messages)
-        }
-        
-        trace_result = TraceResult()
-        try:
-            with mlflow.start_span(
-                name=f"LLM:{instance_name}",
-                span_type="llm"
-            ) as span:
-                span.set_inputs(inputs)
-            try:
-                # Yield control to the caller (who typically calls the API)
-                yield trace_result
+    # 3. Start Span (Tracing API)
+    inputs = {
+        "instance": instance_name,
+        "model": model_name,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "messages": _sanitize_messages(messages)
+    }
 
-                # Post-processing: Log Outputs to Span
-                outputs = {}
-                if trace_result.error:
-                    span.set_status("ERROR")
-                    outputs["error"] = str(trace_result.error)
-                else:
-                    span.set_status("OK")
-                    if trace_result.output:
-                        outputs["response"] = str(trace_result.output)
-                    
-                    if trace_result.usage:
-                        outputs["usage"] = trace_result.usage
-                        # Also set as attributes for easier filtering
-                        for k, v in trace_result.usage.items():
-                            span.set_attribute(f"usage.{k}", v)
-
-                span.set_outputs(outputs)
-                
-            except Exception as e:
-                # Error in user code or post-processing
-                logger.error(f"Error in traced block or span update: {e}")
-                span.set_status("ERROR")
-                raise e
-
+    trace_result = TraceResult()
+    
+    # Attempt to start the span
+    span = None
+    span_ctx = None
+    
+    try:
+        # Get the context manager but don't enter yet
+        span_ctx = mlflow.start_span(
+            name=f"LLM:{instance_name}",
+            span_type="llm"
+        )
+        # Manually enter to isolate startup errors
+        span = span_ctx.__enter__()
+        span.set_inputs(inputs)
     except Exception as e:
-        # Fallback if MLflow fails (e.g. start_span error)
-        # We must yield to ensure the caller proceeds
-        logger.warning(f"Failed to trace with MLflow (fallback active): {e}")
-        yield TraceResult()
+        logger.warning(f"Failed to start MLflow span: {e}")
+        # Return fallback result - this yield is safe because we haven't yielded yet
+        yield trace_result
+        return
+
+    # If we are here, span is active. We MUST exit it eventually.
+    try:
+        # Yield control to the caller
+        yield trace_result
+
+        # Success path (no exception from caller)
+        outputs = {}
+        if trace_result.error:
+            span.set_status("ERROR")
+            outputs["error"] = str(trace_result.error)
+        else:
+            span.set_status("OK")
+            if trace_result.output:
+                outputs["response"] = str(trace_result.output)
+            
+            if trace_result.usage:
+                outputs["usage"] = trace_result.usage
+                for k, v in trace_result.usage.items():
+                    span.set_attribute(f"usage.{k}", v)
+
+        span.set_outputs(outputs)
+
+    except Exception as user_ex:
+        # Exception raised by the caller (or our post-processing)
+        try:
+            span.set_status("ERROR")
+            if isinstance(user_ex, Exception):
+                span.set_outputs({"error": str(user_ex)})
+            logger.error(f"Error in traced execution: {user_ex}")
+        except Exception as logger_ex:
+            logger.error(f"Failed to log error to span: {logger_ex}")
+        
+        # Re-raise to caller
+        raise user_ex
+
+    finally:
+        # Exit the span context
+        if span_ctx:
+            try:
+                 # Pass current exception info if any
+                import sys
+                exc_type, exc_val, exc_tb = sys.exc_info()
+                span_ctx.__exit__(exc_type, exc_val, exc_tb)
+            except Exception as exit_ex:
+                logger.error(f"Failed to close MLflow span: {exit_ex}")
