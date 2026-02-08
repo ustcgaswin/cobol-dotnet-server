@@ -27,6 +27,7 @@ from pydantic import Field
 
 from app.config.llm.token_cache import TokenCache
 from app.config.llm.stats import LLMStats
+from app.config.llm.tracing import trace_llm_call
 
 
 # Retry configuration
@@ -364,17 +365,34 @@ class OAuthLLMClient(BaseChatModel):
             formatted_tools = self._format_tools(tools)
         
         try:
-            data = self._call_with_retry(formatted_messages, formatted_tools)
-            ai_message = self._parse_response(data)
-            usage = self._extract_usage(data)
-            
-            self.stats_tracker.record_request(
-                self.instance_name, "llm", success=True, tokens=usage
-            )
-            
-            return ChatResult(
-                generations=[ChatGeneration(message=ai_message)]
-            )
+            with trace_llm_call(
+                instance_name=self.instance_name,
+                model_name=self.model_name,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            ) as trace:
+                try:
+                    data = self._call_with_retry(formatted_messages, formatted_tools)
+                    ai_message = self._parse_response(data)
+                    usage = self._extract_usage(data)
+                    
+                    self.stats_tracker.record_request(
+                        self.instance_name, "llm", success=True, tokens=usage
+                    )
+                    
+                    result = ChatResult(
+                        generations=[ChatGeneration(message=ai_message)]
+                    )
+                    
+                    # Record success in trace
+                    trace.set_result(ai_message.content, usage)
+                    return result
+                    
+                except Exception as e:
+                    trace.set_error(e)
+                    raise e
+
         except Exception as e:
             self.stats_tracker.record_request(self.instance_name, "llm", success=False)
             logger.error(f"[LLM:{self.instance_name}] Generation failed: {e}")
@@ -397,17 +415,34 @@ class OAuthLLMClient(BaseChatModel):
             formatted_tools = self._format_tools(tools)
         
         try:
-            data = await self._call_with_retry_async(formatted_messages, formatted_tools)
-            ai_message = self._parse_response(data)
-            usage = self._extract_usage(data)
-            
-            self.stats_tracker.record_request(
-                self.instance_name, "llm", success=True, tokens=usage
-            )
-            
-            return ChatResult(
-                generations=[ChatGeneration(message=ai_message)]
-            )
+            with trace_llm_call(
+                instance_name=self.instance_name,
+                model_name=self.model_name,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            ) as trace:
+                try:
+                    data = await self._call_with_retry_async(formatted_messages, formatted_tools)
+                    ai_message = self._parse_response(data)
+                    usage = self._extract_usage(data)
+                    
+                    self.stats_tracker.record_request(
+                        self.instance_name, "llm", success=True, tokens=usage
+                    )
+                    
+                    result = ChatResult(
+                        generations=[ChatGeneration(message=ai_message)]
+                    )
+                    
+                    # Record success in trace
+                    trace.set_result(ai_message.content, usage)
+                    return result
+                    
+                except Exception as e:
+                    trace.set_error(e)
+                    raise e
+
         except Exception as e:
             self.stats_tracker.record_request(self.instance_name, "llm", success=False)
             logger.error(f"[LLM:{self.instance_name}] Generation failed: {e}")

@@ -31,7 +31,7 @@ def configure_mlflow() -> None:
         mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
     
     mlflow.set_experiment(settings.MLFLOW_EXPERIMENT_NAME)
-    mlflow.langchain.autolog()
+
     
     logger.info(
         f"MLflow tracing: ENABLED "
