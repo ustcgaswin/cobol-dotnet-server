@@ -219,7 +219,7 @@ class DocAgentNodes:
         file_type = state["file_type"]
         messages = state.get("messages", [])
         
-        research_count = state.get("research_iterations", 0)
+        research_count = state.get("iterations", 0)
         MAX_RESEARCH_ITERATIONS = 5
         
         # 1. INITIALIZATION
@@ -238,7 +238,7 @@ class DocAgentNodes:
             
             return {
                 "mermaid_graph": mermaid,
-                "research_iterations": 1,
+                "iterations": 1,
                 "messages": initial_messages + [response]
             }
 
@@ -248,7 +248,7 @@ class DocAgentNodes:
         if research_count >= MAX_RESEARCH_ITERATIONS:
             return {
                 "messages": [HumanMessage(content="Research turn limit reached. Proceeding to write docs.")],
-                "research_iterations": research_count,
+                "iterations": research_count,
                 "research_complete": True
             }
         
@@ -256,7 +256,7 @@ class DocAgentNodes:
         
         return {
             "messages": [response],
-            "research_iterations": research_count
+            "iterations": research_count
         }
     
     def _extract_code_snippets(self, messages):
