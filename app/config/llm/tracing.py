@@ -118,7 +118,7 @@ def trace_llm_call(
         # Get the context manager but don't enter yet
         span_ctx = mlflow.start_span(
             name=f"LLM:{instance_name}",
-            span_type="llm"
+            span_type="LLM"
         )
         # Manually enter to isolate startup errors
         span = span_ctx.__enter__()
@@ -142,7 +142,11 @@ def trace_llm_call(
         else:
             span.set_status("OK")
             if trace_result.output:
-                outputs["response"] = str(trace_result.output)
+                # If output is a dict/list (e.g. tool calls), keep structure
+                if isinstance(trace_result.output, (dict, list)):
+                    outputs["response"] = trace_result.output
+                else:
+                    outputs["response"] = str(trace_result.output)
             
             if trace_result.usage:
                 outputs["usage"] = trace_result.usage
@@ -180,7 +184,7 @@ def trace_llm_call(
 def trace_execution(
     name: str,
     inputs: Optional[Dict[str, Any]] = None,
-    span_type: str = "chain"
+    span_type: str = "CHAIN"
 ) -> Iterator[TraceResult]:
     """Context manager for high-level execution tracing (e.g. Agent runs).
     
@@ -295,7 +299,7 @@ def trace_tool(tool: Any) -> Any:
     @functools.wraps(original_run)
     def wrapped_run(*args, **kwargs):
         inputs = _get_inputs(*args, **kwargs)
-        with trace_execution(f"Tool: {tool.name}", inputs=inputs, span_type="tool") as trace:
+        with trace_execution(f"Tool: {tool.name}", inputs=inputs, span_type="TOOL") as trace:
             try:
                 result = original_run(*args, **kwargs)
                 trace.set_result(str(result)) # Tools return strings usually
@@ -307,7 +311,7 @@ def trace_tool(tool: Any) -> Any:
     @functools.wraps(original_arun)
     async def wrapped_arun(*args, **kwargs):
         inputs = _get_inputs(*args, **kwargs)
-        with trace_execution(f"Tool: {tool.name}", inputs=inputs, span_type="tool") as trace:
+        with trace_execution(f"Tool: {tool.name}", inputs=inputs, span_type="TOOL") as trace:
             try:
                 result = await original_arun(*args, **kwargs)
                 trace.set_result(str(result))

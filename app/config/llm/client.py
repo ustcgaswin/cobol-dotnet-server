@@ -386,7 +386,11 @@ class OAuthLLMClient(BaseChatModel):
                     )
                     
                     # Record success in trace
-                    trace.set_result(ai_message.content, usage)
+                    output_data = {"content": ai_message.content}
+                    if ai_message.tool_calls:
+                        output_data["tool_calls"] = ai_message.tool_calls
+                    
+                    trace.set_result(output_data, usage)
                     return result
                     
                 except Exception as e:
@@ -436,7 +440,11 @@ class OAuthLLMClient(BaseChatModel):
                     )
                     
                     # Record success in trace
-                    trace.set_result(ai_message.content, usage)
+                    output_data = {"content": ai_message.content}
+                    if ai_message.tool_calls:
+                        output_data["tool_calls"] = ai_message.tool_calls
+                    
+                    trace.set_result(output_data, usage)
                     return result
                     
                 except Exception as e:
