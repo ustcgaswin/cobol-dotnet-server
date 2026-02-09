@@ -348,6 +348,156 @@ class OAuthLLMClient(BaseChatModel):
             "completion": usage.get("completion_tokens", 0),
         }
 
+    def _format_messages_anthropic(self, messages: List[BaseMessage]) -> tuple[dict | None, list[dict]]:
+        """Format messages for Anthropic (extract system message)."""
+        system_msg = None
+        formatted = []
+        
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                # Anthropic uses top-level system parameter
+                system_msg = {"type": "text", "text": msg.content}
+            
+            elif isinstance(msg, HumanMessage):
+                # Use content blocks format as shown in image
+                content_blocks = [{"type": "text", "text": msg.content}]
+                formatted.append({"role": "user", "content": content_blocks})
+            
+            elif isinstance(msg, AIMessage):
+                content_blocks = [{"type": "text", "text": msg.content or ""}]
+                formatted.append({"role": "assistant", "content": content_blocks})
+            
+            elif isinstance(msg, ToolMessage):
+                # Anthropic tool results are user messages with tool_result content blocks
+                # For now, simplistic mapping as user message
+                formatted.append({"role": "user", "content": [{"type": "text", "text": f"Tool Result [{msg.tool_call_id}]: {msg.content}"}]})
+            
+            else:
+                formatted.append({"role": "user", "content": [{"type": "text", "text": str(msg.content)}]})
+        
+        return system_msg, formatted
+
+    def _parse_response_anthropic(self, data: dict) -> AIMessage:
+        """Parse Anthropic API response."""
+        # Check for payload wrapper as seen in image
+        payload = data.get("payload", {})
+        content_Wrapper = payload.get("content")
+        
+        # If content not in payload, check top-level (direct API)
+        if not content_Wrapper:
+             content_blocks = data.get("content", [])
+        else:
+             content_blocks = content_Wrapper
+
+        text_content = ""
+        
+        for block in content_blocks:
+            if block.get("type") == "text":
+                text_content += block.get("text", "")
+        
+        # TODO: Handle tool_use blocks if we implement tool calling for Anthropic
+        
+        return AIMessage(content=text_content)
+
+    def _call_with_retry_anthropic(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        """Anthropic-specific API call with retry."""
+        token = self.token_cache.get_token()
+        
+        for attempt in range(MAX_RETRIES):
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "anthropic-version": "2023-06-01"
+            }
+            
+            payload = {
+                "model": self.model_name,
+                "messages": messages,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+            }
+            
+            if tools:
+                payload["tools"] = tools
+            
+            response = requests.post(
+                self.endpoint_url,
+                json=payload,
+                headers=headers,
+                timeout=self.timeout,
+                verify=self.ssl_verify,
+            )
+            
+            if response.status_code == 401:
+                self._log_error_response(401, response)
+                logger.warning(f"[LLM:{self.instance_name}] Refreshing token (attempt {attempt + 1}/{MAX_RETRIES})")
+                self.token_cache.invalidate()
+                token = self.token_cache.get_token()
+                continue
+                
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", DEFAULT_RETRY_WAIT))
+                time.sleep(retry_after)
+                continue
+                
+            if response.status_code == 502:
+                time.sleep(DEFAULT_RETRY_WAIT)
+                continue
+                
+            response.raise_for_status()
+            return response.json()
+        
+        raise RuntimeError(f"[{self.instance_name}] Failed to call Anthropic LLM")
+
+    async def _call_with_retry_async_anthropic(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        """Async Anthropic-specific API call."""
+        token = await self.token_cache.get_token_async()
+        
+        async with httpx.AsyncClient(verify=self.ssl_verify) as client:
+            for attempt in range(MAX_RETRIES):
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "anthropic-version": "2023-06-01"
+                }
+                
+                payload = {
+                    "model": self.model_name,
+                    "messages": messages,
+                    "max_tokens": self.max_tokens,
+                    "temperature": self.temperature,
+                }
+                
+                if tools:
+                    payload["tools"] = tools
+                
+                response = await client.post(
+                    self.endpoint_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
+                
+                if response.status_code == 401:
+                    self._log_error_response_async(401, response)
+                    self.token_cache.invalidate()
+                    token = await self.token_cache.get_token_async()
+                    continue
+                    
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("Retry-After", DEFAULT_RETRY_WAIT))
+                    await asyncio.sleep(retry_after)
+                    continue
+                    
+                if response.status_code == 502:
+                    await asyncio.sleep(DEFAULT_RETRY_WAIT)
+                    continue
+                    
+                response.raise_for_status()
+                return response.json()
+        
+        raise RuntimeError(f"[{self.instance_name}] Failed to call Anthropic LLM")
+
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -356,6 +506,7 @@ class OAuthLLMClient(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         """Sync generation - required by BaseChatModel."""
+        # Standard OpenAI Formatting
         formatted_messages = self._format_messages(messages)
         
         # Format tools if provided (from bind_tools)
@@ -373,8 +524,16 @@ class OAuthLLMClient(BaseChatModel):
                 max_tokens=self.max_tokens,
             ) as trace:
                 try:
+                    # --- OPENAI CALL (Active) ---
                     data = self._call_with_retry(formatted_messages, formatted_tools)
                     ai_message = self._parse_response(data)
+                    
+                    # --- ANTHROPIC CALL (Uncomment to use) ---
+                    # system_msg, ant_messages = self._format_messages_anthropic(messages)
+                    # # Add system to payload if supported in _call_with_retry_anthropic
+                    # data = self._call_with_retry_anthropic(ant_messages, formatted_tools)
+                    # ai_message = self._parse_response_anthropic(data)
+                    
                     usage = self._extract_usage(data)
                     
                     self.stats_tracker.record_request(
@@ -410,6 +569,7 @@ class OAuthLLMClient(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         """Async generation."""
+        # Standard OpenAI Formatting
         formatted_messages = self._format_messages(messages)
         
         # Format tools if provided (from bind_tools)
@@ -427,8 +587,16 @@ class OAuthLLMClient(BaseChatModel):
                 max_tokens=self.max_tokens,
             ) as trace:
                 try:
+                    # --- OPENAI CALL (Active) ---
                     data = await self._call_with_retry_async(formatted_messages, formatted_tools)
                     ai_message = self._parse_response(data)
+                    
+                    # --- ANTHROPIC CALL (Uncomment to use) ---
+                    # system_msg, ant_messages = self._format_messages_anthropic(messages)
+                    # # Add system to payload if supported in _call_with_retry_async_anthropic
+                    # data = await self._call_with_retry_async_anthropic(ant_messages, formatted_tools)
+                    # ai_message = self._parse_response_anthropic(data)
+
                     usage = self._extract_usage(data)
                     
                     self.stats_tracker.record_request(
