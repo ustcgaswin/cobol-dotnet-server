@@ -8,6 +8,7 @@ import networkx as nx
 from typing import Dict, List, Any
 from app.api.schemas.doc_models import SystemMetrics
 from loguru import logger
+import re
 
 class GraphAnalyzer:
     def __init__(self, raw_dependency_data: Dict[str, Any]):
@@ -258,8 +259,10 @@ class GraphAnalyzer:
         return "\n".join(lines)
 
     def _sanitize_node(self, name: str) -> str:
-        """Cleans node names for Mermaid syntax."""
-        return name.replace('.', '_').replace('-', '_').replace(':', '_').replace(' ', '')
+        clean = re.sub(r'[^a-zA-Z0-9]', '_', name)
+        if clean and clean[0].isdigit():
+            clean = "n_" + clean
+        return clean
     
     def render_mermaid_code_to_png(self, mermaid_code: str, output_path: str) -> bool:
         """
@@ -301,37 +304,31 @@ class GraphAnalyzer:
         return self.render_mermaid_code_to_png(self.generate_mermaid_diagram(), output_path)
         
     def generate_context_diagram(self) -> str:
-        """
-        Generates a high-level System Context diagram.
-        Shows: External Inputs -> [Mainframe System] -> External Outputs
-        """
-        inputs = set()
-        outputs = set()
-
-        for node in self.graph.nodes():
-            if not (node.startswith("FILE:") or node.startswith("DD:")):
-                continue
-                
-            in_degree = self.graph.in_degree(node)
-            out_degree = self.graph.out_degree(node)
-            
-            if in_degree == 0 and out_degree > 0:
-                inputs.add(self._sanitize_node(node))
-            elif out_degree == 0 and in_degree > 0:
-                outputs.add(self._sanitize_node(node))
-
-        inputs = list(inputs)[:5]
-        outputs = list(outputs)[:5]
+        inputs = []
+        outputs = []
         
+        for node in self.graph.nodes():
+            if not node.startswith("FILE:"): continue
+            
+            in_deg = self.graph.in_degree(node)
+            out_deg = self.graph.out_degree(node)
+            
+            # Heuristic: No input = External Source, No output = External Sink
+            if in_deg == 0: inputs.append(node)
+            if out_deg == 0: outputs.append(node)
+
         lines = ["graph LR"]
-        lines.append("    subgraph Mainframe_System")
-        lines.append("        Core_Logic[Core Application Logic]")
+        # Group the system into one box
+        lines.append("    subgraph Internal_System[Core Application]")
+        lines.append("        Logic[Business Logic & Batch Processing]")
         lines.append("    end")
         
-        for i in inputs:
-            lines.append(f"    {i}({i}) --> Core_Logic")
-        
-        for o in outputs:
-            lines.append(f"    Core_Logic --> {o}({o})")
+        # Only show top 7 to avoid 400 error (URL too long)
+        for i in inputs[:7]:
+            clean_id = self._sanitize_node(i)
+            lines.append(f"    {clean_id}({i.replace('FILE:', '')}) --> Logic")
+        for o in outputs[:7]:
+            clean_id = self._sanitize_node(o)
+            lines.append(f"    Logic --> {clean_id}({o.replace('FILE:', '')})")
             
         return "\n".join(lines)

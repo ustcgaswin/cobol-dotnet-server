@@ -294,7 +294,9 @@ class DocAgentNodes:
             CUMULATIVE_MERGE_INSTRUCTION=CUMULATIVE_MERGE_INSTRUCTION,
             chunk=evidence, 
             content=evidence, 
-            previous_summary="{}" # We are doing single-shot agentic research now
+            previous_summary="{}",
+            filename=state["target_file"],
+            file_type=state["file_type"]
         )
         
         res = await self.llm.ainvoke([HumanMessage(content=prompt)])

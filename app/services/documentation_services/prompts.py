@@ -26,120 +26,82 @@ This is a chunked analysis.
 EXECUTIVE_SUMMARY_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 CONTEXT:
-You are documenting a Mainframe System.
-Below are the System Metrics and the descriptions of the most critical modules (God Classes).
+You are documenting a Mainframe System consisting of ~400 modules.
+Below are System Metrics and descriptions of the CORE modules that drive the system.
 
 SYSTEM METRICS:
 {metrics}
 
-CRITICAL MODULES:
+CORE MODULE SUMMARIES:
 {top_modules}
 
 TASK:
-Generate the content for the "Introduction" and "System Architecture" sections of the Master Documentation.
-Infer the business context based on the module names (e.g., 'PAY*' -> Payroll) and descriptions.
+Synthesize a deep "Functional Specification". You must be verbose. Do not give 1-sentence answers.
 
 REQUIRED JSON STRUCTURE:
 {{
-    "business_purpose": "2-3 sentences explaining what this system achieves (e.g., 'Daily Merchant Settlement').",
-    
+    "business_purpose": "A detailed 2-3 paragraph explanation of the system's role in the enterprise.",
     "business_scope": [
-        "Bullet point 1 (e.g., 'Processes daily batches')",
-        "Bullet point 2 (e.g., 'Generates General Ledger postings')"
+        "Detail the primary business functions (e.g., Transaction Validation, Interest Calculation, Monthly Ledger Closing)."
     ],
-    
-    "system_landscape": "A technical summary sentence. Example: 'The system operates within a z/OS environment utilizing DB2 for persistence, CICS for online transactions, and JES2 for batch orchestration.' (Derive this from the SYSTEM METRICS technologies).",
-    
-    "glossary": [
-        {{ "term": "Acronym found (e.g., CATO)", "definition": "Inferred definition or 'System-specific term'" }},
-        {{ "term": "GVAP", "definition": "Inferred definition" }}
+    "process_flow_steps": [
+        "Step 1: [In-depth description of initial data entry/ingestion]",
+        "Step 2: [Description of core logic processing]",
+        "Step 3: [Description of final reporting/persistence]"
     ],
-
     "functional_flow_diagram": {{
-        "description": "A paragraph describing the end-to-end data lifecycle.",
-        "mermaid_code": "Generate a MermaidJS Sequence Diagram string. Start with 'sequenceDiagram'. Define participants like 'External System', 'Batch Job', 'Database', 'Reporting'. Show the flow of data.",
+        "description": "Exhaustive description of the data lifecycle.",
+        "mermaid_code": "sequenceDiagram... (Show interaction between User, Batch, DB, and External Feeds)",
         "steps_table": [
-            {{ "actor": "e.g. Upstream Feed", "action": "Sends file", "outcome": "Data Ingested" }},
-            {{ "actor": "Batch Job", "action": "Validates & Processes", "outcome": "DB2 Updated" }},
-            {{ "actor": "Reporting", "action": "Generates Output", "outcome": "Report Distrubuted" }}
+            {{ "actor": "Name", "action": "Specific Action", "outcome": "Business Result" }}
         ]
     }},
-
-    "process_flow_steps": [
-        "Step 1 (e.g., 'Ingest ISO8583')",
-        "Step 2 (e.g., 'Calculate Fees')"
-    ],
-    
-    "schedule_frequency": {{
-        "frequency": "e.g., Daily (Weekdays) or Real-time",
-        "start_time": "Inferred start time or 'Event Driven'",
-        "sla_window": "Inferred or 'Standard Batch Window'"
-    }},
-    
-    "data_overview": {{
-        "inputs": ["List of input data types inferred from file names"],
-        "outputs": ["List of output artifacts/reports"]
-    }},
-    
-    "business_risks": [
-        "Risk 1 (e.g., 'Delays impact settlement')",
-        "Risk 2"
-    ],
-    
     "external_interfaces": [
-        {{ "interface": "Name", "direction": "Inbound/Outbound", "description": "Short desc" }}
+        {{ 
+           "interface": "Inferred System Name (e.g. GL System, HR Database)", 
+           "direction": "Inbound/Outbound", 
+           "description": "What data is exchanged and why?" 
+        }}
     ],
-    
-    "ownership": {{
-        "business_owner": "Inferred Department (e.g., Finance Ops)",
-        "it_owner": "Inferred Team (e.g., Mainframe Batch Support)"
-    }}
+    "downstream_feeds_detail": [
+        "Specifically identify files or reports that appear to be sent to other departments based on the names (e.g. EXTRACT, REPORT, TAPE)."
+    ],
+    "glossary": [
+        {{ "term": "Acronym", "definition": "Business meaning" }}
+    ]
 }}
 """
 
 COBOL_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 {CUMULATIVE_MERGE_INSTRUCTION}
 
-PREVIOUS SUMMARY JSON:
-{previous_summary}
-
-CURRENT CODE CHUNK:
+CURRENT CODE:
 {chunk}
+
+TASK:
+Extract the BUSINESS RULES. If you see an IF statement, translate it to a functional requirement. 
+(e.g., IF BALANCE < 0 translates to 'System prevents processing for overdrawn accounts').
 
 REQUIRED JSON STRUCTURE:
 {{
-    "filename": "From metadata",
+    "filename": "{filename}",
     "type": "COBOL",
-    
     "business_overview": {{
-        "title": "Business Process Name (Inferred)",
-        "purpose": "2-3 sentences explaining the business goal.",
-        "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
-        "scope": [
-            "Business rules handled (e.g. 'Calculates Interest')",
-            "Data boundaries (e.g. 'Active Accounts only')"
+        "title": "Business Process Name",
+        "purpose": "DETAILED 3-4 sentence business explanation.",
+        "functional_category": "Select: Transaction Processing, Reporting, Data Maintenance, or Utility",
+        "business_rules": [
+            "Rule 1: [Detailed rule extracted from IF/EVALUATE logic]",
+            "Rule 2: [Detailed rule extracted from logic]"
         ],
-        "key_data_entities": [
-            "Entities touched (e.g. 'Customer', 'Ledger')"
-        ]
+        "key_data_entities": ["Specific entities from the DATA DIVISION"]
     }},
-
     "technical_analysis": {{
-        "functional_capabilities": [
-            "Specific logic point 1",
-            "Specific logic point 2"
-        ],
-        "key_operations": [
-            "File I/O details",
-            "Subroutine calls"
-        ],
         "data_interactions": [
-            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+            {{ "target": "Table/File", "operation": "READ/WRITE/UPDATE" }}
         ],
-        "technical_notes": [
-            "Error handling specifics",
-            "Performance notes"
-        ]
+        "key_operations": ["Logical steps taken"],
+        "technical_notes": ["Error codes, specific IBM utilities used"]
     }}
 }}
 """

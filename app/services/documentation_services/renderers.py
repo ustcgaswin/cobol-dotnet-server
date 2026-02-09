@@ -1266,32 +1266,86 @@ class FunctionalSpecBuilder(BaseBuilder):
         self.para(self.system_summary.get('business_purpose', 'High-level business overview of the system processing.'))
 
         self.h2("2.2 System Purpose")
-        self.para("Based on module centrality and architectural analysis, the primary purpose of the system is:")
+        counts = self.metrics.files_by_type
+        primary_lang = "COBOL" if counts.get('COBOL', 0) > counts.get('PLI', 0) else "PL/I"
+        
+        sys_purpose = (
+            f"The primary purpose of this COBOL-based system is to facilitate high-volume "
+            f"batch processing and data management. It orchestrates {counts.get('JCL', 0)} job workflows "
+            f"to process transactions against {counts.get('DCLGEN', 0) + counts.get('SQL', 0)} relational tables."
+        )
+        
+        self.para(sys_purpose)
+        
+        # Add Functional Hubs as supporting detail, not the only content
         top_mods = self.metrics.top_complex_modules
         if top_mods:
-            self.para("Primary Functional Hubs:")
-            for mod in top_mods[:5]:
+            self.para("Key functional drivers identified by architectural centrality:")
+            clean_mods = [m for m in top_mods if not any(x in m for x in ['ABEND', 'ERROR'])]
+            for mod in clean_mods[:20]:
                 self.bullet(mod)
-        else:
-            self.para("The system facilitates core transaction management and data reconciliation.")
 
         self.h2("2.3 Scope of Current Functionality")
-        # List major categories derived from file types
-        ftypes = self.metrics.files_by_type
-        scope_text = "The analyzed system scope encompasses: "
+        
+        self.h3("Technical Scope")
+        scope_text = "The analyzed system encompasses the following technical domains:"
         scope_items = []
-        if ftypes.get('COBOL'): scope_items.append("Business Logic and Calculations")
-        if ftypes.get('JCL'): scope_items.append("Batch Orchestration and Workflows")
-        if ftypes.get('DCLGEN') or ftypes.get('SQL'): scope_items.append("Relational Database Persistence")
+        if counts.get('COBOL'): scope_items.append("Business Logic (COBOL)")
+        if counts.get('JCL'): scope_items.append("Batch Orchestration (JCL)")
+        if counts.get('DCLGEN') or counts.get('SQL'): scope_items.append("Data Persistence (DB2)")
+        if counts.get('CICS') or any('CICS' in str(f.technical_analysis) for f in self.code_files): scope_items.append("Online Transaction Processing (CICS)")
         self.para(scope_text + ", ".join(scope_items) + ".")
 
-        self.h2("2.4 Glossary")
-        glossary = self.system_summary.get('glossary', [])
-        if glossary:
-            rows = [[g.get('term',''), g.get('definition','')] for g in glossary]
-            self.table(["Term", "Definition"], rows, [40*mm, 130*mm])
+        self.h3("Functional Scope")
+        self.para("Key business rules and processing boundaries identified across all modules:")
+
+        all_scopes = []
+        for s in self.code_files:
+            file_scope = s.business_overview.get('scope', [])
+            if file_scope:
+                all_scopes.extend(file_scope)
+
+        unique_scopes = sorted(list(set(all_scopes)))
+
+        good_scopes = [s for s in unique_scopes if len(s) > 15 and "process" not in s.lower()]
+        
+        if good_scopes:
+            for item in good_scopes[:15]: 
+                self.bullet(item)
         else:
-            self.para("Technical terms and acronyms are defined within the logic analysis sections.")
+            self.para("No specific functional scope definitions found in source comments.")
+
+        self.h2("2.4 Glossary")
+        glossary_data = self.system_summary.get('harvested_acronyms', [])
+
+        if not glossary_data:
+            glossary_data = self.system_summary.get('glossary', [])
+
+        if not glossary_data:
+            glossary_data = [
+                {"term": "GDG", "definition": "Generation Data Group (Versioning)"},
+                {"term": "JCL", "definition": "Job Control Language"},
+                {"term": "VSAM", "definition": "Virtual Storage Access Method"},
+                {"term": "DB2", "definition": "IBM Relational Database"}
+            ]
+
+        rows = []
+        for g in glossary_data:
+            if isinstance(g, dict):
+                term = g.get('term', 'N/A')
+                defi = g.get('definition', 'N/A')
+            else:
+                continue
+            
+            if term != "N/A" and len(term) < 20:
+                rows.append([term, defi])
+        
+        rows.sort(key=lambda x: x[0])
+        
+        if rows:
+            self.table(["Term / Acronym", "Definition"], rows[:40], [40*mm, 130*mm])
+        else:
+            self.para("No technical acronyms identified.")
 
     def _render_functional_flows(self):
         self.h1("3. High-Level Functional Flows")
@@ -1304,37 +1358,53 @@ class FunctionalSpecBuilder(BaseBuilder):
             self.para("Logical flow: Inbound Feeds -> Batch Validation -> Core Processing -> Data Update -> Reporting.")
 
         self.h2("3.2 Core Functional Groups")
-        tx_progs, rpt_progs, maint_progs = [], [], []
+        tx_progs = []
+        rpt_progs = []
+        maint_progs = []
+
         for p in self.code_files:
-            text = (str(p.technical_analysis) + str(p.business_overview)).upper()
-            if any(x in text for x in ['INSERT', 'UPDATE', 'WRITE', 'TRANSACTION']): tx_progs.append(p.filename)
-            elif any(x in text for x in ['REPORT', 'PRINT', 'DISPLAY', 'SYSOUT']): rpt_progs.append(p.filename)
-            elif any(x in text for x in ['BACKUP', 'ARCHIVE', 'DELETE', 'CLEANUP']): maint_progs.append(p.filename)
+            raw_text = (str(p.technical_analysis) + str(p.business_overview)).upper()
+            
+            if any(x in raw_text for x in ['BACKUP', 'ARCHIVE', 'DELETE', 'CLEANUP', 'PURGE', 'UTILITY', 'REORG', 'COPY', 'MAINTENANCE']):
+                maint_progs.append(p.filename)
+            elif any(x in raw_text for x in ['REPORT', 'PRINT', 'DISPLAY', 'EXTRACT', 'SYSOUT']):
+                rpt_progs.append(p.filename)
+            elif any(x in raw_text for x in ['INSERT', 'UPDATE', 'WRITE', 'TRANSACTION', 'CALCULATE', 'PROCESS']):
+                tx_progs.append(p.filename)
 
-        self.h3("3.2.1 Transaction Processing Group")
-        if tx_progs: self.bullet_list(tx_progs[:10])
-        else: self.para("Modules responsible for state changes and financial updates.")
+        if tx_progs:
+            self.h3("3.2.1 Transaction Processing Group")
+            self.bullet_list(tx_progs[:15])
 
-        self.h3("3.2.2 Reporting & Analysis Group")
-        if rpt_progs: self.bullet_list(rpt_progs[:10])
-        else: self.para("Modules generating business artifacts and audit logs.")
+        if rpt_progs:
+            self.h3("3.2.2 Reporting & Analysis Group")
+            self.bullet_list(rpt_progs[:15])
 
-        self.h3("3.2.3 Data Maintenance Group")
-        if maint_progs: self.bullet_list(maint_progs[:10])
-        else: self.para("Modules handling system hygiene and data retention.")
+        if maint_progs:
+            self.h3("3.2.3 Data Maintenance Group")
+            self.bullet_list(maint_progs[:10])
+
+        if not tx_progs and not rpt_progs and not maint_progs:
+            self.para("No distinct functional groups identified in the source code analysis.")
 
         self.h2("3.3 Reporting & Extraction Process")
-        self.para("The system identifies data extraction points via JCL SYSOUT and outbound file definitions.")
-        extract_jobs = [j.filename for j in self.jcl_files if 'REPORT' in j.filename.upper() or 'RPT' in j.filename.upper()]
-        if extract_jobs:
-            self.para("Key extraction jobs identified:")
-            self.bullet_list(extract_jobs)
+        reports = []
+        for jcl in self.jcl_files:
+            for ds in jcl.technical_analysis.get('io_datasets', []):
+                if isinstance(ds, dict) and ('SYSOUT' in str(ds) or '.RPT' in ds.get('dataset', '')):
+                    reports.append([jcl.filename, str(ds.get('dataset', ''))])
+        
+        if reports:
+            self.para("The following jobs perform extraction and reporting:")
+            self.table(["Job", "Output"], reports[:15], [80*mm, 100*mm])
+        else:
+            self.para("No specific reporting processes identified.")
 
     def _render_detailed_logic(self):
         self.h1("4. Detailed Functional Logic")
         
         self.h2("4.1 Business Rules & Validations")
-        for prog in self.code_files[:20]: # Show rules for major programs
+        for prog in self.code_files[:20]:
             scope = prog.business_overview.get('scope', [])
             if scope:
                 self.h3(f"Logic: {prog.filename}")
@@ -1361,7 +1431,27 @@ class FunctionalSpecBuilder(BaseBuilder):
         self.bullet_list(deletes[:10])
 
         self.h2("4.3 Transformations")
-        self.para("Data transformations involve converting raw input formats (EBCDIC/Flat) into relational DB2 structures as identified in COBOL Procedure logic.")
+        transformations = []
+        keywords = ['CONVERT', 'TRANSFORM', 'FORMAT', 'CALCULATE', 'MAP', 'NORMALIZE', 'REFORMAT', 'COMPUTE']
+        
+        for p in self.code_files:
+            sources = p.business_overview.get('scope', []) + \
+                      p.technical_analysis.get('functional_capabilities', [])
+            
+            for item in sources:
+                item_str = str(item)
+                if any(k in item_str.upper() for k in keywords) and len(item_str) > 10:
+                    transformations.append(f"{p.filename}: {item_str}")
+
+        transformations = sorted(list(set(transformations)))
+
+        if transformations:
+            self.para("The following data transformations and calculations were identified in the codebase:")
+            self.bullet_list(transformations[:20])
+            if len(transformations) > 20:
+                self.para(f"<i>...and {len(transformations)-20} more transformations defined in module specifications.</i>")
+        else:
+            self.para("Standard data movement (MOVE) and arithmetic (COMPUTE) handles most transformations. No complex reformatting logic was explicitly highlighted in the analysis.")
 
     def _render_interfaces(self):
         self.h1("5. Interface Specification")
@@ -1385,23 +1475,30 @@ class FunctionalSpecBuilder(BaseBuilder):
 
         self.h2("5.3 Reporting Outputs")
         reports = []
-        for jcl in self.jcl_files:
-            for ds in jcl.technical_analysis.get('io_datasets', []):
-                if isinstance(ds, dict) and ('SYSOUT' in str(ds) or '.RPT' in ds.get('dataset', '')):
-                    reports.append([str(ds.get('dataset')), jcl.filename])
+        for s in self.summaries:
+            if s.file_type == 'JCL':
+                for ds in s.technical_analysis.get('io_datasets', []):
+                    if isinstance(ds, dict):
+                        name = str(ds.get('dataset', '')).upper()
+                        if 'SYSOUT' in name or '.RPT' in name:
+                            reports.append([s.filename, name])
+        
         if reports:
-            self.table(["Report Name", "Generating Job"], reports[:15], [100*mm, 70*mm])
+            self.table(["Generating Job", "Output Report"], reports[:40], [70*mm, 100*mm])
+        else:
+            self.para("No standard reports identified.")
 
         self.h2("5.4 Downstream Feeds")
         feeds = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
-                if isinstance(ds, dict) and 'NEW' in str(ds.get('usage', '')).upper():
-                    name = str(ds.get('dataset',''))
-                    if 'TEMP' not in name.upper():
-                        feeds.append([name, jcl.filename])
+                if isinstance(ds, dict) and 'NEW' in str(ds.get('usage')).upper():
+                    feeds.append([str(ds.get('dataset')), jcl.filename])
+        
         if feeds:
-            self.table(["Outbound Feed", "Source Job"], feeds[:10], [100*mm, 70*mm])
+            self.table(["Output Artifact", "Source Job"], feeds, [110*mm, 60*mm])
+        else:
+            self.para("No downstream data feeds were identified via JCL dataset analysis.")
 
     def _render_ops(self):
         self.h1("6. Operational Functions")
@@ -1418,38 +1515,143 @@ class FunctionalSpecBuilder(BaseBuilder):
             self.para("Execution frequency is determined by the production batch scheduler.")
 
         self.h2("6.2 Data Volume Capacities")
-        self.para("System capacity is sized for high-volume mainframe processing. Dataset allocations (CYL/TRK) indicate significant throughput for Master Files.")
+        volume_rows = []
+        seen_dsn = set()
+        for jcl in self.jcl_files:
+            for ds in jcl.technical_analysis.get('io_datasets', []):
+                if not isinstance(ds, dict): continue
+                
+                name = str(ds.get('dataset', '')).upper()
+                category = None
+                if 'MASTER' in name or '.MST' in name or 'MAIN' in name:
+                    category = "Master Data (High Volume)"
+                elif 'HIST' in name or 'ARC' in name or 'BACKUP' in name:
+                    category = "Archival/History (High Volume)"
+                elif 'LOG' in name or 'JRNL' in name or 'AUDIT' in name:
+                    category = "Audit Log (Accumulating)"
+                elif 'TRANS' in name or 'TXN' in name:
+                    category = "Transaction Batch (Variable)"
+                
+                if category and name not in seen_dsn:
+                    volume_rows.append([name, category])
+                    seen_dsn.add(name)
 
+        if volume_rows:
+            self.para("The following datasets are identified as primary capacity drivers based on system usage patterns:")
+            volume_rows.sort(key=lambda x: x[1])
+            self.table(["Dataset Name", "Volume Category"], volume_rows[:25], [120*mm, 60*mm])
+            if len(volume_rows) > 25:
+                self.para(f"<i>...and {len(volume_rows)-25} other transactional files.</i>")
+        else:
+            self.para("No explicit Master/History files identified by naming convention. Standard DASD allocations apply.")
+
+        
         self.h2("6.3 Backup & Recovery Procedures")
-        backups = [j.filename for j in self.jcl_files if 'BACKUP' in str(j.business_overview).upper() or 'IEBGENER' in str(j.technical_analysis)]
+        backups = []
+        for s in self.summaries:
+            text = (str(s.technical_analysis) + str(s.business_overview)).upper()
+            if any(x in text for x in ['BACKUP', 'ADRDSSU', 'REPRO', 'COPY']):
+                backups.append(s.filename)
+        
         if backups:
-            self.para("The following jobs perform data protection and backup functions:")
-            self.bullet_list(backups)
+            self.para("The following modules handle backup and recovery:")
+            for b in list(set(backups))[:20]: self.bullet(b)
+        else:
+            self.para("Backup procedures managed via system-level storage groups.")
+
 
         self.h2("6.4 Archiving Logic")
-        self.para("Standard data retention is managed via Generation Data Groups (GDG) and archival jobs defined in JCL.")
+        gdg_jobs = [j.filename for j in self.jcl_files if '(+' in str(j.technical_analysis) or '(-' in str(j.technical_analysis)]
+        if gdg_jobs:
+            self.para("The system uses Generation Data Groups (GDG) for automated data retention:")
+            self.bullet_list(gdg_jobs)
 
-        self.h2("6.5 Error Handling Mechanisms")
-        self.para("Standard technical error routines (writes to ERROR-LOG) and Condition Code (COND) checking are utilized to ensure data integrity during failures.")
+        self.h2("6.5 Error Handling Mechanisms") 
+        error_routines = []
+        keywords = ['ABEND', 'EXCEPTION', 'RETURN-CODE', 'STATUS CODE', 'INVALID KEY', 'ON ERROR', 'ROLLBACK']
+        
+        for prog in self.code_files:
+            notes = prog.technical_analysis.get('technical_notes', [])
+            caps = prog.technical_analysis.get('functional_capabilities', [])
+            
+            for note in notes + caps:
+                note_str = str(note)
+                if any(k in note_str.upper() for k in keywords):
+                    if len(note_str) > 10:
+                        error_routines.append(f"{prog.filename}: {note_str}")
 
+        for jcl in self.jcl_files:
+            notes = str(jcl.technical_analysis.get('schedule_notes', ''))
+            if 'COND' in notes.upper() or 'RESTART' in notes.upper():
+                error_routines.append(f"{jcl.filename}: Implements batch condition codes (COND) for step control.")
+
+        if error_routines:
+            self.para("Specific error handling strategies identified in source code and JCL:")
+            unique_routines = sorted(list(set(error_routines)))
+            self.bullet_list(unique_routines[:20])
+            if len(unique_routines) > 20:
+                self.para(f"<i>...and {len(unique_routines)-20} other error handling instances.</i>")
+        else:
+            self.para("Standard return code processing (RC checking) is assumed. No explicit custom error routines (ABEND/ROLLBACK) detected in module summaries.")
+
+        
     def _render_appendices(self):
         self.h1("7. Appendices")
         
         self.h2("7.1 Data Dictionary (Business View)")
-        for copy in self.data_files:
-            ent = copy.business_overview.get('key_data_entities', [])
-            if ent:
-                self.h3(f"Record: {copy.filename}")
-                self.bullet_list(ent)
+        self.para("Comprehensive list of data structures and their business significance.")
+        for copy in self.data_files[:50]:
+            self.h3(f"Structure: {copy.filename}")
+            fields = copy.technical_analysis.get('table_structure') or copy.technical_analysis.get('key_fields', [])
+            if fields:
+                rows = []
+                for f in fields:
+                    if isinstance(f, dict):
+                        rows.append([f.get('column_name', f.get('field', 'N/A')), f.get('type', f.get('description', 'N/A'))])
+                self.table(["Field Name", "Description / PIC"], rows, [80*mm, 90*mm])
+            else:
+                self.para("Detailed field mapping available in Technical Specification.")
 
         self.h2("7.2 Report Catalog")
-        # Reuse logic to list all outputs for the final appendix
-        all_rpt = []
-        for jcl in self.jcl_files:
-            for ds in jcl.technical_analysis.get('io_datasets', []):
-                if isinstance(ds, dict) and ('SYSOUT' in str(ds) or '.RPT' in ds.get('dataset', '')):
-                    all_rpt.append([jcl.filename, str(ds.get('dataset'))])
-        if all_rpt:
-            self.table(["Source Job", "Output Artifact"], all_rpt, [70*mm, 100*mm])
+        self.para("The following catalog identifies every human-readable report and audit trail generated by the system.")
+
+        report_rows = []
+        seen_reports = set()
+
+        for s in self.summaries:
+            # Check 1: Scan JCL for SYSOUT or Report-named Datasets
+            if s.file_type == 'JCL':
+                datasets = s.technical_analysis.get('io_datasets', [])
+                for ds in datasets:
+                    if not isinstance(ds, dict): continue
+                    
+                    dsn = str(ds.get('dataset', '')).upper()
+                    usage = str(ds.get('usage', '')).upper()
+                    
+                    # Logic: If it's an output and name looks like a report
+                    is_output = any(x in usage for x in ['OUTPUT', 'NEW', 'CATLG'])
+                    is_report = any(x in dsn for x in ['SYSOUT', '.RPT', '.LIST', '.PRT', '.PRINT', 'OUT', 'AUDIT'])
+                    
+                    if is_output and is_report and dsn not in seen_reports:
+                        # Find the purpose from the JCL step description if available
+                        purpose = "Batch Execution Log / Report"
+                        for step in s.technical_analysis.get('steps', []):
+                            if dsn in str(step.get('description', '')):
+                                purpose = step.get('description')
+                                
+                        report_rows.append([s.filename, dsn, purpose])
+                        seen_reports.add(dsn)
+
+            elif s.file_type in ['COBOL', 'PLI']:
+                ops = s.technical_analysis.get('key_operations', [])
+                for op in ops:
+                    if any(x in str(op).upper() for x in ['PRINT', 'REPORT', 'WRITE TO RPT']):
+                        report_rows.append([s.filename, "Internal Print Spool", str(op)])
+
+        if report_rows:
+            report_rows.sort(key=lambda x: x[0])
+            self.table(["Generating Job / Module", "Report / Dataset Name", "Business Purpose"], report_rows[:60], [50*mm, 60*mm, 60*mm])
+            if len(report_rows) > 60:
+                self.para(f"<i>Note: Total of {len(report_rows)} reports identified. First 60 items shown.</i>")
         else:
-            self.para("Detailed report catalog is available in the Technical Specification.")
+            self.para("No standard human-readable reports (SYSOUT or .RPT) were identified in the analyzed JCL/Source.")
