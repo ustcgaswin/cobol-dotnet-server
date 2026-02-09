@@ -903,6 +903,7 @@ class BaseBuilder:
         self.metrics = metrics
         self.system_summary = system_summary or {}
         self.graph_analyzer = graph_analyzer
+        self.AVAILABLE_WIDTH = 170 * mm
         # self.title_text = "Mainframe Documentation" # Default
         
         # --- Multi-Image Handling ---
@@ -988,6 +989,16 @@ class BaseBuilder:
             self.elements.append(Paragraph("<i>No data available.</i>", self.styleN))
             return
         
+        # --- LOGIC TO ENFORCE CONSISTENT TOTAL WIDTH ---
+        if not col_widths:
+            # If no widths provided, split equally across the available 170mm
+            col_widths = [self.AVAILABLE_WIDTH / len(headers)] * len(headers)
+        else:
+            # If widths are provided, scale them proportionally to ensure total is exactly 170mm
+            current_total = sum(col_widths)
+            scaling_factor = self.AVAILABLE_WIDTH / current_total
+            col_widths = [w * scaling_factor for w in col_widths]
+        
         data = [[Paragraph(f"<b>{h}</b>", self.styleN) for h in headers]]
         for row in rows:
             data.append([Paragraph(str(cell), self.styleN) for cell in row])
@@ -996,7 +1007,7 @@ class BaseBuilder:
         if not col_widths:
             col_widths = [170*mm / len(headers)] * len(headers)
 
-        t = Table(data, colWidths=col_widths, repeatRows=1)
+        t = Table(data, colWidths=col_widths, repeatRows=1, hAlign='LEFT')
         t.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E6E6E6")),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
