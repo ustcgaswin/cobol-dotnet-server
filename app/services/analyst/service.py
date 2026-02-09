@@ -18,6 +18,7 @@ from app.db.base import async_session_factory
 from app.services.summarizer.service import SummarizerService
 from app.services.dependency_extractor.service import DependencyExtractorService
 from app.services.parser import ParserService
+from app.config.llm.tracing import trace_execution, trace_tool
 
 class AnalystService:
     """Service for running the System Analyst Agent.
@@ -137,6 +138,9 @@ class AnalystService:
             rag_tools = [search_docs]
             all_tools = artifact_tools + writer_tools + knowledge_tools + rag_tools
             
+            # Wrap tools with tracing
+            all_tools = [trace_tool(t) for t in all_tools]
+            
             # Create agent
             agent = create_analyst_agent(
                 tools=all_tools,
@@ -151,14 +155,28 @@ class AnalystService:
                         "Start by listing artifacts to understand what's available."
             )
             
-            result = await agent.ainvoke(
-                {
-                    "messages": [initial_message],
+            # Trace the entire agent execution
+            with trace_execution(
+                name="Analyst Agent Run",
+                inputs={
                     "project_id": project_id_str,
-                    "iteration_count": 0,
+                    "recursion_limit": 250
                 },
-                config={"recursion_limit": 250},
-            )
+                span_type="chain"
+            ) as trace:
+                try:
+                    result = await agent.ainvoke(
+                        {
+                            "messages": [initial_message],
+                            "project_id": project_id_str,
+                            "iteration_count": 0,
+                        },
+                        config={"recursion_limit": 250},
+                    )
+                    trace.set_result(result)
+                except Exception as e:
+                    trace.set_error(e)
+                    raise
             
             self._update_status(run_id, "complete", phase="done")
             logger.info(f"Analyst run complete: {run_id}")

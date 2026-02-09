@@ -69,7 +69,11 @@ class InstanceStatsResponse(BaseModel):
     last_request_time: Optional[datetime]
     total_requests: int
     successful_requests: int
+    successful_requests: int
     failed_requests: int
+    total_tokens: int
+    prompt_tokens: int
+    completion_tokens: int
 
 
 class AggregateStats(BaseModel):
@@ -77,7 +81,11 @@ class AggregateStats(BaseModel):
     total_requests: int
     successful_requests: int
     failed_requests: int
+    failed_requests: int
     success_rate: float
+    total_tokens: int
+    prompt_tokens: int
+    completion_tokens: int
 
 
 class LLMStatsResponse(BaseModel):
@@ -219,7 +227,11 @@ async def get_llm_stats() -> APIResponse[LLMStatsResponse]:
                     last_request_time=s.last_request_time,
                     total_requests=s.total_requests,
                     successful_requests=s.successful_requests,
+                    successful_requests=s.successful_requests,
                     failed_requests=s.failed_requests,
+                    total_tokens=s.total_tokens,
+                    prompt_tokens=s.prompt_tokens,
+                    completion_tokens=s.completion_tokens,
                 )
                 for s in all_stats
             ],
