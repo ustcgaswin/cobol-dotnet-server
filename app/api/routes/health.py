@@ -69,7 +69,6 @@ class InstanceStatsResponse(BaseModel):
     last_request_time: Optional[datetime]
     total_requests: int
     successful_requests: int
-    successful_requests: int
     failed_requests: int
     total_tokens: int
     prompt_tokens: int
@@ -80,7 +79,6 @@ class AggregateStats(BaseModel):
     """Aggregate statistics across all instances."""
     total_requests: int
     successful_requests: int
-    failed_requests: int
     failed_requests: int
     success_rate: float
     total_tokens: int
@@ -226,7 +224,6 @@ async def get_llm_stats() -> APIResponse[LLMStatsResponse]:
                     first_request_time=s.first_request_time,
                     last_request_time=s.last_request_time,
                     total_requests=s.total_requests,
-                    successful_requests=s.successful_requests,
                     successful_requests=s.successful_requests,
                     failed_requests=s.failed_requests,
                     total_tokens=s.total_tokens,
