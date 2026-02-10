@@ -157,5 +157,19 @@ Use `write_code_file("process_flow.md", content)` to create this file.
 - If a file can't be read, log the issue and skip that component
 - Always log errors with `log_issue()` so they can be reviewed
 
+## CRITICAL: COMPLETION CRITERIA
+
+You are NOT done until:
+1. **ALL** jobs and programs listed in `dependency_graph.md` have been converted.
+   - You must explicitly compare the list of source files against `read_conversion_status()`.
+   - If 15 jobs exist, 15 jobs must be converted. Do not stop at 4 or 5.
+2. **`process_flow.md`** has been generated.
+   - This file must exist and contain the mermaid diagram.
+
+Before calling the final answer/finish:
+- Run `list_source_files()` one last time.
+- Check `list_generated_files()` to ensure `process_flow.md` is present.
+- If any component is missing, continue converting.
+
 Begin by checking existing status, then reading the dependency graph to plan your work.
 """
