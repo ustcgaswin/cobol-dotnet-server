@@ -1398,75 +1398,71 @@ class FunctionalSpecBuilder(BaseBuilder):
             self.para("Logical flow: Inbound Feeds -> Batch Validation -> Core Processing -> Data Update -> Reporting.")
         
         self.h2("3.2 Batch Execution Flow (Data Lineage)")
-        self.para("The following table illustrates the sequential flow of data through the batch system, mapping how jobs chain together via shared datasets.")
+        self.para("The following table illustrates the sequential flow of data through the batch system, mapping how jobs chain together via shared datasets.")      
+        import re
+        def normalize_dsn(dsn):
+            return re.sub(r'\(.*?\)', '', str(dsn)).strip().upper()
         producer_map = {}
         
         for jcl in self.jcl_files:
-            # Get list of programs run in this job (from Technical Analysis data)
+            # Get program list for context
             steps = jcl.technical_analysis.get('steps', [])
             progs = [s.get('program', '') for s in steps if s.get('program')]
-            
-            # Filter out generic utilities to reduce noise
-            filtered_progs = [p for p in progs if p not in ['IEFBR14', 'IEBGENER', 'IDCAMS', 'SORT']]
-            prog_str = ", ".join(filtered_progs[:3]) # First 3 programs only
-            if not prog_str: 
-                prog_str = "Utility/System"
+            prog_str = ", ".join([p for p in progs if p not in ['IEFBR14', 'IEBGENER', 'IDCAMS', 'SORT']][:3])
+            if not prog_str: prog_str = "System Util"
 
-            # Check outputs
-            io_list = jcl.technical_analysis.get('io_datasets', [])
-            for ds in io_list:
+            for ds in jcl.technical_analysis.get('io_datasets', []):
                 if not isinstance(ds, dict): continue
                 
-                name = str(ds.get('dataset', '')).upper()
                 usage = str(ds.get('usage', '')).upper()
-                
-                # Filter out Temp files
-                if 'TEMP' in name or '&&' in name or 'SYSOUT' in name:
-                    continue
+                raw_name = str(ds.get('dataset', ''))
+                norm_name = normalize_dsn(raw_name)
 
-                # If this job CREATES the file
+                # Ignore temp files
+                if 'TEMP' in norm_name or '&&' in norm_name or 'SYSOUT' in norm_name: continue
+
+                # If Creating/Writing
                 if 'NEW' in usage or 'WRITE' in usage or 'OUTPUT' in usage or 'CATLG' in usage:
-                    if name not in producer_map:
-                        producer_map[name] = {"job": jcl.filename, "progs": prog_str}
+                    if norm_name not in producer_map:
+                        producer_map[norm_name] = {"job": jcl.filename, "progs": prog_str}
 
+        # 2. Map Consumers (Who reads that data?)
         flow_rows = []
-        
         for jcl in self.jcl_files:
-            io_list = jcl.technical_analysis.get('io_datasets', [])
-            for ds in io_list:
+            for ds in jcl.technical_analysis.get('io_datasets', []):
                 if not isinstance(ds, dict): continue
-
-                name = str(ds.get('dataset', '')).upper()
+                
                 usage = str(ds.get('usage', '')).upper()
+                raw_name = str(ds.get('dataset', ''))
+                norm_name = normalize_dsn(raw_name)
 
-                # If this job READS the file
+                # If Reading
                 if 'OLD' in usage or 'READ' in usage or 'INPUT' in usage or 'SHR' in usage:
-                    producer = producer_map.get(name)
+                    producer = producer_map.get(norm_name)
                     
-                    # If we found who made it, and it's not the same job
+                    # If we found the creator, and it's a different job
                     if producer and producer['job'] != jcl.filename:
                         flow_rows.append([
-                            producer['job'],       # Predecessor
-                            producer['progs'],     # Logic applied
-                            name,                  # The Data (Handoff)
-                            jcl.filename           # Successor
+                            producer['job'],      # Predecessor
+                            producer['progs'],    # Logic applied
+                            raw_name,             # The specific file used
+                            jcl.filename          # Successor
                         ])
 
         if flow_rows:
-            # Deduplicate rows
+            # Deduplicate
             unique_flows = [list(x) for x in set(tuple(x) for x in flow_rows)]
-            # Sort by Predecessor Job Name
             unique_flows.sort(key=lambda x: x[0])
             
             self.table(
-                ["Predecessor Job", "Key Programs", "Handoff Dataset", "Successor Job"], 
+                ["Predecessor", "Logic", "Shared Data", "Successor"], 
                 unique_flows[:40], 
-                [40*mm, 45*mm, 55*mm, 40*mm]
+                [40*mm, 50*mm, 50*mm, 40*mm]
             )
             if len(unique_flows) > 40:
                 self.para(f"<i>...and {len(unique_flows)-40} additional dependency chains.</i>")
         else:
-            self.para("No direct file-based job chains detected. Jobs may operate independently or dependencies are managed via DB2 tables rather than flat files.")
+            self.para("No file-based job dependencies detected.")
 
         self.h2("3.3 Core Functional Groups")
         tx_progs = []
