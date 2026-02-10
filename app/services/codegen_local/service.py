@@ -381,6 +381,7 @@ class CodegenLocalService:
                             "project_id": project_id_str,
                             "iteration_count": 0,
                             "codegen_logs_path": str(codegen_logs_path),
+                            "codegen_output_path": str(output_path),
                         },
                         config={"recursion_limit": 1000},
                     )

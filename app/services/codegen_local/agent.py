@@ -61,6 +61,7 @@ class CodegenState(TypedDict):
     project_id: str
     iteration_count: int
     codegen_logs_path: str  # Path for dumping session history
+    codegen_output_path: str # Path to generated code for verification
 
 
 def _prune_old_tool_outputs(messages: list[AnyMessage]) -> list[AnyMessage]:
@@ -335,34 +336,92 @@ def create_codegen_agent(tools: list, project_id: str):
         
         return {"messages": result}
     
-    def should_continue(state: CodegenState) -> Literal["tool_node", "__end__"]:
+    def verify_completion(state: CodegenState) -> dict:
+        """Verify that critical artifacts exist before finishing."""
+        output_path_str = state.get("codegen_output_path", "")
+        if not output_path_str:
+            # If path not provided, we can't verify, so assume partial success but warn log
+            logger.warning("No codegen_output_path in state, skipping verification")
+            return {"messages": []}
+            
+        output_path = Path(output_path_str)
+        if not output_path.exists():
+            return {"messages": [HumanMessage(content="CRITICAL ERROR: Output directory does not exist. You cannot be done.")]}
+        
+        process_flow = output_path / "process_flow.md"
+        if not process_flow.exists():
+            logger.warning("Verification failed: process_flow.md missing")
+            return {
+                "messages": [
+                    HumanMessage(
+                        content="CRITICAL: `process_flow.md` is MISSING. "
+                                "You MUST generate the mermaid process flow diagram before finishing.\n"
+                                "Return to work and generate this file."
+                    )
+                ]
+            }
+        
+        # Check for generated jobs/scripts
+        jobs_dir = output_path / "scripts" / "jobs"
+        if not jobs_dir.exists() or not any(jobs_dir.iterdir()):
+             return {
+                "messages": [
+                    HumanMessage(
+                        content="CRITICAL: `scripts/jobs` directory is empty or missing. "
+                                "You have not converted any JCL jobs. "
+                                "You MUST convert the jobs listed in dependency_graph.md."
+                    )
+                ]
+            }
+
+        logger.info("Completion verification passed")
+        return {"messages": []}
+
+    def post_verification_routing(state: CodegenState) -> Literal["llm_call", "__end__"]:
+        """Decide next step after verification."""
+        last_message = state["messages"][-1]
+        # If verification node added a HumanMessage with CRITICAL, go back to LLM
+        if isinstance(last_message, HumanMessage) and "CRITICAL" in str(last_message.content):
+            return "llm_call"
+        return END
+
+    def should_continue(state: CodegenState) -> Literal["tool_node", "verify_completion"]:
         """Decide if we should continue the loop or stop."""
-        messages = state["messages"]
-        last_message = messages[-1]
+        last_message = state["messages"][-1]
         
         # Higher iteration limit for complex conversions
         if state.get("iteration_count", 0) >= 500:
             logger.warning(f"Codegen agent reached iteration limit (500)")
-            return END
+            # If hit limit, force verification to see if we salvage anything or just end?
+            # Actually, if we hit limit, we probably want to just end or error.
+            # But the signature requires satisfying the Literal
+            # Let's verify anyway, maybe we have partials. 
+            return "verify_completion"
         
         if last_message.tool_calls:
             return "tool_node"
         
-        return END
+        return "verify_completion"
     
     # Build the graph
     builder = StateGraph(CodegenState)
     
     builder.add_node("llm_call", llm_call)
     builder.add_node("tool_node", tool_node)
-    
+    builder.add_node("verify_completion", verify_completion)
+
     builder.add_edge(START, "llm_call")
     builder.add_conditional_edges(
         "llm_call",
         should_continue,
-        ["tool_node", END],
+        ["tool_node", "verify_completion"],
     )
     builder.add_edge("tool_node", "llm_call")
+    builder.add_conditional_edges(
+        "verify_completion",
+        post_verification_routing,
+        ["llm_call", END]
+    )
     
     agent = builder.compile()
     
