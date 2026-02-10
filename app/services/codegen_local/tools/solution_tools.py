@@ -4,6 +4,8 @@ Handles .NET solution initialization and file writing.
 """
 
 import uuid
+import shutil
+import os
 from pathlib import Path
 
 from langchain.tools import tool
@@ -298,10 +300,87 @@ You can now write code files using write_code_file()."""
         except Exception as e:
             logger.error(f"list_generated_files error: {e}")
             return f"Error listing files: {e}"
+
+    @tool("remove_file")
+    def remove_file(relative_path: str) -> str:
+        """Remove a specific file from the solution.
+        
+        Args:
+            relative_path: Path relative to local-migration/ (e.g., "src/Core/OldClass.cs")
+            
+        Returns:
+            Success or error message
+        """
+        try:
+            target = (output_dir / relative_path).resolve()
+            if not str(target).startswith(str(output_dir)):
+                return f"Error: Path '{relative_path}' is outside output directory"
+            
+            if not target.exists():
+                return f"Error: File '{relative_path}' does not exist"
+            
+            if not target.is_file():
+                return f"Error: Path '{relative_path}' is not a file"
+            
+            target.unlink()
+            logger.info(f"Removed file: {relative_path}")
+            return f"Successfully removed file: {relative_path}"
+            
+        except Exception as e:
+            logger.error(f"remove_file error: {e}")
+            return f"Error removing file: {e}"
+
+    @tool("remove_directory")
+    def remove_directory(relative_path: str, recursive: bool = False) -> str:
+        """Remove a directory from the solution.
+        
+        Args:
+            relative_path: Path relative to local-migration/
+            recursive: If True, remove directory and all contents. If False, fails if not empty.
+            
+        Returns:
+            Success or error message
+        """
+        import stat
+        
+        def remove_readonly(func, path, _):
+            """Clear the readonly bit and reattempt the removal"""
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+            
+        try:
+            target = (output_dir / relative_path).resolve()
+            if not str(target).startswith(str(output_dir)):
+                return f"Error: Path '{relative_path}' is outside output directory"
+            
+            if not target.exists():
+                return f"Error: Directory '{relative_path}' does not exist"
+            
+            if not target.is_dir():
+                return f"Error: Path '{relative_path}' is not a directory"
+            
+            if recursive:
+                # Use onerror to handle read-only files (common on Windows)
+                shutil.rmtree(target, onerror=remove_readonly)
+                logger.info(f"Removed directory (recursive): {relative_path}")
+                return f"Successfully removed directory (recursive): {relative_path}"
+            else:
+                try:
+                    target.rmdir()
+                    logger.info(f"Removed directory: {relative_path}")
+                    return f"Successfully removed directory: {relative_path}"
+                except OSError:
+                    return f"Error: Directory '{relative_path}' is not empty. Set recursive=True to force."
+            
+        except Exception as e:
+            logger.error(f"remove_directory error: {e}")
+            return f"Error removing directory: {e}"
     
     return [
         initialize_solution,
         write_code_file,
         create_directory,
         list_generated_files,
+        remove_file,
+        remove_directory,
     ]

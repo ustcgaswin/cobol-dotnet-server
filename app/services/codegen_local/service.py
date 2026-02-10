@@ -164,6 +164,40 @@ class CodegenLocalService:
                 
         except Exception as e:
             logger.warning(f"Build cleanup error: {e}")
+
+    def _cleanup_empty_directories(self, output_path: Path) -> None:
+        """Recursively remove empty directories from the output path.
+        
+        Args:
+            output_path: Path to the generated solution
+        """
+        import os
+        
+        removed_count = 0
+        try:
+            # Walk bottom-up so we can remove parents that become empty
+            for root, dirs, files in os.walk(str(output_path), topdown=False):
+                for name in dirs:
+                    dir_path = Path(root) / name
+                    
+                    # Skip if it's the output root itself (though os.walk inputs start inside)
+                    if dir_path == output_path:
+                        continue
+                        
+                    try:
+                        # try to remove, will fail if not empty (which is what we want)
+                        dir_path.rmdir()
+                        removed_count += 1
+                        logger.debug(f"Removed empty directory: {dir_path}")
+                    except OSError:
+                        # Directory not empty
+                        pass
+                        
+            if removed_count > 0:
+                logger.info(f"Cleaned up {removed_count} empty directories")
+                
+        except Exception as e:
+            logger.warning(f"Empty directory cleanup error: {e}")
     
     async def _ensure_prerequisites(self) -> None:
         """Ensure Phase A outputs and Analyst outputs exist.
@@ -392,6 +426,7 @@ class CodegenLocalService:
             
             # Clean up build artifacts before marking complete
             self._cleanup_build_artifacts(output_path)
+            self._cleanup_empty_directories(output_path)
             
             end_time = datetime.utcnow().isoformat()
             self._update_status(run_id, "complete", phase="done", completed_at=end_time)
