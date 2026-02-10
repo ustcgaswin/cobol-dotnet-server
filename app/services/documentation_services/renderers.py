@@ -1415,11 +1415,38 @@ class FunctionalSpecBuilder(BaseBuilder):
         self.h1("4. Detailed Functional Logic")
         
         self.h2("4.1 Business Rules & Validations")
-        for prog in self.code_files[:20]:
-            scope = prog.business_overview.get('scope', [])
-            if scope:
-                self.h3(f"Logic: {prog.filename}")
-                self.bullet_list(scope)
+        rule_count = 0
+        sorted_files = sorted(self.code_files, key=lambda x: (x.file_type, x.filename))
+
+        for prog in sorted_files:
+            rules = prog.business_overview.get('scope', [])
+            if not rules:
+                rules = prog.technical_analysis.get('functional_capabilities', [])
+            if not rules:
+                purpose = prog.business_overview.get('purpose', '')
+                if purpose and len(purpose) > 20:
+                    rules = [s.strip() for s in purpose.split('.') if len(s.strip()) > 10]
+            clean_rules = []
+            for r in rules:
+                r_str = str(r)
+                if any(x in r_str.upper() for x in ['CALL ', 'PERFORM ', 'EXEC SQL', 'OPEN FILE', 'CLOSE FILE']):
+                    continue
+                clean_rules.append(r_str)
+            if clean_rules:
+                if rule_count < 30: 
+                    self.h3(f"Module: {prog.filename}")
+                    
+                    if not prog.business_overview.get('scope') and not prog.technical_analysis.get('functional_capabilities'):
+                        self.para(f"<i>Summary: {clean_rules[0]}</i>")
+                        if len(clean_rules) > 1:
+                            self.bullet_list(clean_rules[1:])
+                    else:
+                        self.bullet_list(clean_rules)
+                    
+                    rule_count += 1
+
+        if rule_count == 0:
+            self.para("No distinct business rules could be isolated from the codebase. Refer to Technical Specification for logic details.")
 
         self.h2("4.2 Data Management Functions")
         inserts, updates, deletes = [], [], []
