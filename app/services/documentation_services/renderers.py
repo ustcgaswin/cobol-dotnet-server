@@ -1399,59 +1399,74 @@ class FunctionalSpecBuilder(BaseBuilder):
         
         self.h2("3.2 Batch Execution Flow (Data Lineage)")
         self.para("The following table illustrates the sequential flow of data through the batch system, mapping how jobs chain together via shared datasets.")
-
-        # 1. Map Producers (Who creates data?)
         producer_map = {}
+        
         for jcl in self.jcl_files:
-            # Get programs executed in this job
-            progs = [s.get('program', 'Unknown') for s in jcl.technical_analysis.get('steps', [])]
-            # Clean up program list
-            prog_str = ", ".join([p for p in progs if p not in ['IEFBR14', 'IEBGENER']])
-            if not prog_str: prog_str = "Utility/System"
+            # Get list of programs run in this job (from Technical Analysis data)
+            steps = jcl.technical_analysis.get('steps', [])
+            progs = [s.get('program', '') for s in steps if s.get('program')]
+            
+            # Filter out generic utilities to reduce noise
+            filtered_progs = [p for p in progs if p not in ['IEFBR14', 'IEBGENER', 'IDCAMS', 'SORT']]
+            prog_str = ", ".join(filtered_progs[:3]) # First 3 programs only
+            if not prog_str: 
+                prog_str = "Utility/System"
 
-            for ds in jcl.technical_analysis.get('io_datasets', []):
-                if isinstance(ds, dict):
-                    name = str(ds.get('dataset', '')).upper()
-                    usage = str(ds.get('usage', '')).upper()
-                    # If creating/writing
-                    if 'NEW' in usage or 'WRITE' in usage or 'OUTPUT' in usage:
-                         # Store the FIRST job found as the creator
-                        if name not in producer_map: 
-                            producer_map[name] = {"job": jcl.filename, "progs": prog_str}
+            # Check outputs
+            io_list = jcl.technical_analysis.get('io_datasets', [])
+            for ds in io_list:
+                if not isinstance(ds, dict): continue
+                
+                name = str(ds.get('dataset', '')).upper()
+                usage = str(ds.get('usage', '')).upper()
+                
+                # Filter out Temp files
+                if 'TEMP' in name or '&&' in name or 'SYSOUT' in name:
+                    continue
 
-        # 2. Map Consumers (Who reads data?)
+                # If this job CREATES the file
+                if 'NEW' in usage or 'WRITE' in usage or 'OUTPUT' in usage or 'CATLG' in usage:
+                    if name not in producer_map:
+                        producer_map[name] = {"job": jcl.filename, "progs": prog_str}
+
         flow_rows = []
+        
         for jcl in self.jcl_files:
-            for ds in jcl.technical_analysis.get('io_datasets', []):
-                if isinstance(ds, dict):
-                    name = str(ds.get('dataset', '')).upper()
-                    usage = str(ds.get('usage', '')).upper()
+            io_list = jcl.technical_analysis.get('io_datasets', [])
+            for ds in io_list:
+                if not isinstance(ds, dict): continue
+
+                name = str(ds.get('dataset', '')).upper()
+                usage = str(ds.get('usage', '')).upper()
+
+                # If this job READS the file
+                if 'OLD' in usage or 'READ' in usage or 'INPUT' in usage or 'SHR' in usage:
+                    producer = producer_map.get(name)
                     
-                    # If reading
-                    if 'OLD' in usage or 'READ' in usage or 'INPUT' in usage:
-                        producer = producer_map.get(name)
-                        # If we know who made it, and it's not self-reference
-                        if producer and producer['job'] != jcl.filename:
-                            flow_rows.append([
-                                producer['job'],      # Job A
-                                producer['progs'],    # Logic in Job A
-                                name,                 # The File passed
-                                jcl.filename          # Job B
-                            ])
+                    # If we found who made it, and it's not the same job
+                    if producer and producer['job'] != jcl.filename:
+                        flow_rows.append([
+                            producer['job'],       # Predecessor
+                            producer['progs'],     # Logic applied
+                            name,                  # The Data (Handoff)
+                            jcl.filename           # Successor
+                        ])
 
         if flow_rows:
-            # Deduplicate
+            # Deduplicate rows
             unique_flows = [list(x) for x in set(tuple(x) for x in flow_rows)]
+            # Sort by Predecessor Job Name
             unique_flows.sort(key=lambda x: x[0])
+            
             self.table(
-                ["Predecessor Job", "Executing Modules", "Handoff Data", "Successor Job"], 
-                unique_flows[:30], # Top 30 chains
-                [40*mm, 50*mm, 50*mm, 40*mm]
+                ["Predecessor Job", "Key Programs", "Handoff Dataset", "Successor Job"], 
+                unique_flows[:40], 
+                [40*mm, 45*mm, 55*mm, 40*mm]
             )
-            if len(unique_flows) > 30:
-                self.para(f"<i>...and {len(unique_flows)-30} additional dependency chains.</i>")
+            if len(unique_flows) > 40:
+                self.para(f"<i>...and {len(unique_flows)-40} additional dependency chains.</i>")
         else:
-            self.para("No direct file-based job chains detected. Jobs may operate independently or via DB2 state changes.")
+            self.para("No direct file-based job chains detected. Jobs may operate independently or dependencies are managed via DB2 tables rather than flat files.")
 
         self.h2("3.3 Core Functional Groups")
         tx_progs = []
