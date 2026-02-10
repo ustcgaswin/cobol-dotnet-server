@@ -23,52 +23,105 @@ This is a chunked analysis.
    - Do NOT overwrite existing valid data; extend lists.
 """
 
+# EXECUTIVE_SUMMARY_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+
+# CONTEXT:
+# You are documenting a Mainframe System consisting of ~400 modules.
+# Below are System Metrics and descriptions of the CORE modules that drive the system.
+
+# SYSTEM METRICS:
+# {metrics}
+
+# CORE MODULE SUMMARIES:
+# {top_modules}
+
+# TASK:
+# Synthesize a deep "Functional Specification". You must be verbose. Do not give 1-sentence answers.
+
+# REQUIRED JSON STRUCTURE:
+# {{
+#     "business_purpose": "A detailed 2-3 paragraph explanation of the system's role in the enterprise.",
+#     "business_scope": [
+#         "Detail the primary business functions (e.g., Transaction Validation, Interest Calculation, Monthly Ledger Closing)."
+#     ],
+#     "process_flow_steps": [
+#         "Step 1: [In-depth description of initial data entry/ingestion]",
+#         "Step 2: [Description of core logic processing]",
+#         "Step 3: [Description of final reporting/persistence]"
+#     ],
+#     "functional_flow_diagram": {{
+#         "description": "Exhaustive description of the data lifecycle.",
+#         "mermaid_code": "sequenceDiagram... (Show interaction between User, Batch, DB, and External Feeds)",
+#         "steps_table": [
+#             {{ "actor": "Name", "action": "Specific Action", "outcome": "Business Result" }}
+#         ]
+#     }},
+#     "external_interfaces": [
+#         {{ 
+#            "interface": "Inferred System Name (e.g. GL System, HR Database)", 
+#            "direction": "Inbound/Outbound", 
+#            "description": "What data is exchanged and why?" 
+#         }}
+#     ],
+#     "downstream_feeds_detail": [
+#         "Specifically identify files or reports that appear to be sent to other departments based on the names (e.g. EXTRACT, REPORT, TAPE)."
+#     ],
+#     "glossary": [
+#         {{ "term": "Acronym", "definition": "Business meaning" }}
+#     ]
+# }}
+# """
+
 EXECUTIVE_SUMMARY_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 CONTEXT:
-You are documenting a Mainframe System consisting of ~400 modules.
-Below are System Metrics and descriptions of the CORE modules that drive the system.
+You are documenting a Mainframe System.
+Below are the System Metrics, descriptions of critical modules, and a harvest of raw business rules found in the code.
 
 SYSTEM METRICS:
 {metrics}
 
-CORE MODULE SUMMARIES:
+CRITICAL MODULES:
 {top_modules}
 
 TASK:
-Synthesize a deep "Functional Specification". You must be verbose. Do not give 1-sentence answers.
+Generate the "Introduction" and "System Architecture" content.
+Crucially, you must synthesize the "Raw Business Rules" into high-level Processing Boundaries (e.g., Data retention limits, fiscal year logic, purging criteria).
 
 REQUIRED JSON STRUCTURE:
 {{
-    "business_purpose": "A detailed 2-3 paragraph explanation of the system's role in the enterprise.",
+    "business_purpose": "2-3 sentences explaining what this system achieves.",
+    
     "business_scope": [
-        "Detail the primary business functions (e.g., Transaction Validation, Interest Calculation, Monthly Ledger Closing)."
+        "Bullet point 1",
+        "Bullet point 2"
     ],
-    "process_flow_steps": [
-        "Step 1: [In-depth description of initial data entry/ingestion]",
-        "Step 2: [Description of core logic processing]",
-        "Step 3: [Description of final reporting/persistence]"
+
+    "system_processing_boundaries": [
+        "Constraint 1 (e.g., 'Data history is retained for 72 months for active accounts')",
+        "Constraint 2 (e.g., 'Transactions are batched by Region ID')",
+        "Constraint 3 (e.g., 'Loading process validates header dates against control file')"
     ],
+    
+    "system_landscape": "Technical summary sentence.",
+    
+    "glossary": [
+        {{ "term": "Acronym", "definition": "Definition" }}
+    ],
+
     "functional_flow_diagram": {{
-        "description": "Exhaustive description of the data lifecycle.",
-        "mermaid_code": "sequenceDiagram... (Show interaction between User, Batch, DB, and External Feeds)",
+        "description": "Flow description.",
+        "mermaid_code": "sequenceDiagram...",
         "steps_table": [
-            {{ "actor": "Name", "action": "Specific Action", "outcome": "Business Result" }}
+            {{ "actor": "Actor", "action": "Action", "outcome": "Outcome" }}
         ]
     }},
-    "external_interfaces": [
-        {{ 
-           "interface": "Inferred System Name (e.g. GL System, HR Database)", 
-           "direction": "Inbound/Outbound", 
-           "description": "What data is exchanged and why?" 
-        }}
-    ],
-    "downstream_feeds_detail": [
-        "Specifically identify files or reports that appear to be sent to other departments based on the names (e.g. EXTRACT, REPORT, TAPE)."
-    ],
-    "glossary": [
-        {{ "term": "Acronym", "definition": "Business meaning" }}
-    ]
+
+    "schedule_frequency": {{ "frequency": "...", "start_time": "..." }},
+    "data_overview": {{ "inputs": [], "outputs": [] }},
+    "business_risks": [],
+    "external_interfaces": [],
+    "ownership": {{ "business_owner": "...", "it_owner": "..." }}
 }}
 """
 

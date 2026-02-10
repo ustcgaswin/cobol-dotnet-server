@@ -610,8 +610,8 @@ class DocumentationService:
                 metrics, 
                 representative_summaries,
                 harvested_data={
-                    "acronyms": unique_acronyms_list[:30], # Top 30 acronyms
-                    "business_rules_sample": unique_rules[:20], # Top 20 rules for context
+                    "acronyms": unique_acronyms_list[:30],
+                    "business_rules_sample": unique_rules[:50],
                     "total_reports": len(all_reports),
                     "total_interfaces": len(all_interfaces)
                 }

@@ -1287,8 +1287,6 @@ class FunctionalSpecBuilder(BaseBuilder):
         )
         
         self.para(sys_purpose)
-        
-        # Add Functional Hubs as supporting detail, not the only content
         top_mods = self.metrics.top_complex_modules
         if top_mods:
             self.para("Key functional drivers identified by architectural centrality:")
@@ -1296,35 +1294,36 @@ class FunctionalSpecBuilder(BaseBuilder):
             for mod in clean_mods[:20]:
                 self.bullet(mod)
 
-        self.h2("2.3 Scope of Current Functionality")
-        
-        self.h3("Technical Scope")
-        scope_text = "The analyzed system encompasses the following technical domains:"
+                self.h2("2.3 Scope of Current Functionality")
+
+        self.h3("Technical Domains")
+        ftypes = self.metrics.files_by_type
         scope_items = []
-        if counts.get('COBOL'): scope_items.append("Business Logic (COBOL)")
-        if counts.get('JCL'): scope_items.append("Batch Orchestration (JCL)")
-        if counts.get('DCLGEN') or counts.get('SQL'): scope_items.append("Data Persistence (DB2)")
-        if counts.get('CICS') or any('CICS' in str(f.technical_analysis) for f in self.code_files): scope_items.append("Online Transaction Processing (CICS)")
-        self.para(scope_text + ", ".join(scope_items) + ".")
+        if ftypes.get('COBOL'): scope_items.append(" Business Logic and Calculations (COBOL)")
+        if ftypes.get('JCL'): scope_items.append("Batch Orchestration (JCL)")
+        if ftypes.get('DCLGEN') or ftypes.get('SQL'): scope_items.append("Relational Database Persistence (DB2)")
+        self.para("The analyzed system scope encompasses: " + ", ".join(scope_items) + ".")
 
-        self.h3("Functional Scope")
-        self.para("Key business rules and processing boundaries identified across all modules:")
-
-        all_scopes = []
-        for s in self.code_files:
-            file_scope = s.business_overview.get('scope', [])
-            if file_scope:
-                all_scopes.extend(file_scope)
-
-        unique_scopes = sorted(list(set(all_scopes)))
-
-        good_scopes = [s for s in unique_scopes if len(s) > 15 and "process" not in s.lower()]
+        self.h3("Key Business & Processing Boundaries")
+        boundaries = self.system_summary.get('system_processing_boundaries', [])
         
-        if good_scopes:
-            for item in good_scopes[:15]: 
-                self.bullet(item)
+        if boundaries:
+            self.para("The following high-level constraints and data handling rules define the system's operational boundaries:")
+            self.bullet_list(boundaries)
         else:
-            self.para("No specific functional scope definitions found in source comments.")
+            self.para("Operational boundaries extracted from module scopes:")
+            all_scopes = []
+            for s in self.code_files:
+                file_scope = s.business_overview.get('scope', [])
+                if file_scope: all_scopes.extend(file_scope)
+            unique_scopes = sorted(list(set(all_scopes)))
+
+            constraints = [s for s in unique_scopes if any(x in s.upper() for x in ['ONLY', 'MUST', 'RETAIN', 'LIMIT', 'MAX', 'MIN', 'MONTHS', 'YEARS'])]
+            
+            if constraints:
+                self.bullet_list(constraints[:10])
+            else:
+                self.para("No specific processing boundaries (retention, limits) explicitly defined in source comments.")
 
         self.h2("2.4 Glossary")
         glossary_data = self.system_summary.get('harvested_acronyms', [])
@@ -1367,8 +1366,64 @@ class FunctionalSpecBuilder(BaseBuilder):
             self.para("<i>Figure: End-to-End Business Sequence.</i>")
         else:
             self.para("Logical flow: Inbound Feeds -> Batch Validation -> Core Processing -> Data Update -> Reporting.")
+        
+        self.h2("3.2 Batch Execution Flow (Data Lineage)")
+        self.para("The following table illustrates the sequential flow of data through the batch system, mapping how jobs chain together via shared datasets.")
 
-        self.h2("3.2 Core Functional Groups")
+        # 1. Map Producers (Who creates data?)
+        producer_map = {}
+        for jcl in self.jcl_files:
+            # Get programs executed in this job
+            progs = [s.get('program', 'Unknown') for s in jcl.technical_analysis.get('steps', [])]
+            # Clean up program list
+            prog_str = ", ".join([p for p in progs if p not in ['IEFBR14', 'IEBGENER']])
+            if not prog_str: prog_str = "Utility/System"
+
+            for ds in jcl.technical_analysis.get('io_datasets', []):
+                if isinstance(ds, dict):
+                    name = str(ds.get('dataset', '')).upper()
+                    usage = str(ds.get('usage', '')).upper()
+                    # If creating/writing
+                    if 'NEW' in usage or 'WRITE' in usage or 'OUTPUT' in usage:
+                         # Store the FIRST job found as the creator
+                        if name not in producer_map: 
+                            producer_map[name] = {"job": jcl.filename, "progs": prog_str}
+
+        # 2. Map Consumers (Who reads data?)
+        flow_rows = []
+        for jcl in self.jcl_files:
+            for ds in jcl.technical_analysis.get('io_datasets', []):
+                if isinstance(ds, dict):
+                    name = str(ds.get('dataset', '')).upper()
+                    usage = str(ds.get('usage', '')).upper()
+                    
+                    # If reading
+                    if 'OLD' in usage or 'READ' in usage or 'INPUT' in usage:
+                        producer = producer_map.get(name)
+                        # If we know who made it, and it's not self-reference
+                        if producer and producer['job'] != jcl.filename:
+                            flow_rows.append([
+                                producer['job'],      # Job A
+                                producer['progs'],    # Logic in Job A
+                                name,                 # The File passed
+                                jcl.filename          # Job B
+                            ])
+
+        if flow_rows:
+            # Deduplicate
+            unique_flows = [list(x) for x in set(tuple(x) for x in flow_rows)]
+            unique_flows.sort(key=lambda x: x[0])
+            self.table(
+                ["Predecessor Job", "Executing Modules", "Handoff Data", "Successor Job"], 
+                unique_flows[:30], # Top 30 chains
+                [40*mm, 50*mm, 50*mm, 40*mm]
+            )
+            if len(unique_flows) > 30:
+                self.para(f"<i>...and {len(unique_flows)-30} additional dependency chains.</i>")
+        else:
+            self.para("No direct file-based job chains detected. Jobs may operate independently or via DB2 state changes.")
+
+        self.h2("3.3 Core Functional Groups")
         tx_progs = []
         rpt_progs = []
         maint_progs = []
@@ -1384,21 +1439,21 @@ class FunctionalSpecBuilder(BaseBuilder):
                 tx_progs.append(p.filename)
 
         if tx_progs:
-            self.h3("3.2.1 Transaction Processing Group")
+            self.h3("3.3.1 Transaction Processing Group")
             self.bullet_list(tx_progs[:15])
 
         if rpt_progs:
-            self.h3("3.2.2 Reporting & Analysis Group")
+            self.h3("3.3.2 Reporting & Analysis Group")
             self.bullet_list(rpt_progs[:15])
 
         if maint_progs:
-            self.h3("3.2.3 Data Maintenance Group")
+            self.h3("3.3.3 Data Maintenance Group")
             self.bullet_list(maint_progs[:10])
 
         if not tx_progs and not rpt_progs and not maint_progs:
             self.para("No distinct functional groups identified in the source code analysis.")
 
-        self.h2("3.3 Reporting & Extraction Process")
+        self.h2("3.4 Reporting & Extraction Process")
         reports = []
         for jcl in self.jcl_files:
             for ds in jcl.technical_analysis.get('io_datasets', []):
