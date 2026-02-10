@@ -1431,15 +1431,15 @@ class FunctionalSpecBuilder(BaseBuilder):
 
         self.h3("4.2.1 Create/Insert Logic")
         self.para("Programs adding new system records:")
-        self.bullet_list(inserts[:10])
+        self.bullet_list(inserts)
 
         self.h3("4.2.2 Update/Maintain Logic")
         self.para("Programs maintaining existing records:")
-        self.bullet_list(updates[:10])
+        self.bullet_list(updates)
 
         self.h3("4.2.3 Logical Deletion")
         self.para("Programs handling record removal or deactivation:")
-        self.bullet_list(deletes[:10])
+        self.bullet_list(deletes)
 
         self.h2("4.3 Transformations")
         transformations = []
@@ -1458,9 +1458,7 @@ class FunctionalSpecBuilder(BaseBuilder):
 
         if transformations:
             self.para("The following data transformations and calculations were identified in the codebase:")
-            self.bullet_list(transformations[:20])
-            if len(transformations) > 20:
-                self.para(f"<i>...and {len(transformations)-20} more transformations defined in module specifications.</i>")
+            self.bullet_list(transformations)
         else:
             self.para("Standard data movement (MOVE) and arithmetic (COMPUTE) handles most transformations. No complex reformatting logic was explicitly highlighted in the analysis.")
 
@@ -1599,9 +1597,7 @@ class FunctionalSpecBuilder(BaseBuilder):
         if error_routines:
             self.para("Specific error handling strategies identified in source code and JCL:")
             unique_routines = sorted(list(set(error_routines)))
-            self.bullet_list(unique_routines[:20])
-            if len(unique_routines) > 20:
-                self.para(f"<i>...and {len(unique_routines)-20} other error handling instances.</i>")
+            self.bullet_list(unique_routines)
         else:
             self.para("Standard return code processing (RC checking) is assumed. No explicit custom error routines (ABEND/ROLLBACK) detected in module summaries.")
 
@@ -1610,18 +1606,53 @@ class FunctionalSpecBuilder(BaseBuilder):
         self.h1("7. Appendices")
         
         self.h2("7.1 Data Dictionary (Business View)")
-        self.para("Comprehensive list of data structures and their business significance.")
-        for copy in self.data_files[:50]:
-            self.h3(f"Structure: {copy.filename}")
-            fields = copy.technical_analysis.get('table_structure') or copy.technical_analysis.get('key_fields', [])
+        self.para("This section outlines the business data entities defined in the system. Technical storage formats (PIC clauses) have been translated to business-readable types.")
+
+        for copy in self.data_files[:50]: # Limit to top 50
+            # 1. Header with Filename
+            self.h3(f"Entity: {copy.filename.replace('.txt', '').replace('_', ' ')}")
+            
+            # 2. Business Purpose (CRITICAL: This adds the context)
+            purpose = copy.business_overview.get('purpose')
+            if purpose and len(purpose) > 10:
+                self.para(f"<b>Definition:</b> {purpose}")
+            
+            # 3. Data Entities (The "What is this?" list)
+            entities = copy.business_overview.get('key_data_entities', [])
+            if entities:
+                self.para("<b>Contains Data For:</b> " + ", ".join(entities))
+
+            # 4. The Table (Humanized)
+            # Try to get fields with descriptions first
+            fields = copy.technical_analysis.get('key_fields', [])
+            structure = copy.technical_analysis.get('table_structure', [])
+            
+            rows = []
+            
+            # Strategy: Mix Key Fields (which usually have descriptions) with Structure
             if fields:
-                rows = []
+                # If we have key fields with descriptions, use them
                 for f in fields:
                     if isinstance(f, dict):
-                        rows.append([f.get('column_name', f.get('field', 'N/A')), f.get('type', f.get('description', 'N/A'))])
-                self.table(["Field Name", "Description / PIC"], rows, [80*mm, 90*mm])
+                        rows.append([
+                            str(f.get('field', 'N/A')), 
+                            str(f.get('description', 'Key Business Identifier'))
+                        ])
+            elif structure:
+                # Fallback to structure, but translate the PIC codes
+                for f in structure:
+                    if isinstance(f, dict):
+                        raw_type = str(f.get('type', ''))
+                        human_type = self._humanize_pic(raw_type)
+                        rows.append([
+                            str(f.get('column_name', 'N/A')), 
+                            human_type
+                        ])
+
+            if rows:
+                self.table(["Data Element", "Description / Format"], rows, [80*mm, 90*mm])
             else:
-                self.para("Detailed field mapping available in Technical Specification.")
+                self.para("No field definitions available.")
 
         self.h2("7.2 Report Catalog")
         self.para("The following catalog identifies every human-readable report and audit trail generated by the system.")
@@ -1666,3 +1697,34 @@ class FunctionalSpecBuilder(BaseBuilder):
                 self.para(f"<i>Note: Total of {len(report_rows)} reports identified. First 60 items shown.</i>")
         else:
             self.para("No standard human-readable reports (SYSOUT or .RPT) were identified in the analyzed JCL/Source.")
+
+    def _humanize_pic(self, pic_str: str) -> str:
+        """Helper to translate COBOL PIC clauses to Business Terms."""
+        p = pic_str.upper()
+        
+        if not p: return "Unknown"
+        
+        # Date Logic
+        if "DATE" in p or "DT" in p: return "Date (YYYY-MM-DD)"
+        
+        # String Logic
+        if "X" in p or "A" in p:
+            # Extract length if possible, e.g. X(10)
+            import re
+            match = re.search(r'\((\d+)\)', p)
+            length = match.group(1) if match else "Variable"
+            return f"Text / String ({length} chars)"
+            
+        # Numeric Logic
+        if "9" in p:
+            if "V" in p or "." in p:
+                return "Decimal / Currency Amount"
+            return "Integer / Count"
+            
+        # DB2 Types
+        if "VARCHAR" in p: return "Variable Length Text"
+        if "DECIMAL" in p: return "Decimal Number"
+        if "INTEGER" in p: return "Whole Number"
+        if "TIMESTAMP" in p: return "Date & Time"
+        
+        return p # Fallback to raw if unknown
