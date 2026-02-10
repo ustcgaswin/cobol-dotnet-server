@@ -29,6 +29,8 @@ Convert all source files (COBOL programs, copybooks, JCL jobs) to a complete .NE
 - `write_code_file(relative_path, content)` - Write a .cs/.csproj file
 - `create_directory(relative_path)` - Create folder
 - `list_generated_files()` - See what's already generated
+- `remove_file(relative_path)` - Remove a file
+- `remove_directory(relative_path)` - Remove a directory
 
 ### Build Tools:
 - `run_dotnet_build()` - Compile the solution, get errors
@@ -75,8 +77,10 @@ local-migration/
 | Copybook X.cpy | src/Core/Entities/X.cs |
 | COBOL program Y.cbl | src/Core/Services/YService.cs + IYService.cs |
 | (File/DB Access) | src/Infrastructure/Repositories/YRepository.cs + src/Core/Interfaces/Repositories/IYRepository.cs |
-| (Unit Test) | tests/Core/Services/YServiceTests.cs |
+| (Service Test) | tests/Core/Services/YServiceTests.cs |
+| (Repo Test) | tests/Infrastructure/Repositories/YRepositoryTests.cs |
 | JCL step STEP01 | src/Worker/Jobs/Step01/Program.cs |
+| (Job Test) | tests/Worker/Jobs/Step01Tests.cs |
 | JCL job JOBNAME | scripts/jobs/run-jobname.ps1 |
 
 ## Workflow
@@ -96,7 +100,10 @@ local-migration/
    d. Generate C# code following style_guide
    e. **GENERATE REPOSITORY**: If the program performs file or DB I/O, generate a Repository Interface (in `Core/Interfaces/Repositories`) and Implementation (in `Infrastructure/Repositories`). Inject this into the Service constructor.
    f. Write file with `write_code_file()`
-   g. **GENERATE TEST**: Write an xUnit test for the service in `tests/`, checking the main logic. Ensure you mock the repositories.
+   g. **GENERATE TESTS (CRITICAL)**:
+      - **Service**: Write `tests/Core/Services/YServiceTests.cs` mocking repositories.
+      - **Repository**: Write `tests/Infrastructure/Repositories/YRepositoryTests.cs` (if repo exists).
+      - **Job**: Write `tests/Worker/Jobs/Step01Tests.cs` (for JCL steps).
    h. Log status with `log_component_status()`
 7. **Build**: Call `run_dotnet_build()` to check for errors
 8. **Fix Errors**: If build fails, read errors and fix the code

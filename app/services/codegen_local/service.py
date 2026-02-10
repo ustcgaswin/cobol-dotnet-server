@@ -183,6 +183,15 @@ class CodegenLocalService:
                     # Skip if it's the output root itself (though os.walk inputs start inside)
                     if dir_path == output_path:
                         continue
+                    
+                    # NEW: Skip data directory
+                    try:
+                        rel = dir_path.relative_to(output_path)
+                        # Avoid deleting 'data' or anything inside it
+                        if 'data' in rel.parts:
+                            continue
+                    except ValueError:
+                        pass
                         
                     try:
                         # try to remove, will fail if not empty (which is what we want)

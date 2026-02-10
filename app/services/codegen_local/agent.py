@@ -374,6 +374,62 @@ def create_codegen_agent(tools: list, project_id: str):
                 ]
             }
 
+        # Check for missing tests
+        services_dir = output_path / "src" / "Core" / "Services"
+        tests_dir = output_path / "tests" / "Core" / "Services"
+        missing_tests = []
+
+        if services_dir.exists():
+            for service_file in services_dir.glob("*Service.cs"):
+                # Expecting ServiceNameService.cs -> ServiceNameServiceTests.cs
+                test_filename = service_file.stem + "Tests.cs"
+                test_file = tests_dir / test_filename
+                
+                if not test_file.exists():
+                    missing_tests.append(f"Service: {service_file.name}")
+
+        # Check for missing Repository tests
+        repos_dir = output_path / "src" / "Infrastructure" / "Repositories"
+        repos_tests_dir = output_path / "tests" / "Infrastructure" / "Repositories"
+        
+        if repos_dir.exists():
+            for repo_file in repos_dir.glob("*Repository.cs"):
+                test_filename = repo_file.stem + "Tests.cs"
+                test_file = repos_tests_dir / test_filename
+                
+                if not test_file.exists():
+                     missing_tests.append(f"Repository: {repo_file.name}")
+
+        # Check for missing Job tests
+        # Jobs are typically src/Worker/Jobs/StepName/Program.cs
+        # We expect tests/Worker/Jobs/StepNameTests.cs
+        jobs_src_dir = output_path / "src" / "Worker" / "Jobs"
+        jobs_tests_dir = output_path / "tests" / "Worker" / "Jobs"
+
+        if jobs_src_dir.exists():
+            # Walk through job directories
+            for job_folder in jobs_src_dir.iterdir():
+                if job_folder.is_dir():
+                    # Check if this folder contains a Program.cs (meaning it's a job step)
+                    if (job_folder / "Program.cs").exists():
+                        test_filename = f"{job_folder.name}Tests.cs"
+                        test_file = jobs_tests_dir / test_filename
+                        
+                        if not test_file.exists():
+                            missing_tests.append(f"Job: {job_folder.name}")
+        
+        if missing_tests:
+            logger.warning(f"Verification failed: Missing tests for {missing_tests}")
+            return {
+                "messages": [
+                    HumanMessage(
+                        content=f"CRITICAL: Missing unit tests for the following components:\n" + 
+                                "\n".join([f"- {m}" for m in missing_tests]) + 
+                                "\n\nYou MUST generate xUnit tests for these components before finishing."
+                    )
+                ]
+            }
+
         logger.info("Completion verification passed")
         return {"messages": []}
 
