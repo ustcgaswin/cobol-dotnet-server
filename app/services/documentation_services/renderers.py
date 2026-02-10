@@ -740,6 +740,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm, inch
+from reportlab.lib.utils import ImageReader
 from pathlib import Path
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, 
@@ -1130,9 +1131,38 @@ class TechnicalSpecBuilder(BaseBuilder):
 
         # --- Technical Spec 2.3: Process Flow ---
         self.h2("2.3 High-Level Process Flow")
-        if self.architecture_image_path: 
-            self.image(self.architecture_image_path)
-            self.para("<i>Figure 2: Component interaction and control flow graph.</i>")
+        if self.architecture_image_path and Path(self.architecture_image_path).exists():
+            try:
+                # 1. Get the actual pixel dimensions of the image
+                img_reader = ImageReader(self.architecture_image_path)
+                iw, ih = img_reader.getSize()
+                aspect = ih / float(iw)
+
+                # 2. Set the target width (matching your AVAILABLE_WIDTH of 170mm)
+                target_width = self.AVAILABLE_WIDTH
+                target_height = target_width * aspect
+
+                # 3. CRITICAL: Height Guard
+                # A4 page is ~297mm. With margins, usable height is ~250mm.
+                # If the diagram is very tall, we must reduce width to maintain aspect ratio
+                # otherwise ReportLab will force it into the frame, causing the "squeeze".
+                max_allowed_height = 190*mm 
+                if target_height > max_allowed_height:
+                    target_height = max_allowed_height
+                    target_width = target_height / aspect
+
+                # 4. Create the Image object manually and add to elements
+                from reportlab.platypus import Image as RLImage
+                img = RLImage(self.architecture_image_path, width=target_width, height=target_height)
+                img.hAlign = 'CENTER'
+                
+                self.elements.append(img)
+                self.elements.append(Spacer(1, 5*mm))
+                self.para("<i>Figure 2: Component interaction and control flow graph.</i>")
+                
+            except Exception as e:
+                # Fallback if image processing fails
+                self.para(f"Process flow diagram generation failed: {e}")
         else:
             self.para("Process flow diagram generation failed.")
         
