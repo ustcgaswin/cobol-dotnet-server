@@ -1088,6 +1088,7 @@ class TechnicalSpecBuilder(BaseBuilder):
     def _intro(self):
         self.h1("1. Introduction")
         self.h2("1.1 Purpose")
+        logger.info(f"the purpose : {self.system_summary.get('business_purpose')}")
         self.para(self.system_summary.get('business_purpose', "Technical reference generated via static analysis of the codebase."))
         self.h2("1.2 Scope of Analysis")
         rows = [[k, str(v)] for k, v in self.metrics.files_by_type.items()]

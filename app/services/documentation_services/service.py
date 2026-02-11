@@ -446,7 +446,13 @@ class DocumentationService:
             
             # Parse JSON
             clean_json = response.content.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean_json)
+            try:
+                return json.loads(clean_json)
+            except json.JSONDecodeError:
+                logger.warning("JSON truncated or invalid. Attempting to repair...")
+                # Option 1: Try a library like 'json_repair' (pip install json-repair)
+                from json_repair import repair_json
+                return json.loads(repair_json(clean_json))
             
         except Exception as e:
             logger.error(f"Failed to generate system summary: {e}")
@@ -616,6 +622,11 @@ class DocumentationService:
                     "total_interfaces": len(all_interfaces)
                 }
             )
+
+            # SAFETY CHECK: Ensure system_overview_json is a dict and not None
+            if not isinstance(system_overview_json, dict):
+                logger.error("System summary returned non-dictionary. Using empty defaults.")
+                system_overview_json = {}
             
             # Inject harvested lists into the summary for the Renderer to use directly
             system_overview_json["harvested_reports"] = all_reports
