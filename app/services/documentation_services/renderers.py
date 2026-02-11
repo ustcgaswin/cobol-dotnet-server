@@ -741,6 +741,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm, inch
 from reportlab.lib.utils import ImageReader
+from reportlab.lib.utils import escape
 from pathlib import Path
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, 
@@ -904,16 +905,14 @@ class BaseBuilder:
         self.metrics = metrics
         self.system_summary = system_summary or {}
         self.graph_analyzer = graph_analyzer
-        self.AVAILABLE_WIDTH = 170 * mm
-        # self.title_text = "Mainframe Documentation" # Default
-        
-        # --- Multi-Image Handling ---
         self.images = images or {}
+        
+        # Paths for diagrams
         self.context_image_path = self.images.get('context')
         self.architecture_image_path = self.images.get('architecture')
         self.functional_image_path = self.images.get('functional')
         
-        # Data Slicing
+        # Grouping
         self.jcl_files = [s for s in summaries if s.file_type == 'JCL']
         self.code_files = [s for s in summaries if s.file_type in ['COBOL', 'PLI', 'ASSEMBLY', 'REXX']]
         self.data_files = [s for s in summaries if s.file_type in ['DCLGEN', 'SQL', 'COPYBOOK', 'PLI_COPYBOOK']]
@@ -940,81 +939,98 @@ class BaseBuilder:
             fontSize=11, leading=14, spaceBefore=10, spaceAfter=4, 
             textColor=colors.HexColor("#606060")
         )
-
         self.styleH4 = ParagraphStyle(
             'Heading4', parent=styles['Normal'], 
             fontSize=10, leading=12, spaceBefore=6, spaceAfter=2, 
             fontName='Helvetica-BoldOblique'
         )
-
-    
+        self.styleBullet = ParagraphStyle(
+            'Bullet', parent=self.styleN,
+            leftIndent=25, bulletIndent=15, spaceAfter=2
+        )
         
         self.elements = []
 
-    def bullet(self, text):
-        """Renders a single bullet point (Fixes the AttributeError)."""
+    def _clean_text(self, text: Any, allow_tags: bool = False) -> str:
+        """
+        Prevents 'unclosed tags' errors by escaping XML characters.
+        """
+        if text is None:
+            return ""
+        
+        t = str(text)
+        if not allow_tags:
+            return escape(t)
+        return escape(t)
+
+    def h1(self, text):
+        if self.elements:
+            self.elements.append(PageBreak())
+        # Headers are safe because we control the text, but let's be safe
+        self.elements.append(Paragraph(self._clean_text(text), self.styleH1))
+
+    def h2(self, text):
+        self.elements.append(Paragraph(self._clean_text(text), self.styleH2))
+
+    def h3(self, text):
+        self.elements.append(Paragraph(self._clean_text(text), self.styleH3))
+    
+    def h4(self, text):
+        self.elements.append(Paragraph(self._clean_text(text), self.styleH4))
+
+    def para(self, text, indent=0):
         if not text: return
-        self.bullet_list([text])
+        style = self.styleN
+        if indent > 0:
+            style = ParagraphStyle('Indented', parent=self.styleN, leftIndent=indent)
+        
+        # Clean text and restore line breaks as ReportLab <br/> tags
+        cleaned = self._clean_text(text).replace('\n', '<br/>')
+        self.elements.append(Paragraph(cleaned, style))
+        self.elements.append(Spacer(1, 2*mm))
+
+    def bullet(self, text):
+        """Renders a single bullet point."""
+        if not text: return
+        # Clean text
+        cleaned = self._clean_text(text).replace('[', '').replace(']', '').replace("'", "")
+        self.elements.append(Paragraph(cleaned, self.styleBullet, bulletText='•'))
 
     def bullet_list(self, items: List[str]):
         """Renders a list of items as bullets."""
         if not items: return
-        list_items = [ListItem(Paragraph(str(item).strip("[]'"), self.styleN)) for item in items]
-        self.elements.append(
-            ListFlowable(list_items, bulletType='bullet', start='•', leftIndent=15, bulletFontSize=12)
-        )
+        for item in items:
+            self.bullet(item)
         self.elements.append(Spacer(1, 3*mm))
-
-    def para(self, text):
-        if not text: return
-        # Wrap text in Paragraph for ReportLab
-        self.elements.append(Paragraph(str(text).replace('\n', '<br/>'), self.styleN))
-        self.elements.append(Spacer(1, 2*mm))
-
-    def h1(self, text):
-        if self.elements:  # Only add page break if this isn't the first item
-            self.elements.append(PageBreak())
-        self.elements.append(Paragraph(text, self.styleH1))
-
-    def h2(self, text):
-        self.elements.append(Paragraph(text, self.styleH2))
-
-    def h3(self, text):
-        self.elements.append(Paragraph(text, self.styleH3))
-    
-    def h4(self, text):
-        self.elements.append(Paragraph(text, self.styleH4))
 
     def table(self, headers: List[str], rows: List[List[str]], col_widths=None):
         if not rows:
             self.elements.append(Paragraph("<i>No data available.</i>", self.styleN))
             return
         
-        # --- LOGIC TO ENFORCE CONSISTENT TOTAL WIDTH ---
-        if not col_widths:
-            # If no widths provided, split equally across the available 170mm
-            col_widths = [self.AVAILABLE_WIDTH / len(headers)] * len(headers)
-        else:
-            # If widths are provided, scale them proportionally to ensure total is exactly 170mm
-            current_total = sum(col_widths)
-            scaling_factor = self.AVAILABLE_WIDTH / current_total
-            col_widths = [w * scaling_factor for w in col_widths]
+        # Clean headers
+        data = [[Paragraph(f"<b>{self._clean_text(h)}</b>", self.styleN) for h in headers]]
         
-        data = [[Paragraph(f"<b>{h}</b>", self.styleN) for h in headers]]
+        # Clean and wrap rows
         for row in rows:
-            data.append([Paragraph(str(cell), self.styleN) for cell in row])
+            safe_row = []
+            for cell in row:
+                cleaned_cell = self._clean_text(cell)
+                safe_row.append(Paragraph(cleaned_cell, self.styleN))
+            data.append(safe_row)
         
-        # If col_widths not provided, use standard distribution
         if not col_widths:
             col_widths = [170*mm / len(headers)] * len(headers)
 
-        t = Table(data, colWidths=col_widths, repeatRows=1, hAlign='LEFT')
+        t = Table(data, colWidths=col_widths, repeatRows=1)
         t.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E6E6E6")),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ]))
         self.elements.append(t)
         self.elements.append(Spacer(1, 6*mm))
