@@ -327,6 +327,9 @@ class DocAgentNodes:
             end = clean.rfind('}')
             if start != -1 and end != -1:
                 clean = clean[start:end+1]
+
+            import re
+            clean = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', clean)
             return json.loads(clean)
         except Exception as e:
             logger.error(f"JSON parse error: {e}")

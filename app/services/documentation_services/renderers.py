@@ -980,9 +980,11 @@ class BaseBuilder:
 
     def para(self, text):
         if not text: return
-        cleaned = self._clean_text(text)
-        final_text = cleaned.replace('\n', '<br/>')
-        self.elements.append(Paragraph(final_text, self.styleN))
+        escaped = self._clean_text(text)
+        formatted = escaped.replace('&lt;b&gt;', '<b>').replace('&lt;/b&gt;', '</b>')\
+                           .replace('&lt;i&gt;', '<i>').replace('&lt;/i&gt;', '</i>')\
+                           .replace('\n', '<br/>')
+        self.elements.append(Paragraph(formatted, self.styleN))
         self.elements.append(Spacer(1, 2*mm))
 
     def h1(self, text):
@@ -1734,7 +1736,7 @@ class FunctionalSpecBuilder(BaseBuilder):
                         f"Receives dataset {dep['file']}."
                     )
                     self.bullet(text)
-                self.pdf.ln(2)
+                self.elements.append(Spacer(1, 4*mm))
 
         if not chains_found:
             self.para("No direct file-based job chains detected. Jobs may operate as independent silos.")
