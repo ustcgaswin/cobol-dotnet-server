@@ -741,7 +741,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm, inch
 from reportlab.lib.utils import ImageReader
-from reportlab.lib.utils import escape
+import html
 from pathlib import Path
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, 
@@ -960,8 +960,8 @@ class BaseBuilder:
         
         t = str(text)
         if not allow_tags:
-            return escape(t)
-        return escape(t)
+            return html.escape(str(text))
+        return html.escape(str(text))
 
     def h1(self, text):
         if self.elements:
