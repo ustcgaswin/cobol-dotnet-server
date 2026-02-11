@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Annotated
 
-from langchain.messages import AnyMessage, SystemMessage, ToolMessage, HumanMessage
+from langchain.messages import AnyMessage, SystemMessage, ToolMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
 from loguru import logger
 from typing_extensions import TypedDict
@@ -337,6 +337,17 @@ def create_codegen_agent(tools: list, project_id: str):
         
         return {"messages": result}
     
+    def should_continue(state: CodegenState) -> Literal["tool_node", "verify_completion"]:
+        """Decide if we should run tools or finish."""
+        last_message = state["messages"][-1]
+        
+        # If LLM called tools, run them
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            return "tool_node"
+        
+        # Otherwise, check if we are done (verify)
+        return "verify_completion"
+
     def verify_completion(state: CodegenState) -> dict:
         """Verify that critical artifacts exist before finishing."""
         output_path_str = state.get("codegen_output_path", "")
