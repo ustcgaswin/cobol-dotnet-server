@@ -645,13 +645,40 @@ class DocumentationService:
             if analyzer.generate_mermaid_png(str(arch_path)):
                 image_paths['architecture'] = str(arch_path)
                 success = str(arch_path)
+            
+            if success:
+                logger.info(f"Successfully generated graph image at {success}")
+                success = None
+            else:
+                logger.warning("Failed to generate arch graph image via Mermaid API")
 
             # B. System Context Diagram (1.4)
             ctx_path = output_dir / "context.png"
             ctx_mermaid = analyzer.generate_context_diagram()
             if analyzer.render_mermaid_code_to_png(ctx_mermaid, str(ctx_path)):
                 image_paths['context'] = str(ctx_path)
-                success = str(arch_path)
+                success = str(ctx_path)
+            
+            if success:
+                logger.info(f"Successfully generated graph image at {success}")
+                success = None
+            else:
+                logger.warning("Failed to generate context graph image via Mermaid API")
+            
+            #C process flow diagram
+            process_flow_path = output_dir / "process_flow.png"
+            # Logic: Ask analyzer to generate a JCL-only flow (Job A -> Job B)
+            process_mermaid = analyzer.generate_process_flow_diagram()
+
+            if analyzer.render_mermaid_code_to_png(process_mermaid, str(process_flow_path)):
+                image_paths['process_flow'] = str(process_flow_path)
+                success = str(process_flow_path)
+            
+            if success:
+                logger.info(f"Successfully generated graph image at {success}")
+                success = None 
+            else:
+                logger.warning("Failed to generate process graph image via Mermaid API")
 
             # C. Functional Sequence Diagram (Functional 3.1)
             # Extracted from the LLM response in system_overview_json
@@ -660,12 +687,12 @@ class DocumentationService:
                 func_path = output_dir / "functional_flow.png"
                 if analyzer.render_mermaid_code_to_png(func_mermaid, str(func_path)):
                     image_paths['functional'] = str(func_path)
-                    success = str(arch_path)
+                    success = str(func_path)
 
             if success:
                 logger.info(f"Successfully generated graph image at {success}")
             else:
-                logger.warning("Failed to generate graph image via Mermaid API")
+                logger.warning("Failed to generate functional graph image via Mermaid API")
 
             # 10. Build Real PDFs with the Images dict
             if mode in ["ALL", "TECHNICAL"]:

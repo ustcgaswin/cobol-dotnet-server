@@ -912,6 +912,7 @@ class BaseBuilder:
         self.images = images or {}
         self.context_image_path = self.images.get('context')
         self.architecture_image_path = self.images.get('architecture')
+        self.process_flow_image_path = self.images.get('process_flow')
         self.functional_image_path = self.images.get('functional')
         
         # Data Slicing
@@ -1088,8 +1089,8 @@ class TechnicalSpecBuilder(BaseBuilder):
     def _intro(self):
         self.h1("1. Introduction")
         self.h2("1.1 Purpose")
-        logger.info(f"the purpose : {self.system_summary.get('business_purpose')}")
-        self.para(self.system_summary.get('business_purpose', "Technical reference generated via static analysis of the codebase."))
+        logger.info(f"the purpose : {self.system_summary.get('technical_summary')}")
+        self.para(self.system_summary.get('technical_summary', "Technical reference generated via static analysis of the codebase."))
         self.h2("1.2 Scope of Analysis")
         rows = [[k, str(v)] for k, v in self.metrics.files_by_type.items()]
         self.table(["Component Type", "Count"], rows, [100*mm, 50*mm])
@@ -1148,43 +1149,48 @@ class TechnicalSpecBuilder(BaseBuilder):
 
         # --- Technical Spec 2.3: Process Flow ---
         self.h2("2.3 High-Level Process Flow")
-        if self.architecture_image_path and Path(self.architecture_image_path).exists():
-            try:
-                # 1. Get the actual pixel dimensions of the image
-                img_reader = ImageReader(self.architecture_image_path)
-                iw, ih = img_reader.getSize()
-                aspect = ih / float(iw)
-
-                # 2. Set the target width (matching your AVAILABLE_WIDTH of 170mm)
-                target_width = self.AVAILABLE_WIDTH
-                target_height = target_width * aspect
-
-                # 3. CRITICAL: Height Guard
-                # A4 page is ~297mm. With margins, usable height is ~250mm.
-                # If the diagram is very tall, we must reduce width to maintain aspect ratio
-                # otherwise ReportLab will force it into the frame, causing the "squeeze".
-                max_allowed_height = 190*mm 
-                if target_height > max_allowed_height:
-                    target_height = max_allowed_height
-                    target_width = target_height / aspect
-
-                # 4. Create the Image object manually and add to elements
-                from reportlab.platypus import Image as RLImage
-                img = RLImage(self.architecture_image_path, width=target_width, height=target_height)
-                img.hAlign = 'CENTER'
-                
-                self.elements.append(img)
-                self.elements.append(Spacer(1, 5*mm))
-                self.para("<i>Figure 2: Component interaction and control flow graph.</i>")
-                
-            except Exception as e:
-                # Fallback if image processing fails
-                self.para(f"Process flow diagram generation failed: {e}")
+        if self.process_flow_image_path and Path(self.process_flow_image_path).exists():
+            self._render_stretched_image(self.process_flow_image_path, "Figure 2: Sequential execution flow of JCL Jobs and batch procedures.")
         else:
-            self.para("Process flow diagram generation failed.")
+            self.para("Process flow diagram generation failed or no job chains detected.")
         
         self.h2("2.4 Data Flow Architecture")
-        self.para("The system architecture follows a Batch Execution model updating persistent stores.")
+        self.para("The following diagram illustrates the data-level dependencies, showing how programs interact with DB2 tables, VSAM files, and GDGs.")
+    
+        if self.architecture_image_path and Path(self.architecture_image_path).exists():
+            # Use existing Architecture Diagram for Data Flow
+            self._render_stretched_image(self.architecture_image_path, "Figure 3: System data architecture and component dependency graph.")
+        else:
+            self.para("Data flow architecture diagram unavailable.")
+        
+    # Private helper to handle the elongation/squeezing for this specific builder
+    def _render_stretched_image(self, path, caption):
+        try:
+            from reportlab.platypus import Image as RLImage
+            
+            img_reader = ImageReader(path)
+            iw, ih = img_reader.getSize()
+            
+            # Dial in the elongation factor to fix source-level squeezing
+            ELONGATION_FACTOR = 1.5 
+            target_width = self.AVAILABLE_WIDTH
+            aspect = ih / float(iw)
+            target_height = target_width * aspect * ELONGATION_FACTOR
+            
+            # Page height guard
+            max_h = 230 * mm
+            if target_height > max_h:
+                target_height = max_h
+                target_width = target_height / (aspect * ELONGATION_FACTOR)
+
+            img = RLImage(path, width=target_width, height=target_height)
+            img.hAlign = 'CENTER'
+            self.elements.append(img)
+            self.elements.append(Spacer(1, 3*mm))
+            self.para(f"<i>{caption}</i>")
+        except Exception as e:
+            logger.error(f"Image render error: {e}")
+            self.para("<i>[Error rendering diagram]</i>")
 
     def _batch(self):
         self.h1("3. Batch Execution Specification")

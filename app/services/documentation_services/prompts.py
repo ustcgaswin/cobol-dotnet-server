@@ -141,6 +141,8 @@ REQUIRED JSON STRUCTURE:
     "business_purpose": "2 sentences. High-level goal (e.g., 'Manages end-of-day reconciliation...').",
     
     "executive_narrative": "3-4 detailed paragraphs describing the system's role in the organization. Explain what data comes in, what business rules are applied (in general terms), and what reports/outputs are generated. Write this like a magazine article about the software.",
+
+    "technical_summary": "A detailed narrative (3-4 paragraphs) describing the technical architecture. Focus on how JCL orchestrates the COBOL/PLI modules, how data flows through files (VSAM/GDG) and tables (DB2), and the overall execution pattern (Batch vs. Online).",
     
     "key_business_processes": [
         {{

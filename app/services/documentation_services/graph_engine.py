@@ -222,70 +222,125 @@ class GraphAnalyzer:
         sorted_nodes = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         return [node for node, score in sorted_nodes[:top_n]]
 
-    def generate_mermaid_diagram(self, max_nodes=50) -> str:
-        """Visualizes the Control Flow."""
-        if self.graph.number_of_nodes() == 0:
-            return "graph TD\nWait[No dependencies found]"
-
-        # Prioritize Control Flow edges for diagram clarity
-        priority_types = {'EXEC_PGM', 'EXEC_PROC', 'TRIGGER', 'SUBMIT_JOB', 'CALL', 'ACCESS_DB'}
+    def generate_process_flow_diagram(self, max_nodes: int = 30) -> str:
+        """
+        VIEW 1: High-Level Orchestration (Timeline).
+        Strictly filters for Job-to-Job and JCL-to-Program execution.
+        """
+        # 1. Strictly define 'Flow' relationships
+        flow_rel_types = {'TRIGGER', 'SUBMIT_JOB', 'EXEC_PROC', 'EXEC_PGM'}
         
-        control_edges = [
-            (u, v) for u, v, d in self.graph.edges(data=True) 
-            if d.get('type') in priority_types
+        # 2. Filter edges: ONLY include the execution flow
+        flow_edges = [
+            (u, v, d) for u, v, d in self.graph.edges(data=True) 
+            if d.get('type') in flow_rel_types
         ]
         
-        view_graph = self.graph.edge_subgraph(control_edges) if control_edges else self.graph
+        # 3. Filter nodes: Exclude Files, Tables, and Copybooks
+        # This is the "Magic" that makes it look different!
+        forbidden_prefixes = ('FILE:', 'DD:', 'TABLE:', 'CPY:')
         
-        # Top nodes by degree
-        degrees = dict(view_graph.degree())
-        if not degrees: return "graph TD\nWait[No significant flow]"
-        
-        nodes = sorted(degrees, key=degrees.get, reverse=True)[:max_nodes]
-        subgraph = self.graph.subgraph(nodes)
+        temp_graph = nx.DiGraph()
+        for u, v, d in flow_edges:
+            if not any(u.startswith(p) or v.startswith(p) for p in forbidden_prefixes):
+                temp_graph.add_edge(u, v, **d)
 
-        lines = ["graph TD"]
+        if temp_graph.number_of_nodes() == 0:
+            return "graph LR\n    Start[\"No Execution Flow Detected\"]"
+
+        # Limit nodes for API stability
+        top_nodes = sorted(dict(temp_graph.degree()), key=dict(temp_graph.degree()).get, reverse=True)[:max_nodes]
+        subgraph = temp_graph.subgraph(top_nodes)
+
+        lines = ["graph LR"] # Left-to-Right is best for Process Flows
+        lines.append("    classDef jobNode fill:#f9f,stroke:#333,stroke-width:2px;")
+        
         for u, v, data in subgraph.edges(data=True):
-            u_c = self._sanitize_node(u)
-            v_c = self._sanitize_node(v)
+            u_id, v_id = self._sanitize_node(u), self._sanitize_node(v)
+            u_lbl, v_lbl = u[:20], v[:20]
+            
+            # Thicker arrows for Job-to-Job triggers
+            arrow = "==>" if data.get('type') == 'TRIGGER' else "-->"
+            lines.append(f"    {u_id}[\"{u_lbl}\"] {arrow} {v_id}[\"{v_lbl}\"]")
+            
+            if data.get('type') == 'TRIGGER':
+                lines.append(f"    class {u_id} jobNode")
+                lines.append(f"    class {v_id} jobNode")
+
+        return "\n".join(lines)
+
+    def generate_mermaid_diagram(self, max_nodes: int = 40) -> str:
+        """
+        VIEW 2: Structural Architecture (The Spiderweb).
+        Focuses on Programs, Copybooks, and Database Tables.
+        """
+        # 1. Define 'Structural' relationships
+        struct_rel_types = {'CALL', 'ACCESS_DB', 'INCLUDE', 'ACCESS_FILE', 'READ_FILE', 'WRITE_FILE'}
+        
+        # 2. Filter edges
+        struct_edges = [
+            (u, v, d) for u, v, d in self.graph.edges(data=True) 
+            if d.get('type') in struct_rel_types
+        ]
+        
+        temp_graph = nx.DiGraph()
+        for u, v, d in struct_edges:
+            temp_graph.add_edge(u, v, **d)
+
+        if temp_graph.number_of_nodes() == 0:
+            return "graph TD\n    Start[\"No Structural Dependencies Detected\"]"
+
+        top_nodes = sorted(dict(temp_graph.degree()), key=dict(temp_graph.degree()).get, reverse=True)[:max_nodes]
+        subgraph = temp_graph.subgraph(top_nodes)
+
+        lines = ["graph TD"] # Top-Down is best for Hierarchy/Architecture
+        lines.append("    classDef dataNode fill:#e1f5fe,stroke:#01579b;")
+        
+        for u, v, data in subgraph.edges(data=True):
+            u_id, v_id = self._sanitize_node(u), self._sanitize_node(v)
+            u_lbl, v_lbl = u[:20], v[:20]
+            
             etype = data.get('type')
+            arrow = "-.->" if "ACCESS" in etype else "-->"
             
-            arrow = "-->"
-            if etype in ('EXEC_PGM', 'TRIGGER'): arrow = "==>"
-            elif etype == 'ACCESS_DB': arrow = "-.->"
+            lines.append(f"    {u_id}[\"{u_lbl}\"] {arrow} {v_id}[\"{v_lbl}\"]")
             
-            lines.append(f"    {u_c}[{u}] {arrow} {v_c}[{v}]")
-            
+            # Highlight Files and Tables
+            if any(v.startswith(p) for p in ('FILE:', 'DD:', 'TABLE:')):
+                lines.append(f"    class {v_id} dataNode")
+
         return "\n".join(lines)
 
     def _sanitize_node(self, name: str) -> str:
-        clean = re.sub(r'[^a-zA-Z0-9]', '_', name)
-        if clean and clean[0].isdigit():
-            clean = "n_" + clean
-        return clean
+        """Extremely aggressive sanitization to ensure Mermaid compatibility."""
+        # Remove everything except basic letters and numbers
+        clean = re.sub(r'[^a-zA-Z0-9]', '', name)
+        # Ensure it starts with a letter and has a unique prefix
+        return f"node{clean}"
     
     def render_mermaid_code_to_png(self, mermaid_code: str, output_path: str) -> bool:
-        """
-        Generic helper to convert any Mermaid string to a PNG file.
-        Used for Context, Architecture, and Functional diagrams.
-        """
         import base64
         import requests
         import urllib3
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-        if not mermaid_code:
-            logger.error("No mermaid code provided for rendering")
-            return False
-
-        # Ensure the string is encoded properly for the URL
-        graphbytes = mermaid_code.encode("utf8")
-        base64_bytes = base64.urlsafe_b64encode(graphbytes)
-        base64_string = base64_bytes.decode("ascii")
         
+        # ... (headers/verify logic) ...
+
+        # URL LENGTH CHECK:
+        # If the code is huge, the URL will fail. 
+        if len(mermaid_code) > 1000:
+            logger.warning(f"Mermaid code for {output_path} is very long ({len(mermaid_code)} chars). Risk of 400 error.")
+
+        graphbytes = mermaid_code.encode("utf8")
+        base64_string = base64.urlsafe_b64encode(graphbytes).decode("ascii")
         url = "https://mermaid.ink/img/" + base64_string
         
+        # Total URL length shouldn't exceed ~4000 for most CDNs/APIs
+        if len(url) > 4096:
+            logger.error(f"URL too long ({len(url)}). Mermaid API will reject this.")
+            return False
+
         try:
             response = requests.get(url, verify=False, timeout=30)
             if response.status_code == 200:
@@ -293,10 +348,12 @@ class GraphAnalyzer:
                     f.write(response.content)
                 return True
             else:
-                logger.error(f"Mermaid API error {response.status_code} for {output_path}")
+                # THIS LOG IS THE KEY:
+                logger.error(f"Mermaid Syntax Error! Status: {response.status_code}")
+                logger.error(f"Failed Mermaid Code:\n{mermaid_code}")
                 return False
         except Exception as e:
-            logger.error(f"Failed to generate PNG at {output_path}: {e}")
+            logger.error(f"Failed to generate PNG: {e}")
             return False
     
     def generate_mermaid_png(self, output_path: str):
@@ -304,31 +361,26 @@ class GraphAnalyzer:
         return self.render_mermaid_code_to_png(self.generate_mermaid_diagram(), output_path)
         
     def generate_context_diagram(self) -> str:
+        """Fixed Context Diagram: Uses brackets and quotes to avoid 503/400 errors."""
         inputs = []
         outputs = []
-        
         for node in self.graph.nodes():
             if not node.startswith("FILE:"): continue
-            
-            in_deg = self.graph.in_degree(node)
-            out_deg = self.graph.out_degree(node)
-            
-            # Heuristic: No input = External Source, No output = External Sink
-            if in_deg == 0: inputs.append(node)
-            if out_deg == 0: outputs.append(node)
+            if self.graph.in_degree(node) == 0: inputs.append(node)
+            if self.graph.out_degree(node) == 0: outputs.append(node)
 
         lines = ["graph LR"]
-        # Group the system into one box
-        lines.append("    subgraph Internal_System[Core Application]")
-        lines.append("        Logic[Business Logic & Batch Processing]")
+        lines.append("    subgraph Core[Internal System]")
+        lines.append("        Logic[\"Business Logic\"]")
         lines.append("    end")
         
-        # Only show top 7 to avoid 400 error (URL too long)
         for i in inputs[:7]:
             clean_id = self._sanitize_node(i)
-            lines.append(f"    {clean_id}({i.replace('FILE:', '')}) --> Logic")
+            # Use [" "] for ALL labels to escape dots and hyphens
+            label = i.replace('FILE:', '')
+            lines.append(f"    {clean_id}[\"{label}\"] --> Logic")
         for o in outputs[:7]:
             clean_id = self._sanitize_node(o)
-            lines.append(f"    Logic --> {clean_id}({o.replace('FILE:', '')})")
-            
+            label = o.replace('FILE:', '')
+            lines.append(f"    Logic --> {clean_id}[\"{label}\"]")
         return "\n".join(lines)
