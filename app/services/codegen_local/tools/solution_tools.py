@@ -12,17 +12,67 @@ from langchain.tools import tool
 from loguru import logger
 
 
-def create_solution_tools(project_id: str, output_path: str) -> list:
+def create_solution_tools(project_id: str, output_path: str, source_path: str) -> list:
     """Create solution management tools.
     
     Args:
         project_id: Project ID for scoping file operations
         output_path: Absolute path to the output directory for generated code
+        source_path: Absolute path to the source directory (for listing components)
         
     Returns:
         List of LangChain tools
     """
     output_dir = Path(output_path)
+    source_dir = Path(source_path)
+    
+    @tool("list_batch_components")
+    def list_batch_components() -> str:
+        """List all JCL Jobs and Procedures that need to be converted.
+        
+        Scans the source directory for .jcl (Jobs) and .proc/.prc (Procedures).
+        
+        Returns:
+            Formatted list of batch components found in source.
+        """
+        try:
+            if not source_dir.exists():
+                return f"Error: Source directory not found at {source_dir}"
+            
+            jobs = []
+            procs = []
+            
+            # Case-insensitive extensions
+            for item in sorted(source_dir.rglob("*")):
+                if not item.is_file():
+                    continue
+                
+                ext = item.suffix.lower()
+                if ext == ".jcl":
+                    jobs.append(item.name)
+                elif ext in (".proc", ".prc"):
+                    procs.append(item.name)
+            
+            if not jobs and not procs:
+                return "No batch components (JCL/PROC) found in source directory."
+                
+            report = f"Found {len(jobs)} Jobs and {len(procs)} Procedures:\n"
+            
+            if jobs:
+                report += "\nJOBS (Require .ps1 script AND Worker/Jobs code):\n"
+                for j in jobs:
+                    report += f"- {j}\n"
+            
+            if procs:
+                report += "\nPROCEDURES (May be converted to shared code or scripts):\n"
+                for p in procs:
+                    report += f"- {p}\n"
+                    
+            return report
+            
+        except Exception as e:
+            logger.error(f"list_batch_components error: {e}")
+            return f"Error listing batch components: {e}"
     
     @tool("initialize_solution")
     def initialize_solution(solution_name: str) -> str:
@@ -383,4 +433,5 @@ You can now write code files using write_code_file()."""
         list_generated_files,
         remove_file,
         remove_directory,
+        list_batch_components,
     ]

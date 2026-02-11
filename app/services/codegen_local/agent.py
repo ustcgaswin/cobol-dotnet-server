@@ -62,6 +62,7 @@ class CodegenState(TypedDict):
     iteration_count: int
     codegen_logs_path: str  # Path for dumping session history
     codegen_output_path: str # Path to generated code for verification
+    codegen_source_path: str # Path to source code for verification checks
 
 
 def _prune_old_tool_outputs(messages: list[AnyMessage]) -> list[AnyMessage]:
@@ -348,19 +349,6 @@ def create_codegen_agent(tools: list, project_id: str):
         if not output_path.exists():
             return {"messages": [HumanMessage(content="CRITICAL ERROR: Output directory does not exist. You cannot be done.")]}
         
-        process_flow = output_path / "process_flow.md"
-        if not process_flow.exists():
-            logger.warning("Verification failed: process_flow.md missing")
-            return {
-                "messages": [
-                    HumanMessage(
-                        content="CRITICAL: `process_flow.md` is MISSING. "
-                                "You MUST generate the mermaid process flow diagram before finishing.\n"
-                                "Return to work and generate this file."
-                    )
-                ]
-            }
-        
         # Check for generated jobs/scripts
         jobs_dir = output_path / "scripts" / "jobs"
         if not jobs_dir.exists() or not any(jobs_dir.iterdir()):
@@ -405,7 +393,25 @@ def create_codegen_agent(tools: list, project_id: str):
         # We expect tests/Worker/Jobs/StepNameTests.cs
         jobs_src_dir = output_path / "src" / "Worker" / "Jobs"
         jobs_tests_dir = output_path / "tests" / "Worker" / "Jobs"
+        scripts_dir = output_path / "scripts" / "jobs"
 
+        # STRICT Verification: Every .jcl file in Source must have a .ps1 script
+        source_path_str = state.get("codegen_source_path", "")
+        if source_path_str:
+            source_path = Path(source_path_str)
+            if source_path.exists():
+                # Only look for TOP-LEVEL JOBS (.jcl), not Procedures (.proc/.prc)
+                # Procedures are dependencies, not executable entry points.
+                for jcl_file in source_path.rglob("*.jcl"):
+                    # Expected script name: run-{filename_lower}.ps1
+                    # e.g., JOB01.jcl -> run-job01.ps1
+                    job_name = jcl_file.stem.lower()
+                    expected_script = scripts_dir / f"run-{job_name}.ps1"
+                    
+                    if not expected_script.exists():
+                         missing_tests.append(f"Missing Script: scripts/jobs/run-{job_name}.ps1 (for {jcl_file.name})")
+
+        # Check for missing Job tests (Worker/Jobs)
         if jobs_src_dir.exists():
             # Walk through job directories
             for job_folder in jobs_src_dir.iterdir():
@@ -416,55 +422,208 @@ def create_codegen_agent(tools: list, project_id: str):
                         test_file = jobs_tests_dir / test_filename
                         
                         if not test_file.exists():
-                            missing_tests.append(f"Job: {job_folder.name}")
+                            missing_tests.append(f"Job Test: {job_folder.name}")
+        
+        # ---------------------------------------------------------------------
+        # FUNCTIONALITY AUDIT (Soft Check)
+        # ---------------------------------------------------------------------
+        # 1. Parse Functionality Catalog for F-IDs
+        # 2. Scan Codebase for Tags
+        # 3. Report Missing Tags
+        
+        project_id = state.get("project_id")
+        catalog_path = output_path.parent / "system_context" / "functionality_catalog.md"
+        
+        missing_functionalities = []
+        
+        if catalog_path.exists():
+            try:
+                import re
+                catalog_content = catalog_path.read_text(encoding="utf-8", errors="replace")
+                # Regex to find IDs like "### F001:" or "**F001**"
+                # Looking for standard pattern from Analyst prompt
+                f_ids = re.findall(r"(F\d{3})", catalog_content)
+                unique_f_ids = sorted(list(set(f_ids)))
+                
+                if unique_f_ids:
+                    logger.info(f"Auditing coverage for functionalities: {unique_f_ids}")
+                    
+                    found_ids = set()
+                    
+                    # Scan all generated .cs files
+                    for valid_file in output_path.rglob("*.cs"):
+                        if "bin" in valid_file.parts or "obj" in valid_file.parts:
+                            continue
+                        
+                        try:
+                            content = valid_file.read_text(encoding="utf-8", errors="replace")
+                            # Look for "// Implements: F001" or '[Trait("Functionality", "F001")]'
+                            for fid in unique_f_ids:
+                                if fid in content:
+                                    found_ids.add(fid)
+                        except Exception:
+                            continue
+                    
+                    # Calculate Gap
+                    for fid in unique_f_ids:
+                        if fid not in found_ids:
+                            missing_functionalities.append(fid)
+            except Exception as e:
+                logger.warning(f"Functionality audit failed: {e}")
+        
+        audit_warnings = []
+        if missing_functionalities:
+            msg = f"WARNING: The following functionalities are not explicitly tagged in the codebase: {', '.join(missing_functionalities)}"
+            audit_warnings.append(msg)
+            logger.warning(msg) 
+            # We do NOT block on this, but we append it to the final message if we were returning one
+        
+        # ---------------------------------------------------------------------
+        # FINAL DECISION
+        # ---------------------------------------------------------------------
         
         if missing_tests:
-            logger.warning(f"Verification failed: Missing tests for {missing_tests}")
+            logger.warning(f"Verification failed: Missing tests/scripts for {missing_tests}")
             return {
                 "messages": [
                     HumanMessage(
-                        content=f"CRITICAL: Missing unit tests for the following components:\n" + 
+                        content=f"CRITICAL: Missing artifacts detected:\n" + 
                                 "\n".join([f"- {m}" for m in missing_tests]) + 
-                                "\n\nYou MUST generate xUnit tests for these components before finishing."
+                                "\nYou MUST generate these before finishing."
                     )
                 ]
             }
 
-        logger.info("Completion verification passed")
+        if audit_warnings:
+             # If we passed strict checks but have audit warnings, we add a gentle nudge 
+             # OR we just let it pass and log it. 
+             # "Senior Engineer" decision: Let it pass, but maybe add a final note in logs.
+             pass
+
+        logger.info("Completion verification passed (Codebase is complete)")
         return {"messages": []}
 
-    def post_verification_routing(state: CodegenState) -> Literal["llm_call", "__end__"]:
+    def generate_process_flow(state: CodegenState) -> dict:
+        """Generate final Process Flow by reading the actual generated code files."""
+        logger.info("Generating Process Flow Diagram (Architect Node)...")
+        
+        output_path_str = state.get("codegen_output_path", "")
+        if not output_path_str:
+            return {"messages": []}
+            
+        output_path = Path(output_path_str)
+        src_dir = output_path / "src"
+        
+        if not src_dir.exists():
+            return {"messages": []}
+
+        # 1. READ THE FILES (The "Eyes" of the Architect)
+        # We need to gather the code so the LLM can analyze the *actual* implementation.
+        # We focus on .cs files in Workers, Services, and Repositories.
+        
+        context_buffer = []
+        files_to_read = list(src_dir.rglob("*.cs"))
+        
+        # Sort for stability
+        files_to_read.sort()
+        
+        logger.info(f"Architect reading {len(files_to_read)} files for strict reverse engineering...")
+        
+        for file_path in files_to_read:
+            # Skip bin/obj or tests if they ended up here
+            if "bin" in file_path.parts or "obj" in file_path.parts:
+                continue
+                
+            try:
+                # Read content
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                
+                # OPTIMIZATION: We mainly need class definitions, methods, and calls.
+                # We can strip comments or empty lines to save context if needed.
+                # For now, let's just dump it, but formatted clearly.
+                relative_name = file_path.relative_to(src_dir)
+                context_buffer.append(f"--- FILE: {relative_name} ---\n{content}\n")
+            except Exception as e:
+                logger.warning(f"Failed to read {file_path}: {e}")
+
+        codebase_context = "\n".join(context_buffer)
+
+        # 2. GENERATE DIAGRAM
+        ARCHITECT_PROMPT = f"""You are a System Architect.
+        
+        CONTEXT: The following is the COMPLETE source code of a .NET application we just finished migrating.
+        
+        {codebase_context}
+        
+        TASK:
+        Reverse Engineer this code and generate a Mermaid process flow diagram.
+        
+        REQUIREMENTS:
+        1. Identify the Entry Points (Jobs/Workers).
+        2. Trace the flow: Job -> Service -> Repository -> Database.
+        3. Use Subgraphs for: `subgraph Workers`, `subgraph Services`, `subgraph Repositories`.
+        4. Nodes should be named by Class Name.
+        
+        OUTPUT FORMAT:
+        Return ONLY the mermaid code block. No conversational text.
+        
+        ```mermaid
+        graph TD
+          ...
+        ```
+        """
+        
+        try:
+             # We use the base model to generate the diagram based on the file content context
+             response = model.invoke([HumanMessage(content=ARCHITECT_PROMPT)])
+             content = str(response.content)
+             
+             # Extract mermaid block
+             mermaid_match = re.search(r"```mermaid\s*(.*?)\s*```", content, re.DOTALL)
+             if mermaid_match:
+                 diagram = mermaid_match.group(1)
+                 final_content = f"```mermaid\n{diagram}\n```"
+                 
+                 # Write file directly
+                 flow_file = output_path / "process_flow.md"
+                 flow_file.write_text(final_content, encoding="utf-8")
+                 logger.info(f"Architect wrote {flow_file}")
+             else:
+                 logger.warning("Architect failed to produce mermaid block")
+                 # Fallback: Write the raw response maybe? Or just error.
+                 # Let's write raw if block missing, might be malformed markdown
+                 if "graph TD" in content or "flowchart TD" in content:
+                     flow_file = output_path / "process_flow.md"
+                     flow_file.write_text(content, encoding="utf-8")
+        
+        except Exception as e:
+            logger.error(f"Architect Node failed: {e}")
+
+        return {
+            "messages": [
+                AIMessage(content="Process Flow Generated via Source Code Analysis. Session Complete.")
+            ]
+        }
+
+    def post_verification_routing(state: CodegenState) -> Literal["llm_call", "generate_process_flow"]:
         """Decide next step after verification."""
         last_message = state["messages"][-1]
-        # If verification node added a HumanMessage with CRITICAL, go back to LLM
+        
+        # 1. If verification failed (CRITICAL), go back to work (Fix Code)
         if isinstance(last_message, HumanMessage) and "CRITICAL" in str(last_message.content):
             return "llm_call"
-        return END
+            
+        # 2. If Code Passed, Always go to Architect for final documentation
+        logger.info("Code Verified. Proceeding to Architect Node.")
+        return "generate_process_flow"
 
-    def should_continue(state: CodegenState) -> Literal["tool_node", "verify_completion"]:
-        """Decide if we should continue the loop or stop."""
-        last_message = state["messages"][-1]
-        
-        # Higher iteration limit for complex conversions
-        if state.get("iteration_count", 0) >= 500:
-            logger.warning(f"Codegen agent reached iteration limit (500)")
-            # If hit limit, force verification to see if we salvage anything or just end?
-            # Actually, if we hit limit, we probably want to just end or error.
-            # But the signature requires satisfying the Literal
-            # Let's verify anyway, maybe we have partials. 
-            return "verify_completion"
-        
-        if last_message.tool_calls:
-            return "tool_node"
-        
-        return "verify_completion"
-    
     # Build the graph
     builder = StateGraph(CodegenState)
     
     builder.add_node("llm_call", llm_call)
     builder.add_node("tool_node", tool_node)
     builder.add_node("verify_completion", verify_completion)
+    builder.add_node("generate_process_flow", generate_process_flow) # New Node
 
     builder.add_edge(START, "llm_call")
     builder.add_conditional_edges(
@@ -473,11 +632,15 @@ def create_codegen_agent(tools: list, project_id: str):
         ["tool_node", "verify_completion"],
     )
     builder.add_edge("tool_node", "llm_call")
+    
     builder.add_conditional_edges(
         "verify_completion",
         post_verification_routing,
-        ["llm_call", END]
+        ["llm_call", "generate_process_flow"]
     )
+    
+    # Architect is TERMINAL
+    builder.add_edge("generate_process_flow", END) 
     
     agent = builder.compile()
     

@@ -31,6 +31,7 @@ Convert all source files (COBOL programs, copybooks, JCL jobs) to a complete .NE
 - `list_generated_files()` - See what's already generated
 - `remove_file(relative_path)` - Remove a file
 - `remove_directory(relative_path)` - Remove a directory
+- `list_batch_components()` - List all JCL Jobs and Procedures to convert
 
 ### Build Tools:
 - `run_dotnet_build()` - Compile the solution, get errors
@@ -109,44 +110,33 @@ local-migration/
 8. **Fix Errors**: If build fails, read errors and fix the code
 9. **Test**: Call `run_dotnet_test()` when build succeeds
 10. **Verify Coverage**: Review the functionality catalog and ensure all functionalities (F001, F002, etc.) have been converted. Log any missing functionalities.
-11. **Generate Process Flow**: Create `process_flow.md` documenting the system's batch processing flow (see below)
 
-## Process Flow Documentation
+## Job Orchestration (CRITICAL)
+- You MUST read `read_job_chains()` before generating any PowerShell scripts.
+- The `.ps1` scripts must accurately reflect the **Step Sequence** defined in the Job Chains.
+- **Procedures (.proc)**:
+  - Convert these to **reusable PowerShell scripts** in `scripts/common/`.
+  - The main Job script should call them (e.g., `. ./scripts/common/proc-name.ps1`).
+- **IBM Utilities (IDCAMS, SORT, IEBGENER)**:
+  - **Simple (Copy/Delete)**: Use PowerShell commands (e.g., `Remove-Item`, `Copy-Item`).
+  - **Complex (SORT, ICETOOL)**: If the utility performs business logic (e.g., filtering, complex sorting), **DO** generate a C# Service for it (e.g., `SortCheckService.cs`) and call it from the script.
+  - **Rationale**: Complex logic must be unit settable in C#.
+- Ensure all dependencies (files, database states) described in the chain are handled.
 
-As the final step, generate `process_flow.md` showing the converted .NET system architecture.
+## Functionality & Test Traceability (CRITICAL)
+- You MUST read `read_functionality_catalog()` at the start.
+- **Code Tagging**: When implementing a functionality (e.g., F001), add a descriptive comment at the top of the file:
+  `// Implements: F001 - <Short Description from Catalog>`
+- **Test Tagging**: When writing the corresponding test, add a Trait linking it:
+  `[Trait("Functionality", "F001")]` 
+- This ensures the code explains *what* requirement it meets (Readable) and *which* ID it maps to (Auditable).
 
-**OUTPUT FORMAT - STRICTLY ENFORCED:**
-The file must contain ONLY a mermaid code block. Do NOT add:
-- Headers or titles
-- Descriptions or explanations
-- Flow descriptions
-- Data flow sections
-- Error handling sections
-- Any text before or after the mermaid block
-
-The COMPLETE file content should look exactly like this (only the mermaid block):
-```
-```mermaid
-flowchart TD
-    subgraph Workers
-        W1[BatchJob]
-    end
-    subgraph Services
-        S1[MyService]
-    end
-    subgraph Repositories
-        R1[MyRepository]
-    end
-    subgraph Data
-        DB[(Database)]
-    end
-    W1 --> S1
-    S1 --> R1
-    R1 --> DB
-```
-```
-
-Use `write_code_file("process_flow.md", content)` to create this file.
+## Code Style & Pattern Requirements
+- Use .NET 8, File-scoped namespaces, top-level statements.
+- **Dependency Injection**: All repositories/services must be injected.
+- **EF Core**: Use `IEntityTypeConfiguration` for mappings.
+- **Error Handling**: Try-Catch blocks with `ILogger`.
+- **Tests**: Generate xUnit tests for ALL Services, Repositories, and Job Steps. Tests must cover the specific functionalities implemented.
 
 ## Important Guidelines
 
@@ -170,12 +160,9 @@ You are NOT done until:
 1. **ALL** jobs and programs listed in `dependency_graph.md` have been converted.
    - You must explicitly compare the list of source files against `read_conversion_status()`.
    - If 15 jobs exist, 15 jobs must be converted. Do not stop at 4 or 5.
-2. **`process_flow.md`** has been generated.
-   - This file must exist and contain the mermaid diagram.
 
 Before calling the final answer/finish:
 - Run `list_source_files()` one last time.
-- Check `list_generated_files()` to ensure `process_flow.md` is present.
 - If any component is missing, continue converting.
 
 Begin by checking existing status, then reading the dependency graph to plan your work.

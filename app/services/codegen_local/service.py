@@ -347,13 +347,14 @@ class CodegenLocalService:
             # Get project name for output folder
             project_name = await self._get_project_name()
             output_path = self._get_output_path(project_name)
+            source_path = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / project_id_str / "source"
             
             logger.info(f"Output path: {output_path}")
             
             # Create all tools with project_id binding
             artifact_tools = create_artifact_tools(project_id_str)
             knowledge_tools = create_knowledge_tools()
-            solution_tools = create_solution_tools(project_id_str, str(output_path))
+            solution_tools = create_solution_tools(project_id_str, str(output_path), str(source_path))
             build_tools = create_build_tools(project_id_str, str(output_path))
             status_tools = create_status_tools(project_id_str)
             source_file_tools = create_source_file_tools(project_id_str)
@@ -425,6 +426,7 @@ class CodegenLocalService:
                             "iteration_count": 0,
                             "codegen_logs_path": str(codegen_logs_path),
                             "codegen_output_path": str(output_path),
+                            "codegen_source_path": str(source_path),
                         },
                         config={"recursion_limit": 1000},
                     )

@@ -24,7 +24,8 @@ Analyze the project's `dependency_graph.md` and `file_summaries.md` to create sy
 For each program/component:
 1. Read its summary from `file_summaries.md`
 2. Check its dependencies in `dependency_graph.md`
-3. Use `submit_catalog_entry` to document each functionality
+3. Assign a unique ID (e.g., F001, F002) to each distinct business functionality.
+4. Use `submit_catalog_entry` to document each functionality with its ID.
 
 ### Phase 3: Job Chains
 1. Check for CA-7 job scheduling data in `dependency_graph.md` (look for "CA-7" section)
