@@ -1151,7 +1151,7 @@ class TechnicalSpecBuilder(BaseBuilder):
         # --- Technical Spec 2.3: Process Flow ---
         self.h2("2.3 High-Level Process Flow")
         if self.process_flow_image_path and Path(self.process_flow_image_path).exists():
-            self._render_stretched_image(self.process_flow_image_path, "Figure 2: Sequential execution flow of JCL Jobs and batch procedures.")
+            self._render_stretched_image(self.process_flow_image_path, "Figure 2: Sequential execution flow of JCL Jobs and batch procedures.", is_architecture=False)
         else:
             self.para("Process flow diagram generation failed or no job chains detected.")
         
@@ -1160,50 +1160,66 @@ class TechnicalSpecBuilder(BaseBuilder):
     
         if self.architecture_image_path and Path(self.architecture_image_path).exists():
             # Use existing Architecture Diagram for Data Flow
-            self._render_stretched_image(self.architecture_image_path, "Figure 3: System data architecture and component dependency graph.")
+            self._render_stretched_image(self.architecture_image_path, "Figure 3: System data architecture and component dependency graph.", is_architecture = True)
         else:
             self.para("Data flow architecture diagram unavailable.")
         
     # Private helper to handle the elongation/squeezing for this specific builder
-    def _render_stretched_image(self, path, caption):
+    def _render_stretched_image(self, path, caption, is_architecture=False):
         try:
             from reportlab.platypus import Image as RLImage
+            from reportlab.lib.utils import ImageReader
+            from PIL import Image as PILImage
             
-            # 1. Open image with Pillow
+            if not Path(path).exists():
+                return
+
+            final_path = path
+            
+            # 1. Open image with Pillow to check dimensions
             with PILImage.open(path) as img:
                 iw, ih = img.size
                 
-                # 2. ELONGATION LOGIC
-                # If width is much larger than height, the graph is "flat"
-                if iw > ih:
-                    # We want a target height that is at least 60% of the width
-                    # This physically adds vertical pixels to the image
+                if is_architecture and iw > ih:
+                    # --- ARCHITECTURE LOGIC: Force Elongation ---
+                    # We physically add vertical pixels to prevent the "squashed" look
                     new_width = iw
-                    new_height = int(iw * 0.8) # Force a 4:5 or 1:1 ratio
+                    new_height = int(iw * 0.8) # Force a 4:5 vertical-ish ratio
                     
-                    # Resize using High-Quality Lanczos filtering
-                    # This prevents the text from looking blurry
                     img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
-                    
-                    # Save the "Elongated" version to a temporary file
                     stretched_path = path.replace(".png", "_stretched.png")
                     img.save(stretched_path)
                     final_path = stretched_path
-                else:
-                    final_path = path
 
-            # 3. Calculate ReportLab dimensions
-            # Now the image is physically tall, so ReportLab's aspect ratio calculation
-            # will naturally produce a tall result.
+            # 2. Calculate ReportLab scaling
             img_reader = ImageReader(final_path)
             riw, rih = img_reader.getSize()
             aspect = rih / float(riw)
 
-            target_width = self.AVAILABLE_WIDTH
+            # 3. WIDTH LOGIC
+            if is_architecture:
+                # Architecture fills the page width (170mm)
+                target_width = self.AVAILABLE_WIDTH
+            else:
+                # Process Flow uses original width
+                # Convert pixels to mm (standard 96 DPI: 1px ≈ 0.2645mm)
+                original_width_mm = riw * 0.2645 * mm
+                
+                # SAFETY: If original width is wider than the page, cap it at AVAILABLE_WIDTH
+                # Otherwise, use the natural size so it doesn't stretch.
+                target_width = min(original_width_mm, self.AVAILABLE_WIDTH)
+            
+            # 4. HEIGHT LOGIC
             target_height = target_width * aspect
             
-            if target_height > 230 * mm: target_height = 230 * mm
+            # 5. PAGE HEIGHT SAFETY
+            # Ensure the image doesn't bleed off the bottom of the A4 page
+            max_h = 230 * mm
+            if target_height > max_h:
+                target_height = max_h
+                target_width = target_height / aspect
 
+            # 6. RENDER
             img_flowable = RLImage(final_path, width=target_width, height=target_height)
             img_flowable.hAlign = 'CENTER'
             self.elements.append(img_flowable)
@@ -1211,8 +1227,8 @@ class TechnicalSpecBuilder(BaseBuilder):
             self.para(f"<i>{caption}</i>")
 
         except Exception as e:
-            logger.error(f"Pillow stretching failed: {e}")
-            self.para("<i>[Error rendering diagram]</i>")
+            logger.error(f"Image processing failed for {path}: {e}")
+            self.para("<i>[Error rendering diagram content]</i>")
 
     def _batch(self):
         self.h1("3. Batch Execution Specification")
