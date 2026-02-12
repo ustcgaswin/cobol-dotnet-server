@@ -347,7 +347,8 @@ class CodegenLocalService:
             # Get project name for output folder
             project_name = await self._get_project_name()
             output_path = self._get_output_path(project_name)
-            source_path = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / project_id_str / "source"
+            # Corrected: Point to PROJECT_STORAGE_PATH for source files
+            source_path = Path(settings.PROJECT_STORAGE_PATH).resolve() / project_id_str
             
             logger.info(f"Output path: {output_path}")
             

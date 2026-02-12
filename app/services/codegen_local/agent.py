@@ -18,8 +18,7 @@ from typing_extensions import TypedDict
 
 from app.config.llm import get_llm, CODEGEN, LLMModel
 from app.config.settings import settings
-from app.services.codegen_local.prompts import SYSTEM_PROMPT
-
+from app.services.codegen_local.prompts import SYSTEM_PROMPT, MIGRATION_PLANNER_PROMPT
 
 # Summarization configuration
 SUMMARIZE_THRESHOLD = 80  # Trigger summarization at this message count
@@ -282,6 +281,72 @@ def create_codegen_agent(tools: list, project_id: str):
     tools_by_name = {tool.name: tool for tool in tools}
     model_with_tools = model.bind_tools(tools)
     
+    def plan_migration(state: CodegenState) -> dict:
+        """New Node: Generate a strict migration plan before starting."""
+        logger.info("Executing Planning Node...")
+        
+        output_path_str = state.get("codegen_output_path", "")
+        if not output_path_str:
+             return {"messages": []}
+        
+        output_path = Path(output_path_str)
+        artifacts_dir = output_path.parent / "system_context" # heuristic
+        
+        # Gather Context
+        context = []
+        
+        # 1. Dependency Graph
+        dep_graph = artifacts_dir / "dependency_graph.md"
+        if dep_graph.exists():
+            context.append(f"--- dependency_graph.md ---\n{dep_graph.read_text(encoding='utf-8', errors='replace')}")
+            
+        # 2. File Summaries
+        summaries = artifacts_dir / "file_summaries.md"
+        if summaries.exists():
+             # Truncate if too huge? Let's assume it fits for now or take head
+             text = summaries.read_text(encoding='utf-8', errors='replace')
+             context.append(f"--- file_summaries.md ---\n{text[:20000]}") # 20k chars limit
+             
+        # 3. Source Files List
+        source_path_str = state.get("codegen_source_path", "")
+        if source_path_str:
+            src_path = Path(source_path_str)
+            files = [str(p.relative_to(src_path)) for p in src_path.rglob("*") if p.is_file()]
+            context.append(f"--- Source Files ---\n" + "\n".join(files))
+            
+        full_prompt = MIGRATION_PLANNER_PROMPT + "\n\nCONTEXT:\n" + "\n".join(context)
+        
+        try:
+            response = model.invoke([HumanMessage(content=full_prompt)])
+            content = str(response.content)
+            
+            # Extract JSON
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_match:
+                plan_json = json_match.group(0)
+                
+                # Validate JSON (Basic check)
+                plan_data = json.loads(plan_json)
+                
+                # Write to file
+                plan_file = output_path / "migration_plan.json"
+                plan_file.write_text(plan_json, encoding="utf-8")
+                logger.info(f"Migration Plan generated at {plan_file}")
+                
+                # Return plan as a messsage to the agent so it knows what to do
+                return {
+                    "messages": [
+                        AIMessage(content=f"STRICT MIGRATION PLAN GENERATED.\nI must follow the plan in `migration_plan.json`.\n\nPlan Summary: {len(plan_data.get('migration_plan', {}).get('items', []))} items to convert.")
+                    ]
+                }
+            else:
+                 logger.warning("Planner failed to produce JSON")
+                 return {"messages": [HumanMessage(content="Planner failed to generate JSON plan. Proceeding with caution.")]}
+                 
+        except Exception as e:
+            logger.error(f"Planning Node Failed: {e}")
+            return {"messages": [HumanMessage(content=f"Planning Node Error: {e}")]}
+
     def llm_call(state: CodegenState) -> dict:
         """LLM decides whether to call a tool or respond."""
         messages = state["messages"]
@@ -398,7 +463,10 @@ def create_codegen_agent(tools: list, project_id: str):
         missing_tests = []
 
         if services_dir.exists():
-            for service_file in services_dir.glob("*Service.cs"):
+            service_files = list(services_dir.glob("*Service.cs"))
+            logger.info(f"[Verification] Found {len(service_files)} Services. Checking tests...")
+            
+            for service_file in service_files:
                 # Expecting ServiceNameService.cs -> ServiceNameServiceTests.cs
                 test_filename = service_file.stem + "Tests.cs"
                 test_file = tests_dir / test_filename
@@ -411,7 +479,10 @@ def create_codegen_agent(tools: list, project_id: str):
         repos_tests_dir = output_path / "tests" / "Infrastructure" / "Repositories"
         
         if repos_dir.exists():
-            for repo_file in repos_dir.glob("*Repository.cs"):
+            repo_files = list(repos_dir.glob("*Repository.cs"))
+            logger.info(f"[Verification] Found {len(repo_files)} Repositories. Checking tests...")
+            
+            for repo_file in repo_files:
                 test_filename = repo_file.stem + "Tests.cs"
                 test_file = repos_tests_dir / test_filename
                 
@@ -451,15 +522,16 @@ def create_codegen_agent(tools: list, project_id: str):
         # Check for missing Job tests (Worker/Jobs)
         if jobs_src_dir.exists():
             # Walk through job directories
-            for job_folder in jobs_src_dir.iterdir():
-                if job_folder.is_dir():
-                    # Check if this folder contains a Program.cs (meaning it's a job step)
-                    if (job_folder / "Program.cs").exists():
-                        test_filename = f"{job_folder.name}Tests.cs"
-                        test_file = jobs_tests_dir / test_filename
-                        
-                        if not test_file.exists():
-                            missing_tests.append(f"Missing Job Test: '{test_file}' (for {job_folder.name})")
+            job_folders = [d for d in jobs_src_dir.iterdir() if d.is_dir() and (d / "Program.cs").exists()]
+            logger.info(f"[Verification] Found {len(job_folders)} Job Steps. Checking tests...")
+            
+            for job_folder in job_folders:
+                test_filename = f"{job_folder.name}Tests.cs"
+                test_file = jobs_tests_dir / test_filename
+                
+                if not test_file.exists():
+                    missing_tests.append(f"Missing Job Test: '{test_file}' (for {job_folder.name})")
+
         
         # ---------------------------------------------------------------------
         # FUNCTIONALITY AUDIT (Soft Check)
@@ -477,24 +549,24 @@ def create_codegen_agent(tools: list, project_id: str):
             try:
                 import re
                 catalog_content = catalog_path.read_text(encoding="utf-8", errors="replace")
-                # Regex to find IDs like "### F001:" or "**F001**"
-                # Looking for standard pattern from Analyst prompt
                 f_ids = re.findall(r"(F\d{3})", catalog_content)
                 unique_f_ids = sorted(list(set(f_ids)))
                 
                 if unique_f_ids:
-                    logger.info(f"Auditing coverage for functionalities: {unique_f_ids}")
+                    logger.info(f"[Audit] Found {len(unique_f_ids)} Functionality IDs in catalog: {unique_f_ids}")
                     
                     found_ids = set()
                     
                     # Scan all generated .cs files
-                    for valid_file in output_path.rglob("*.cs"):
+                    cs_files = list(output_path.rglob("*.cs"))
+                    logger.info(f"[Audit] Scanning {len(cs_files)} C# files for functionality tags...")
+                    
+                    for valid_file in cs_files:
                         if "bin" in valid_file.parts or "obj" in valid_file.parts:
                             continue
                         
                         try:
                             content = valid_file.read_text(encoding="utf-8", errors="replace")
-                            # Look for "// Implements: F001" or '[Trait("Functionality", "F001")]'
                             for fid in unique_f_ids:
                                 if fid in content:
                                     found_ids.add(fid)
@@ -505,6 +577,8 @@ def create_codegen_agent(tools: list, project_id: str):
                     for fid in unique_f_ids:
                         if fid not in found_ids:
                             missing_functionalities.append(fid)
+                    
+                    logger.info(f"[Audit] Coverage: {len(found_ids)}/{len(unique_f_ids)} functionalities implemented.")
             except Exception as e:
                 logger.warning(f"Functionality audit failed: {e}")
         
@@ -514,6 +588,8 @@ def create_codegen_agent(tools: list, project_id: str):
             audit_warnings.append(msg)
             logger.warning(msg) 
             # We do NOT block on this, but we append it to the final message if we were returning one
+        else:
+             logger.info("[Audit] All catalog functionalities are referenced in the codebase.")
         
         # ---------------------------------------------------------------------
         # FINAL DECISION
@@ -531,13 +607,7 @@ def create_codegen_agent(tools: list, project_id: str):
                 ]
             }
 
-        if audit_warnings:
-             # If we passed strict checks but have audit warnings, we add a gentle nudge 
-             # OR we just let it pass and log it. 
-             # "Senior Engineer" decision: Let it pass, but maybe add a final note in logs.
-             pass
-
-        logger.info("Completion verification passed (Codebase is complete)")
+        logger.info("[Verification] All artifacts present. System ready for final review.")
         return {"messages": []}
 
     def generate_process_flow(state: CodegenState) -> dict:
@@ -660,9 +730,13 @@ def create_codegen_agent(tools: list, project_id: str):
     builder.add_node("llm_call", llm_call)
     builder.add_node("tool_node", tool_node)
     builder.add_node("verify_completion", verify_completion)
-    builder.add_node("generate_process_flow", generate_process_flow) # New Node
+    builder.add_node("generate_process_flow", generate_process_flow)
+    builder.add_node("plan_migration", plan_migration) # New Node
 
-    builder.add_edge(START, "llm_call")
+    # START -> PLAN -> LLM
+    builder.add_edge(START, "plan_migration")
+    builder.add_edge("plan_migration", "llm_call")
+    
     builder.add_conditional_edges(
         "llm_call",
         should_continue,
