@@ -431,7 +431,7 @@ You can now write code files using write_code_file()."""
         write_code_file,
         create_directory,
         list_generated_files,
-        # remove_file,      <-- DISABLED SAFETY
-        # remove_directory, <-- DISABLED SAFETY
+        remove_file,
+        remove_directory,
         list_batch_components,
     ]

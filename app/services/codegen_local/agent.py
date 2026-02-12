@@ -18,7 +18,7 @@ from typing_extensions import TypedDict
 
 from app.config.llm import get_llm, CODEGEN, LLMModel
 from app.config.settings import settings
-from app.services.codegen_local.prompts import SYSTEM_PROMPT, MIGRATION_PLANNER_PROMPT
+from app.services.codegen_local.prompts import SYSTEM_PROMPT
 
 # Summarization configuration
 SUMMARIZE_THRESHOLD = 80  # Trigger summarization at this message count
@@ -276,76 +276,12 @@ def create_codegen_agent(tools: list, project_id: str):
     Returns:
         Compiled LangGraph agent
     """
-    model = get_llm(CODEGEN, model=LLMModel.GPT4_1_MINI)
+    model = get_llm(CODEGEN, model=LLMModel.CLAUDE_SONNET_4_5)
     
     tools_by_name = {tool.name: tool for tool in tools}
     model_with_tools = model.bind_tools(tools)
     
-    def plan_migration(state: CodegenState) -> dict:
-        """New Node: Generate a strict migration plan before starting."""
-        logger.info("Executing Planning Node...")
-        
-        output_path_str = state.get("codegen_output_path", "")
-        if not output_path_str:
-             return {"messages": []}
-        
-        output_path = Path(output_path_str)
-        artifacts_dir = output_path.parent / "system_context" # heuristic
-        
-        # Gather Context
-        context = []
-        
-        # 1. Dependency Graph
-        dep_graph = artifacts_dir / "dependency_graph.md"
-        if dep_graph.exists():
-            context.append(f"--- dependency_graph.md ---\n{dep_graph.read_text(encoding='utf-8', errors='replace')}")
-            
-        # 2. File Summaries
-        summaries = artifacts_dir / "file_summaries.md"
-        if summaries.exists():
-             # Truncate if too huge? Let's assume it fits for now or take head
-             text = summaries.read_text(encoding='utf-8', errors='replace')
-             context.append(f"--- file_summaries.md ---\n{text[:20000]}") # 20k chars limit
-             
-        # 3. Source Files List
-        source_path_str = state.get("codegen_source_path", "")
-        if source_path_str:
-            src_path = Path(source_path_str)
-            files = [str(p.relative_to(src_path)) for p in src_path.rglob("*") if p.is_file()]
-            context.append(f"--- Source Files ---\n" + "\n".join(files))
-            
-        full_prompt = MIGRATION_PLANNER_PROMPT + "\n\nCONTEXT:\n" + "\n".join(context)
-        
-        try:
-            response = model.invoke([HumanMessage(content=full_prompt)])
-            content = str(response.content)
-            
-            # Extract JSON
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                plan_json = json_match.group(0)
-                
-                # Validate JSON (Basic check)
-                plan_data = json.loads(plan_json)
-                
-                # Write to file
-                plan_file = output_path / "migration_plan.json"
-                plan_file.write_text(plan_json, encoding="utf-8")
-                logger.info(f"Migration Plan generated at {plan_file}")
-                
-                # Return plan as a messsage to the agent so it knows what to do
-                return {
-                    "messages": [
-                        AIMessage(content=f"STRICT MIGRATION PLAN GENERATED.\nI must follow the plan in `migration_plan.json`.\n\nPlan Summary: {len(plan_data.get('migration_plan', {}).get('items', []))} items to convert.")
-                    ]
-                }
-            else:
-                 logger.warning("Planner failed to produce JSON")
-                 return {"messages": [HumanMessage(content="Planner failed to generate JSON plan. Proceeding with caution.")]}
-                 
-        except Exception as e:
-            logger.error(f"Planning Node Failed: {e}")
-            return {"messages": [HumanMessage(content=f"Planning Node Error: {e}")]}
+
 
     def llm_call(state: CodegenState) -> dict:
         """LLM decides whether to call a tool or respond."""
@@ -429,185 +365,252 @@ def create_codegen_agent(tools: list, project_id: str):
         return "verify_completion"
 
     def verify_completion(state: CodegenState) -> dict:
-        """Verify that critical artifacts exist before finishing."""
+        """Verify that critical artifacts exist before finishing.
+        
+        Runs structured verification steps with clear logging for each.
+        Collects ALL failures before returning so the agent can fix everything in one pass.
+        """
+        import subprocess
+        
         output_path_str = state.get("codegen_output_path", "")
         source_path_str = state.get("codegen_source_path", "")
         
-        logger.info(f"[Verification] Starting checks. Output: {output_path_str}, Source: {source_path_str}")
+        logger.info(f"[Verification] ═══════════════════════════════════════")
+        logger.info(f"[Verification] Starting verification checks")
+        logger.info(f"[Verification] Output: {output_path_str}")
+        logger.info(f"[Verification] Source: {source_path_str}")
+        logger.info(f"[Verification] ═══════════════════════════════════════")
 
+        failures = []  # Collect ALL failures
+
+        # -----------------------------------------------------------------
+        # STEP 1: Output directory exists
+        # -----------------------------------------------------------------
+        logger.info("[Verification Step 1] Checking output directory exists...")
         if not output_path_str:
-            # If path not provided, we can't verify, so assume partial success but warn log
-            logger.warning("No codegen_output_path in state, skipping verification")
-            return {"messages": []}
+            logger.warning("[Verification Step 1] FAIL — No codegen_output_path in state")
+            return {"messages": [HumanMessage(content="CRITICAL: No output directory configured. Cannot verify.")]}
             
         output_path = Path(output_path_str)
         if not output_path.exists():
-            return {"messages": [HumanMessage(content="CRITICAL ERROR: Output directory does not exist. You cannot be done.")]}
-        
-        # Check for generated jobs/scripts
-        jobs_dir = output_path / "scripts" / "jobs"
-        if not jobs_dir.exists() or not any(jobs_dir.iterdir()):
-             return {
-                "messages": [
-                    HumanMessage(
-                        content="CRITICAL: `scripts/jobs` directory is empty or missing. "
-                                "You have not converted any JCL jobs. "
-                                "You MUST convert the jobs listed in dependency_graph.md."
-                    )
-                ]
-            }
+            logger.warning("[Verification Step 1] FAIL — Output directory does not exist")
+            return {"messages": [HumanMessage(content="CRITICAL: Output directory does not exist. You cannot be done.")]}
+        logger.info("[Verification Step 1] PASS — Output directory exists")
 
-        # Check for missing tests
+        # -----------------------------------------------------------------
+        # STEP 2: Solution builds successfully
+        # -----------------------------------------------------------------
+        logger.info("[Verification Step 2] Checking dotnet build...")
+        sln_files = list(output_path.glob("*.sln"))
+        if not sln_files:
+            logger.warning("[Verification Step 2] FAIL — No .sln file found")
+            failures.append("Missing .sln file — solution was never initialized")
+        else:
+            try:
+                result = subprocess.run(
+                    ["dotnet", "build", str(sln_files[0])],
+                    cwd=str(output_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if result.returncode == 0:
+                    logger.info("[Verification Step 2] PASS — Build succeeded")
+                else:
+                    build_output = result.stdout + result.stderr
+                    error_lines = [l for l in build_output.splitlines() if ": error " in l]
+                    logger.warning(f"[Verification Step 2] FAIL — Build failed with {len(error_lines)} errors")
+                    for err in error_lines[:5]:
+                        logger.warning(f"  {err.strip()}")
+                    failures.append(f"Build FAILED with {len(error_lines)} errors. Run `run_dotnet_build()` to see details and fix.")
+            except FileNotFoundError:
+                logger.warning("[Verification Step 2] SKIP — dotnet SDK not found")
+            except subprocess.TimeoutExpired:
+                logger.warning("[Verification Step 2] SKIP — Build timed out")
+            except Exception as e:
+                logger.warning(f"[Verification Step 2] SKIP — Build check error: {e}")
+
+        # -----------------------------------------------------------------
+        # STEP 3: Tests pass
+        # -----------------------------------------------------------------
+        logger.info("[Verification Step 3] Checking dotnet test...")
+        if sln_files and not any("Build FAILED" in f for f in failures):
+            try:
+                result = subprocess.run(
+                    ["dotnet", "test", str(sln_files[0]), "--no-build"],
+                    cwd=str(output_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+                if result.returncode == 0:
+                    logger.info("[Verification Step 3] PASS — All tests passed")
+                else:
+                    test_output = result.stdout + result.stderr
+                    failed_lines = [l for l in test_output.splitlines() if "Failed" in l or "Error" in l]
+                    logger.warning(f"[Verification Step 3] FAIL — Tests failed")
+                    failures.append(f"Tests FAILED. Run `run_dotnet_test()` to see details and fix.")
+            except FileNotFoundError:
+                logger.warning("[Verification Step 3] SKIP — dotnet SDK not found")
+            except subprocess.TimeoutExpired:
+                logger.warning("[Verification Step 3] SKIP — Tests timed out")
+            except Exception as e:
+                logger.warning(f"[Verification Step 3] SKIP — Test check error: {e}")
+        else:
+            logger.info("[Verification Step 3] SKIP — Build must pass first")
+
+        # -----------------------------------------------------------------
+        # STEP 4: JCL scripts exist
+        # -----------------------------------------------------------------
+        logger.info("[Verification Step 4] Checking JCL → PowerShell scripts...")
+        scripts_dir = output_path / "scripts" / "jobs"
+        
+        if not scripts_dir.exists() or not any(scripts_dir.iterdir()):
+            logger.warning("[Verification Step 4] FAIL — scripts/jobs is empty or missing")
+            failures.append("scripts/jobs directory is empty or missing. You MUST convert JCL jobs to PowerShell scripts.")
+        else:
+            if source_path_str:
+                source_path = Path(source_path_str)
+                if source_path.exists():
+                    jcl_files = list(source_path.rglob("*.jcl"))
+                    logger.info(f"[Verification Step 4] Found {len(jcl_files)} JCL source files")
+                    
+                    for jcl_file in jcl_files:
+                        job_name = jcl_file.stem.lower()
+                        expected_script = scripts_dir / f"run-{job_name}.ps1"
+                        if not expected_script.exists():
+                            logger.warning(f"[Verification Step 4] Missing script for {jcl_file.name} → {expected_script.name}")
+                            failures.append(f"Missing Script: run-{job_name}.ps1 (from {jcl_file.name})")
+            
+            if not any(f.startswith("Missing Script") for f in failures):
+                logger.info("[Verification Step 4] PASS — All JCL scripts present")
+
+        # -----------------------------------------------------------------
+        # STEP 5: Service tests exist
+        # -----------------------------------------------------------------
+        logger.info("[Verification Step 5] Checking Service tests...")
         services_dir = output_path / "src" / "Core" / "Services"
         tests_dir = output_path / "tests" / "Core" / "Services"
-        missing_tests = []
 
         if services_dir.exists():
             service_files = list(services_dir.glob("*Service.cs"))
-            logger.info(f"[Verification] Found {len(service_files)} Services. Checking tests...")
+            logger.info(f"[Verification Step 5] Found {len(service_files)} Services")
             
             for service_file in service_files:
-                # Expecting ServiceNameService.cs -> ServiceNameServiceTests.cs
                 test_filename = service_file.stem + "Tests.cs"
                 test_file = tests_dir / test_filename
-                
                 if not test_file.exists():
-                    missing_tests.append(f"Missing Service Test: '{test_file}' (for {service_file.name})")
+                    logger.warning(f"[Verification Step 5] Missing test: {test_filename}")
+                    failures.append(f"Missing Service Test: {test_filename} (for {service_file.name})")
+            
+            if not any("Missing Service Test" in f for f in failures):
+                logger.info("[Verification Step 5] PASS — All Service tests present")
+        else:
+            logger.info("[Verification Step 5] SKIP — No Services directory")
 
-        # Check for missing Repository tests
+        # -----------------------------------------------------------------
+        # STEP 6: Repository tests exist
+        # -----------------------------------------------------------------
+        logger.info("[Verification Step 6] Checking Repository tests...")
         repos_dir = output_path / "src" / "Infrastructure" / "Repositories"
         repos_tests_dir = output_path / "tests" / "Infrastructure" / "Repositories"
         
         if repos_dir.exists():
             repo_files = list(repos_dir.glob("*Repository.cs"))
-            logger.info(f"[Verification] Found {len(repo_files)} Repositories. Checking tests...")
+            logger.info(f"[Verification Step 6] Found {len(repo_files)} Repositories")
             
             for repo_file in repo_files:
                 test_filename = repo_file.stem + "Tests.cs"
                 test_file = repos_tests_dir / test_filename
-                
                 if not test_file.exists():
-                     missing_tests.append(f"Missing Repository Test: '{test_file}' (for {repo_file.name})")
+                    logger.warning(f"[Verification Step 6] Missing test: {test_filename}")
+                    failures.append(f"Missing Repository Test: {test_filename} (for {repo_file.name})")
+            
+            if not any("Missing Repository Test" in f for f in failures):
+                logger.info("[Verification Step 6] PASS — All Repository tests present")
+        else:
+            logger.info("[Verification Step 6] SKIP — No Repositories directory")
 
-        # Check for missing Job tests
-        # Jobs are typically src/Worker/Jobs/StepName/Program.cs
-        # We expect tests/Worker/Jobs/StepNameTests.cs
+        # -----------------------------------------------------------------
+        # STEP 7: Job step tests exist
+        # -----------------------------------------------------------------
+        logger.info("[Verification Step 7] Checking Job step tests...")
         jobs_src_dir = output_path / "src" / "Worker" / "Jobs"
         jobs_tests_dir = output_path / "tests" / "Worker" / "Jobs"
-        scripts_dir = output_path / "scripts" / "jobs"
 
-        # STRICT Verification: Every .jcl file in Source must have a .ps1 script
-        source_path_str = state.get("codegen_source_path", "")
-        if source_path_str:
-            source_path = Path(source_path_str)
-            if source_path.exists():
-                # Only look for TOP-LEVEL JOBS (.jcl), not Procedures (.proc/.prc)
-                # Procedures are dependencies, not executable entry points.
-                jcl_files = list(source_path.rglob("*.jcl"))
-                logger.info(f"[Verification] Found {len(jcl_files)} JCL files in {source_path}")
-                
-                if not jcl_files:
-                    logger.warning(f"[Verification] No JCL files found in {source_path}. Skipping strict JCL check.")
-
-                for jcl_file in jcl_files:
-                    # Expected script name: run-{filename_lower}.ps1
-                    # e.g., JOB01.jcl -> run-job01.ps1
-                    job_name = jcl_file.stem.lower()
-                    expected_script = scripts_dir / f"run-{job_name}.ps1"
-                    
-                    if not expected_script.exists():
-                         logger.warning(f"[Verification] Missing script for {jcl_file.name}. Expected: {expected_script}")
-                         missing_tests.append(f"Missing Script: '{expected_script}' (Derived from {jcl_file.name})")
-
-        # Check for missing Job tests (Worker/Jobs)
         if jobs_src_dir.exists():
-            # Walk through job directories
             job_folders = [d for d in jobs_src_dir.iterdir() if d.is_dir() and (d / "Program.cs").exists()]
-            logger.info(f"[Verification] Found {len(job_folders)} Job Steps. Checking tests...")
+            logger.info(f"[Verification Step 7] Found {len(job_folders)} Job Steps")
             
             for job_folder in job_folders:
                 test_filename = f"{job_folder.name}Tests.cs"
                 test_file = jobs_tests_dir / test_filename
-                
                 if not test_file.exists():
-                    missing_tests.append(f"Missing Job Test: '{test_file}' (for {job_folder.name})")
+                    logger.warning(f"[Verification Step 7] Missing test: {test_filename}")
+                    failures.append(f"Missing Job Test: {test_filename} (for {job_folder.name})")
+            
+            if not any("Missing Job Test" in f for f in failures):
+                logger.info("[Verification Step 7] PASS — All Job step tests present")
+        else:
+            logger.info("[Verification Step 7] SKIP — No Worker/Jobs directory")
 
-        
-        # ---------------------------------------------------------------------
-        # FUNCTIONALITY AUDIT (Soft Check)
-        # ---------------------------------------------------------------------
-        # 1. Parse Functionality Catalog for F-IDs
-        # 2. Scan Codebase for Tags
-        # 3. Report Missing Tags
-        
-        project_id = state.get("project_id")
+        # -----------------------------------------------------------------
+        # STEP 8: Functionality audit (soft — does NOT block)
+        # -----------------------------------------------------------------
+        logger.info("[Verification Step 8] Running functionality audit...")
         catalog_path = output_path.parent / "system_context" / "functionality_catalog.md"
-        
-        missing_functionalities = []
         
         if catalog_path.exists():
             try:
-                import re
                 catalog_content = catalog_path.read_text(encoding="utf-8", errors="replace")
                 f_ids = re.findall(r"(F\d{3})", catalog_content)
                 unique_f_ids = sorted(list(set(f_ids)))
                 
                 if unique_f_ids:
-                    logger.info(f"[Audit] Found {len(unique_f_ids)} Functionality IDs in catalog: {unique_f_ids}")
-                    
                     found_ids = set()
-                    
-                    # Scan all generated .cs files
                     cs_files = list(output_path.rglob("*.cs"))
-                    logger.info(f"[Audit] Scanning {len(cs_files)} C# files for functionality tags...")
                     
-                    for valid_file in cs_files:
-                        if "bin" in valid_file.parts or "obj" in valid_file.parts:
+                    for cs_file in cs_files:
+                        if "bin" in cs_file.parts or "obj" in cs_file.parts:
                             continue
-                        
                         try:
-                            content = valid_file.read_text(encoding="utf-8", errors="replace")
+                            content = cs_file.read_text(encoding="utf-8", errors="replace")
                             for fid in unique_f_ids:
                                 if fid in content:
                                     found_ids.add(fid)
                         except Exception:
                             continue
                     
-                    # Calculate Gap
-                    for fid in unique_f_ids:
-                        if fid not in found_ids:
-                            missing_functionalities.append(fid)
+                    missing_fids = [fid for fid in unique_f_ids if fid not in found_ids]
+                    logger.info(f"[Verification Step 8] Coverage: {len(found_ids)}/{len(unique_f_ids)} functionalities tagged")
                     
-                    logger.info(f"[Audit] Coverage: {len(found_ids)}/{len(unique_f_ids)} functionalities implemented.")
+                    if missing_fids:
+                        logger.warning(f"[Verification Step 8] WARNING — Missing F-ID tags: {', '.join(missing_fids)}")
+                    else:
+                        logger.info("[Verification Step 8] PASS — All functionalities tagged")
             except Exception as e:
-                logger.warning(f"Functionality audit failed: {e}")
-        
-        audit_warnings = []
-        if missing_functionalities:
-            msg = f"WARNING: The following functionalities are not explicitly tagged in the codebase: {', '.join(missing_functionalities)}"
-            audit_warnings.append(msg)
-            logger.warning(msg) 
-            # We do NOT block on this, but we append it to the final message if we were returning one
+                logger.warning(f"[Verification Step 8] Audit error: {e}")
         else:
-             logger.info("[Audit] All catalog functionalities are referenced in the codebase.")
-        
-        # ---------------------------------------------------------------------
+            logger.info("[Verification Step 8] SKIP — No functionality catalog found")
+
+        # -----------------------------------------------------------------
         # FINAL DECISION
-        # ---------------------------------------------------------------------
-        
-        if missing_tests:
-            logger.warning(f"Verification failed: Missing tests/scripts for {missing_tests}")
+        # -----------------------------------------------------------------
+        if failures:
+            logger.warning(f"[Verification] ═══ FAILED — {len(failures)} issue(s) found ═══")
+            for f in failures:
+                logger.warning(f"[Verification]   • {f}")
             return {
                 "messages": [
                     HumanMessage(
-                        content=f"CRITICAL: Missing artifacts detected:\n" + 
-                                "\n".join([f"- {m}" for m in missing_tests]) + 
-                                "\nYou MUST generate these before finishing."
+                        content=f"CRITICAL: Verification found {len(failures)} issue(s):\n" +
+                                "\n".join([f"- {f}" for f in failures]) +
+                                "\n\nYou MUST fix ALL of these before finishing."
                     )
                 ]
             }
 
-        logger.info("[Verification] All artifacts present. System ready for final review.")
+        logger.info("[Verification] ═══ ALL CHECKS PASSED ═══")
         return {"messages": []}
 
     def generate_process_flow(state: CodegenState) -> dict:
@@ -712,7 +715,62 @@ def create_codegen_agent(tools: list, project_id: str):
             ]
         }
 
-    def post_verification_routing(state: CodegenState) -> Literal["llm_call", "generate_process_flow"]:
+    def cleanup_intermediary_files(state: CodegenState) -> dict:
+        """Remove intermediary tracking files from the output before archiving.
+        
+        Cleans up markdown status files, Dockerfiles, and deployment scripts
+        that the agent may have created. Keeps only README.md in the root.
+        """
+        output_path_str = state.get("codegen_output_path", "")
+        if not output_path_str:
+            return {"messages": []}
+        
+        output_path = Path(output_path_str)
+        if not output_path.exists():
+            return {"messages": []}
+        
+        # Patterns to remove from root directory
+        remove_patterns = [
+            "completion.md", "pending.md", "DEPLOYMENT_CHECKLIST.md",
+            "FILE_MANIFEST.md", "FINAL_SUMMARY.md", "migration_plan.json",
+            "Dockerfile", "dockerfile", "docker-compose.yml", "docker-compose.yaml",
+            ".dockerignore",
+        ]
+        # Also remove any deploy scripts
+        deploy_patterns = ["deploy.*", "Deploy.*"]
+        
+        removed = []
+        
+        # Remove specific files from root
+        for pattern in remove_patterns:
+            target = output_path / pattern
+            if target.exists():
+                target.unlink()
+                removed.append(pattern)
+                logger.info(f"[Cleanup] Removed: {pattern}")
+        
+        # Remove any root .md files except README.md and setup.md
+        for md_file in output_path.glob("*.md"):
+            if md_file.name.lower() not in ("readme.md", "setup.md", "process_flow.md"):
+                md_file.unlink()
+                removed.append(md_file.name)
+                logger.info(f"[Cleanup] Removed: {md_file.name}")
+        
+        # Remove deploy scripts from root
+        for dp in deploy_patterns:
+            for match in output_path.glob(dp):
+                match.unlink()
+                removed.append(match.name)
+                logger.info(f"[Cleanup] Removed: {match.name}")
+        
+        if removed:
+            logger.info(f"[Cleanup] Removed {len(removed)} intermediary files: {removed}")
+        else:
+            logger.info("[Cleanup] No intermediary files to remove")
+        
+        return {"messages": []}
+
+    def post_verification_routing(state: CodegenState) -> Literal["llm_call", "cleanup_intermediary_files"]:
         """Decide next step after verification."""
         last_message = state["messages"][-1]
         
@@ -720,9 +778,9 @@ def create_codegen_agent(tools: list, project_id: str):
         if isinstance(last_message, HumanMessage) and "CRITICAL" in str(last_message.content):
             return "llm_call"
             
-        # 2. If Code Passed, Always go to Architect for final documentation
-        logger.info("Code Verified. Proceeding to Architect Node.")
-        return "generate_process_flow"
+        # 2. If Code Passed, clean up then proceed to Architect
+        logger.info("Code Verified. Proceeding to cleanup and then Architect Node.")
+        return "cleanup_intermediary_files"
 
     # Build the graph
     builder = StateGraph(CodegenState)
@@ -730,12 +788,11 @@ def create_codegen_agent(tools: list, project_id: str):
     builder.add_node("llm_call", llm_call)
     builder.add_node("tool_node", tool_node)
     builder.add_node("verify_completion", verify_completion)
+    builder.add_node("cleanup_intermediary_files", cleanup_intermediary_files)
     builder.add_node("generate_process_flow", generate_process_flow)
-    builder.add_node("plan_migration", plan_migration) # New Node
 
-    # START -> PLAN -> LLM
-    builder.add_edge(START, "plan_migration")
-    builder.add_edge("plan_migration", "llm_call")
+    # START -> LLM (no planning node)
+    builder.add_edge(START, "llm_call")
     
     builder.add_conditional_edges(
         "llm_call",
@@ -747,10 +804,11 @@ def create_codegen_agent(tools: list, project_id: str):
     builder.add_conditional_edges(
         "verify_completion",
         post_verification_routing,
-        ["llm_call", "generate_process_flow"]
+        ["llm_call", "cleanup_intermediary_files"]
     )
     
-    # Architect is TERMINAL
+    # Cleanup -> Architect -> END
+    builder.add_edge("cleanup_intermediary_files", "generate_process_flow")
     builder.add_edge("generate_process_flow", END) 
     
     agent = builder.compile()

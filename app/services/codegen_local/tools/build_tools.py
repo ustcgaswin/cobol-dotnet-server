@@ -58,8 +58,11 @@ def create_build_tools(project_id: str, output_path: str) -> list:
                 logger.info("dotnet build succeeded")
                 return f"BUILD SUCCEEDED\n\n{output}"
             else:
-                logger.warning(f"dotnet build failed with code {result.returncode}")
-                return f"BUILD FAILED (exit code {result.returncode})\n\n{output}"
+                error_lines = [l for l in output.splitlines() if ": error " in l]
+                logger.warning(f"dotnet build FAILED with {len(error_lines)} errors (exit code {result.returncode})")
+                for err in error_lines[:10]:
+                    logger.warning(f"  BUILD ERROR: {err.strip()}")
+                return f"BUILD FAILED ({len(error_lines)} errors, exit code {result.returncode})\n\n{output}"
                 
         except subprocess.TimeoutExpired:
             logger.error("dotnet build timed out")

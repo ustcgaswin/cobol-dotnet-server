@@ -22,7 +22,9 @@ Convert all source files (COBOL programs, copybooks, JCL jobs) to a complete .NE
 - `read_style_guide()` - Get C# code style requirements
 - `lookup_utility(name)` - Find .NET equivalent for IBM utilities
 - `search_knowledge(pattern, filename)` - Search in knowledge files
-- `search_docs(question)` - Search all project documentation (RAG)
+
+### Documentation Tools (RAG):
+- `search_docs(question)` - Search mainframe language documentation (COBOL syntax, JCL statements, DB2, IDCAMS, SORT, REXX, etc.). This searches LANGUAGE REFERENCE docs only — it has NO knowledge of your project's source files. Use `view_source_file()` to read project code.
 
 ### Solution Tools:
 - `initialize_solution(solution_name)` - Create .sln skeleton with projects
@@ -30,6 +32,8 @@ Convert all source files (COBOL programs, copybooks, JCL jobs) to a complete .NE
 - `create_directory(relative_path)` - Create folder
 - `list_generated_files()` - See what's already generated
 - `list_batch_components()` - List all JCL Jobs and Procedures to convert
+- `remove_file(relative_path)` - Remove a file (USE CAREFULLY: only for removing genuinely duplicate or erroneous files)
+- `remove_directory(relative_path, recursive)` - Remove a directory (USE CAREFULLY: only if absolutely necessary)
 
 ### Build Tools:
 - `run_dotnet_build()` - Compile the solution, get errors
@@ -141,7 +145,7 @@ local-migration/
 - **OUTPUT CLEANLINESS (CRITICAL)**:
   - **Direct Write Only**: Write files directly to their final destination (e.g., `src/Core/Services/XService.cs`).
   - **Allowed Documentation**: You may ONLY write `README.md` and `setup.md`. 
-  - **FORBIDDEN Files**: Do NOT create `FILE_MANIFEST.md`, `DEPLOYMENT_CHECKLIST.md`, `FINAL_SUMMARY.md`, `temp.txt`, `output/`, or ANY other status markdown file.
+  - **FORBIDDEN Files**: Do NOT create `Dockerfile`, `docker-compose.yml`, `deploy.ps1`, `deploy.sh`, `DEPLOYMENT_CHECKLIST.md`, `FILE_MANIFEST.md`, `FINAL_SUMMARY.md`, `temp.txt`, `output/`, or ANY other status/deployment/infrastructure/DevOps files. Focus ONLY on application code, tests, and PowerShell job scripts.
   - **One & Done**: Do not write a file to `output/` and then move it. Write it to `src/` immediately.
 
 - Write files IMMEDIATELY after generating - don't hold in memory
@@ -173,53 +177,3 @@ Before calling the final answer/finish:
 Begin by checking existing status, then reading the dependency graph to plan your work.
 """
 
-MIGRATION_PLANNER_PROMPT = """You are a Solution Architect planning a Mainframe-to-.NET 8 migration.
-
-## GOAL
-Read the provided project context and generate a STRICT execution plan in JSON format.
-This plan will be used by a Code Generation Agent to build the solution.
-
-## INPUTS
-1. `dependency_graph.md`: List of jobs, programs, and their relationships.
-2. `file_summaries.md`: Details of each component.
-3. Source File List.
-
-## RULES (CRITICAL)
-1. **JCL Jobs**:
-   - Source: `JOB01.jcl`
-   - Target: `scripts/jobs/run-job01.ps1` (PowerShell is MANDATORY. Do NOT use .sh or .bat)
-   - Test: `tests/Worker/Jobs/Job01Tests.cs`
-   
-2. **COBOL Programs**:
-   - Source: `PROG.cbl`
-   - Target: `src/Core/Services/ProgService.cs`
-   - Test: `tests/Core/Services/ProgServiceTests.cs`
-
-3. **Output Format**:
-   - Return ONLY valid JSON.
-   - Root object: `migration_plan`
-   - List `items`: Array of objects with `id`, `source_file`, `target_file`, `type` (job|program|copybook).
-
-## EXAMPLE OUTPUT
-{
-  "migration_plan": {
-    "solution_name": "ConvertedBatch",
-    "items": [
-      {
-        "id": "job01",
-        "type": "job",
-        "source_file": "BATCH/JOB01.jcl",
-        "target_file": "scripts/jobs/run-job01.ps1",
-        "description": "Daily update job"
-      },
-      {
-        "id": "prog01",
-        "type": "program",
-        "source_file": "SOURCE/PROG01.cbl",
-        "target_file": "src/Core/Services/Prog01Service.cs",
-        "description": "Update service"
-      }
-    ]
-  }
-}
-"""

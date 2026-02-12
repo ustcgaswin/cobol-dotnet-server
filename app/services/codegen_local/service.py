@@ -429,7 +429,7 @@ class CodegenLocalService:
                             "codegen_output_path": str(output_path),
                             "codegen_source_path": str(source_path),
                         },
-                        config={"recursion_limit": 1000},
+                        config={"recursion_limit": 10000},
                     )
                     trace.set_result(result)
                 except Exception as e:
