@@ -158,16 +158,10 @@ def create_analyst_agent(tools: list, project_id: str):
         iteration = state.get("iteration_count", 0)
         
         # Don't verify if we're hitting the hard limit (let it end)
-        if iteration >= 200:
+        if iteration >= 1000:
             return {"messages": [HumanMessage(content="Hard iteration limit reached. Stopping.")]}
 
         # Check for completeness
-        # We need to peek at the artifact tools or file system.
-        # Since this is a pure node, we'll use the bound tools helper or direct check.
-        # But we don't have direct access to tools here easily without importing.
-        # BETTER STRATEGY: Use the message history or just check the file system directly?
-        # Direct file check is safest for a "Supervisor" node.
-        
         from app.config.settings import settings
         from pathlib import Path
         import json
@@ -225,7 +219,10 @@ def create_analyst_agent(tools: list, project_id: str):
                          issues.append("ERROR: Found CA-7/Schedule gap without reference to 'process_flow.md'. You must check manual process flows first.")
 
         if not issues:
+            logger.info("Verification passed for system_context.")
             return {"messages": [HumanMessage(content="[Automated Verification] Verification passed. Analysis complete.")]}
+        
+        logger.warning(f"Verification issues found: {issues}")
         
         # Logic for retries
         # We check how many "verification failures" we've had.
@@ -237,9 +234,9 @@ def create_analyst_agent(tools: list, project_id: str):
         
         failure_count = sum(1 for m in messages if isinstance(m, HumanMessage) and "Verification Failed" in str(m.content))
         
-        if failure_count > 2:
+        if failure_count > 9:
             logger.warning("Verification failed too many times. Stopping.")
-            return {"messages": [HumanMessage(content=f"[Automated Verification] Verification failed 3 times. Stopping. Outstanding issues:\n" + "\n".join(issues))]}
+            return {"messages": [HumanMessage(content=f"[Automated Verification] Verification failed 10 times. Stopping. Outstanding issues:\n" + "\n".join(issues))]}
             
         return {"messages": [HumanMessage(content="[Automated Verification] Verification Failed. Auto-Retrying. You must fix these issues before finishing:\n" + "\n".join(issues))]}
 
@@ -249,7 +246,7 @@ def create_analyst_agent(tools: list, project_id: str):
         last_message = messages[-1]
         
         # Check iteration limit
-        if state.get("iteration_count", 0) >= 200:
+        if state.get("iteration_count", 0) >= 1000:
             logger.warning("Analyst agent reached iteration limit")
             return END
         

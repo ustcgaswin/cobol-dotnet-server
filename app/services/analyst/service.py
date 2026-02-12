@@ -131,6 +131,10 @@ class AnalystService:
             
             project_id_str = str(self.project_id)
             
+            # Auto-initialize tracker (ensures folder and tracker existence)
+            from app.services.analyst.tools import _initialize_tracker_logic
+            _initialize_tracker_logic(project_id_str)
+            
             # Create tools with project_id bound
             artifact_tools = create_artifact_tools(project_id_str)
             writer_tools = create_writer_tools(project_id_str)
@@ -172,7 +176,7 @@ class AnalystService:
                             "project_id": project_id_str,
                             "iteration_count": 0,
                         },
-                        config={"recursion_limit": 250},
+                        config={"recursion_limit": 1000},
                     )
                     trace.set_result(result)
                 except Exception as e:
