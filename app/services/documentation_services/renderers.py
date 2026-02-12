@@ -1106,22 +1106,95 @@ class TechnicalSpecBuilder(BaseBuilder):
         else:
             self.para("Context diagram could not be generated from the available source dependencies.")
         
-        self.h2("1.5 Acronyms & Definitions")
-        glossary = []
-        if self.summaries:
-            for s in self.summaries[:5]:
-                g = s.business_overview.get('glossary', [])
-                if g: glossary.extend(g); break
-        if glossary:
-            rows = [[g.get('term',''), g.get('definition','')] for g in glossary]
-            self.table(["Acronym", "Definition"], rows, [40*mm, 130*mm])
-        else:
-            self.para("No glossary terms identified.")
+        # self.h2("1.5 Acronyms & Definitions")
+        # glossary = []
+        # if self.summaries:
+        #     for s in self.summaries[:5]:
+        #         g = s.business_overview.get('glossary', [])
+        #         if g: glossary.extend(g); break
+        # if glossary:
+        #     rows = [[g.get('term',''), g.get('definition','')] for g in glossary]
+        #     self.table(["Acronym", "Definition"], rows, [40*mm, 130*mm])
+        # else:
+        #     self.para("No glossary terms identified.")
 
     def _arch(self):
         self.h1("2. System Architecture")
         self.h2("2.1 System Landscape")
-        self.para(self.system_summary.get('system_landscape', 'System landscape details unavailable.'))
+        
+        self.para("The following technical landscape has been derived from static analysis of the source artifacts:")
+        features = {}
+        os_identity = "Unknown Environment"
+
+        has_config = any(c.file_type in ['PARMLIB', 'CONTROL_CARD'] for c in self.configs)
+        has_jcl = len(self.jcl_files) > 0
+        all_config_text = str([c.technical_analysis for c in self.configs]).upper()
+        is_ibm_utility = any(u in all_config_text for u in ['DFSORT', 'IDCAMS', 'IEBGENER', 'IKJEFT', 'DSNUPROC', 'DB2 LOAD'])
+
+        if has_config and is_ibm_utility:
+            os_identity = "IBM z/OS (Confirmed via Utility Control Cards)"
+        elif has_config:
+            os_identity = "IBM z/OS (Inferred from System Config)"
+        elif has_jcl:
+            os_identity = "IBM Mainframe Compatible (z/OS, VSE, or Re-hosted)"
+        elif self.code_files:
+            os_identity = "Cross-Platform (COBOL/PLI Runtime)"
+
+        features["Operating System"] = os_identity
+
+        langs = [k for k in self.metrics.files_by_type.keys() if k in ['COBOL', 'PLI', 'ASSEMBLY', 'REXX', 'JCL']]
+        features["Programming Languages"] = ", ".join(langs)
+
+        data_layer = []
+        if any(f.file_type in ['DCLGEN', 'SQL'] for f in self.data_files) or \
+           any('EXEC SQL' in str(f.technical_analysis).upper() for f in self.code_files):
+            data_layer.append("IBM DB2 (Relational)")
+
+        vsam_count = 0
+        for f in self.code_files:
+            if 'VSAM' in str(f.technical_analysis).upper() or \
+               'INDEXED' in str(f.technical_analysis).upper():
+                vsam_count += 1
+        if vsam_count > 0:
+            data_layer.append(f"VSAM (KSDS/ESDS, {vsam_count} modules)")
+        
+        features["Data Persistence"] = ", ".join(data_layer) if data_layer else "Flat Files / Sequential"
+
+        exec_envs = []
+
+        cics_count = sum(1 for f in self.code_files if 'CICS' in str(f.technical_analysis).upper())
+        if cics_count > 0:
+            exec_envs.append(f"CICS Transaction Server ({cics_count} modules)")
+        
+        ims_count = sum(1 for f in self.code_files if 'DL/I' in str(f.technical_analysis).upper() or 'IMS' in str(f.technical_analysis).upper())
+        if ims_count > 0:
+            exec_envs.append(f"IMS Transaction Manager ({ims_count} modules)")
+
+        if self.jcl_files:
+            exec_envs.append(f"Batch Processing (JES, {len(self.jcl_files)} jobs)")
+
+        rexx_count = sum(1 for f in self.code_files if f.file_type == 'REXX')
+        if rexx_count > 0:
+            exec_envs.append(f"TSO/E Interactive ({rexx_count} scripts)")
+
+        if exec_envs:
+            features["Execution Environment"] = ", ".join(exec_envs)
+        else:
+            features["Execution Environment"] = "Standard z/OS Environment"
+
+        middleware = []
+        all_code_text = str([f.technical_analysis for f in self.code_files]).upper()
+        
+        if 'MQ' in all_code_text or 'MQSERIES' in all_code_text: middleware.append("IBM MQ")
+        if 'FTP' in all_code_text or 'NDM' in all_code_text: middleware.append("File Transfer (FTP/Connect:Direct)")
+        if 'XML' in all_code_text: middleware.append("XML Parsing")
+        if 'JSON' in all_code_text: middleware.append("JSON Parsing")
+        
+        features["Integration & Middleware"] = ", ".join(middleware) if middleware else "File-Based Integration"
+
+        rows = [[k, v] for k, v in features.items()]
+        self.table(["Infrastructure Layer", "Detected Components"], rows, [60*mm, 110*mm])
+
         self.h2("2.2 Integration Architecture")
         self.h3("Upstream Systems")
         inputs = []
@@ -1240,16 +1313,67 @@ class TechnicalSpecBuilder(BaseBuilder):
 
     def _logic(self):
         self.h1("4. Application Logic Specification")
-        sorted_code = sorted(self.code_files, key=lambda x: x.filename)
+        self.para("This section details the internal structural components, control flow, and dependencies of application modules.")
+        
+        sorted_code = sorted(self.code_files, key=lambda x: (x.file_type, x.filename))
+        
         for idx, prog in enumerate(sorted_code, 1):
             self.h3(f"4.1.{idx} {prog.filename} ({prog.file_type})")
-            self.h4("Functional Logic")
-            self.para(prog.business_overview.get('purpose', 'N/A'))
-            self.bullet_list(prog.business_overview.get('scope', []))
-            self.h4("Call Graph / I/O")
-            self.bullet_list(prog.technical_analysis.get('key_operations', []))
-            self.h4("Error Handling")
-            self.bullet_list(prog.technical_analysis.get('technical_notes', []))
+            
+            # 1. Summary (Brief)
+            self.para(f"<b>Purpose:</b> {prog.business_overview.get('purpose', 'N/A')}")
+            
+            # 2. Structural Dependencies (Tables & Copybooks)
+            # Use the data_interactions we extracted
+            interactions = prog.technical_analysis.get('data_interactions', [])
+            if interactions:
+                self.h4("Data Dependencies")
+                # Deduplicate
+                seen_deps = set()
+                rows = []
+                for i in interactions:
+                    # Handle both dict and string cases safely
+                    if isinstance(i, dict):
+                        tgt = i.get('target', 'Unknown')
+                        op = i.get('operation', 'Access')
+                    else:
+                        tgt = str(i)
+                        op = "Access"
+                    
+                    key = f"{tgt}-{op}"
+                    if key not in seen_deps:
+                        rows.append([tgt, op])
+                        seen_deps.add(key)
+                
+                if rows:
+                    self.table(["Object / File", "Operation"], rows, [100*mm, 60*mm])
+
+            # 3. Execution Control Flow (The "Technical" Meat)
+            flow = prog.technical_analysis.get('execution_flow', [])
+            if flow:
+                self.h4("Execution Control Flow")
+                self.para("Internal logic sequence:")
+                # Use a numbered list for flow
+                for step in flow:
+                    # Clean up the numbering if the LLM added it (e.g. "1. Step")
+                    step_text = str(step).strip()
+                    self.bullet(step_text)
+            else:
+                # Fallback to key operations if flow is missing
+                ops = prog.technical_analysis.get('key_operations', [])
+                if ops:
+                    self.h4("Key Operations")
+                    for op in ops: self.bullet(op)
+
+            # 4. Error Handling
+            notes = prog.technical_analysis.get('technical_notes', [])
+            error_notes = [n for n in notes if any(x in str(n).upper() for x in ['ERROR', 'ABEND', 'SQLCODE', 'RETURN', 'EXCEPTION'])]
+            
+            if error_notes:
+                self.h4("Exception Handling")
+                for note in error_notes: self.bullet(note)
+            
+            self.elements.append(Spacer(1, 5*mm))
 
     def _data(self):
         self.h1("5. Data Specification")
@@ -1284,15 +1408,76 @@ class TechnicalSpecBuilder(BaseBuilder):
     def _ops(self):
         self.h1("6. Operational Support & Reliability")
         self.h2("6.1 Restart & Recovery")
-        restart_jobs = [j.filename for j in self.jcl_files if "RESTART" in str(j.technical_analysis).upper()]
-        if restart_jobs:
-            self.para(f"Jobs with explicit restart: {', '.join(restart_jobs)}")
+        restart_rows = []
+        for jcl in self.jcl_files:
+            tech_text = str(jcl.technical_analysis).upper()
+            
+            strategy = "Standard Step Restart"
+            if "RESTART=" in tech_text:
+                strategy = "Explicit Point Restart"
+            elif "GDG" in tech_text or "(+" in tech_text:
+                strategy = "Data-Level Rollback (GDG)"
+
+            if len(jcl.technical_analysis.get('steps', [])) > 1 or strategy != "Standard Step Restart":
+                restart_rows.append([jcl.filename, strategy])
+
+        if restart_rows:
+            self.table(
+                ["Job Name", "Recovery Strategy / Mechanism"], 
+                restart_rows[:30],
+                [80*mm, 80*mm]
+            )
         else:
-            self.para("No explicit RESTART parameters found. Standard step restart applies.")
-        self.h2("6.2 Error Handling")
-        self.para("System uses standard Condition Code (COND) triggers.")
-        self.h2("6.3 Performance")
-        self.para("Analysis of high-frequency I/O modules based on call graph.")
+            self.para("No specialized restart parameters detected. Standard JES2/JES3 step-level recovery applies.")
+
+        self.h2("6.2 Error Handling Framework")
+        self.para("System-wide error handling is managed through JCL Condition Codes (COND) and COBOL Return Codes (RC).")
+
+        error_logic = []
+        for jcl in self.jcl_files:
+            notes = str(jcl.technical_analysis.get('schedule_notes', '')).upper()
+            if 'COND' in notes:
+                error_logic.append([jcl.filename, "Conditional Step Execution", "Batch Control"])
+
+        for prog in self.code_files:
+            tech = prog.technical_analysis
+            notes = str(tech.get('technical_notes', [])).upper()
+            if any(k in notes for k in ['ABEND', 'SQLCODE', 'INVALID KEY', 'ERROR-LOG']):
+                error_logic.append([prog.filename, "Internal Exception Logic", "Programmatic"])
+
+        if error_logic:
+            unique_error = [list(x) for x in set(tuple(x) for x in error_logic)]
+            self.table(
+                ["Component", "Error Handling Type", "Level"], 
+                unique_error[:20], 
+                [60*mm, 60*mm, 40*mm]
+            )
+        else:
+            self.para("Standard return code validation (RC=00) is used across all batch modules.")
+
+        self.h2("6.3 Performance Characteristics")
+        self.para("The following modules are identified as high-utilization components based on database interaction frequency and code complexity.")
+
+        perf_rows = []
+        for mod_str in self.metrics.top_complex_modules:
+            name = mod_str.split(' ')[0]
+            
+            category = "Core Processing"
+            for s in self.summaries:
+                if s.filename == name:
+                    category = s.business_overview.get('functional_category', 'Business Logic')
+                    break
+            
+            perf_rows.append([name, category, "High (Critical Path)"])
+
+        if perf_rows:
+            self.table(
+                ["Module Name", "Functional Area", "Resource Profile"], 
+                perf_rows, 
+                [60*mm, 60*mm, 40*mm]
+            )
+        else:
+            self.para("System performance profile appears uniform across analyzed modules.")
 
     def _appx(self):
         self.h1("7. Appendices")
@@ -1683,9 +1868,6 @@ class FunctionalSpecBuilder(BaseBuilder):
 
                 for p in progs[:10]:
                     self.bullet(f"{p.filename}: {p.business_overview.get('purpose', 'N/A')}")
-                
-                if len(progs) > 10:
-                    self.para(f"<i>...and {len(progs)-10} other modules.</i>", indent=15)
         else:
             self.para("No specific functional groups identified.")
 

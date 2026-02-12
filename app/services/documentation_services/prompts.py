@@ -176,9 +176,10 @@ CURRENT CODE CHUNK:
 {chunk}
 
 TASK:
-Act as a Business Analyst. Read the code and explain the **Business Logic** in plain English.
+1.**Business Analyst View**. Read the code and explain the **Business Logic** in plain English.
 Translate "IF AMT > 0" to "Ensures transaction amount is positive."
 Translate "EXEC SQL UPDATE" to "Updates the customer ledger."
+2. **Systems Programmer View:** Extract the low-level **Execution Flow** (PERFORM chains, Loops, SQL Cursors) for the Technical Analysis.
 
 REQUIRED JSON STRUCTURE:
 {{
@@ -204,8 +205,18 @@ REQUIRED JSON STRUCTURE:
     "technical_analysis": {{
         "functional_capabilities": ["Technical logic points"],
         "key_operations": ["File I/O"],
-        "data_interactions": [],
-        "technical_notes": []
+        "data_interactions": [
+            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+        ],
+        
+        "execution_flow": [
+            "1. Initialization (Open Files)",
+            "2. Main Processing Loop (Perform 2000-PROCESS)",
+            "3. Database Update (EXEC SQL)",
+            "4. Termination (Close Files)"
+        ],
+        
+        "technical_notes": ["Error handling", "Performance notes"]
     }}
 }}
 """
@@ -351,7 +362,7 @@ CURRENT CODE CHUNK:
 {chunk}
 
 TASK:
-Act as a Business Analyst. Explain the PL/I logic in plain English.
+Act as a Business Analyst. Explain the PL/I logic in plain English. Also extract control flow for the technical analysis.
 
 REQUIRED JSON STRUCTURE:
 {{
@@ -373,7 +384,12 @@ REQUIRED JSON STRUCTURE:
         "functional_capabilities": ["Specific procedure logic"],
         "key_operations": ["I/O and Calls"],
         "data_interactions": [
-            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+            {{ "target": "Table/File", "operation": "Access Type" }}
+        ],
+        "execution_flow": [
+            "1. Proc Entry",
+            "2. Logic Step A",
+            "3. Logic Step B"
         ],
         "technical_notes": ["Memory/Pointer notes"]
     }}
@@ -390,7 +406,7 @@ CURRENT CODE CHUNK:
 {chunk}
 
 TASK:
-Identify the high-level business or system function this Assembly code serves.
+Identify the high-level business or system function this Assembly code serves. Also extract the register/macro logic for technical analysis.
 
 REQUIRED JSON STRUCTURE:
 {{
@@ -415,6 +431,12 @@ REQUIRED JSON STRUCTURE:
         "data_interactions": [
             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
+        "execution_flow": [
+            "1. Save Registers (SAVE)",
+            "2. Establish Addressability",
+            "3. Perform Logic",
+            "4. Restore Registers & Return"
+        ],
         "technical_notes": ["Addressing modes (AMODE/RMODE)"]
     }}
 }}
@@ -430,7 +452,7 @@ CURRENT CODE CHUNK:
 {chunk}
 
 TASK:
-Explain the automation logic and the business process it supports.
+Explain the automation logic and the business process it supports. Also extract the command flow for the technical analysis
 
 REQUIRED JSON STRUCTURE:
 {{
@@ -453,6 +475,12 @@ REQUIRED JSON STRUCTURE:
         "external_utilities": ["TSO Commands (ALLOC, FREE)"],
         "data_interactions": [
             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+        ],
+        "execution_flow": [
+            "1. Parse Arguments",
+            "2. Allocate Datasets",
+            "3. Call External Program",
+            "4. Free Datasets"
         ],
         "technical_notes": ["Error trapping (SIGNAL ON ERROR)"]
     }}
