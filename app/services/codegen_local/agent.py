@@ -431,7 +431,7 @@ def create_codegen_agent(tools: list, project_id: str):
                 logger.warning(f"[Verification Step 2] SKIP — Build check error: {e}")
 
         # -----------------------------------------------------------------
-        # STEP 3: Tests pass
+        # STEP 3: Tests pass AND >0 tests ran
         # -----------------------------------------------------------------
         logger.info("[Verification Step 3] Checking dotnet test...")
         if sln_files and not any("Build FAILED" in f for f in failures):
@@ -443,10 +443,25 @@ def create_codegen_agent(tools: list, project_id: str):
                     text=True,
                     timeout=180,
                 )
+                test_output = result.stdout + result.stderr
+                
                 if result.returncode == 0:
-                    logger.info("[Verification Step 3] PASS — All tests passed")
+                    # Check if tests actually ran (prevent "Passed with 0 tests")
+                    total_match = re.search(r'Total tests: (\d+)', test_output)
+                    passed_match = re.search(r'Passed: (\d+)', test_output)
+                    
+                    executed_count = 0
+                    if total_match:
+                        executed_count = int(total_match.group(1))
+                    elif passed_match:
+                        executed_count = int(passed_match.group(1))
+                    
+                    if executed_count > 0:
+                        logger.info(f"[Verification Step 3] PASS — {executed_count} tests execution passed")
+                    else:
+                        logger.warning("[Verification Step 3] FAIL — Build passed but 0 tests were executed")
+                        failures.append("Test suite passed but 0 tests were executed. You MUST write unit tests.")
                 else:
-                    test_output = result.stdout + result.stderr
                     failed_lines = [l for l in test_output.splitlines() if "Failed" in l or "Error" in l]
                     logger.warning(f"[Verification Step 3] FAIL — Tests failed")
                     failures.append(f"Tests FAILED. Run `run_dotnet_test()` to see details and fix.")
@@ -481,78 +496,103 @@ def create_codegen_agent(tools: list, project_id: str):
                         if not expected_script.exists():
                             logger.warning(f"[Verification Step 4] Missing script for {jcl_file.name} → {expected_script.name}")
                             failures.append(f"Missing Script: run-{job_name}.ps1 (from {jcl_file.name})")
-            
-            if not any(f.startswith("Missing Script") for f in failures):
-                logger.info("[Verification Step 4] PASS — All JCL scripts present")
 
         # -----------------------------------------------------------------
-        # STEP 5: Service tests exist
+        # STEP 5: LLM-based Test Coverage Audit (Replaces suffix checks)
         # -----------------------------------------------------------------
-        logger.info("[Verification Step 5] Checking Service tests...")
-        services_dir = output_path / "src" / "Core" / "Services"
-        tests_dir = output_path / "tests" / "Core" / "Services"
-
-        if services_dir.exists():
-            service_files = list(services_dir.glob("*Service.cs"))
-            logger.info(f"[Verification Step 5] Found {len(service_files)} Services")
-            
-            for service_file in service_files:
-                test_filename = service_file.stem + "Tests.cs"
-                test_file = tests_dir / test_filename
-                if not test_file.exists():
-                    logger.warning(f"[Verification Step 5] Missing test: {test_filename}")
-                    failures.append(f"Missing Service Test: {test_filename} (for {service_file.name})")
-            
-            if not any("Missing Service Test" in f for f in failures):
-                logger.info("[Verification Step 5] PASS — All Service tests present")
-        else:
-            logger.info("[Verification Step 5] SKIP — No Services directory")
-
-        # -----------------------------------------------------------------
-        # STEP 6: Repository tests exist
-        # -----------------------------------------------------------------
-        logger.info("[Verification Step 6] Checking Repository tests...")
-        repos_dir = output_path / "src" / "Infrastructure" / "Repositories"
-        repos_tests_dir = output_path / "tests" / "Infrastructure" / "Repositories"
+        logger.info("[Verification Step 5] Running LLM-based Test Coverage Audit...")
         
-        if repos_dir.exists():
-            repo_files = list(repos_dir.glob("*Repository.cs"))
-            logger.info(f"[Verification Step 6] Found {len(repo_files)} Repositories")
+        # Build file tree for analysis
+        file_tree_lines = []
+        try:
+            for f in output_path.rglob("*.cs"):
+                # Skip build artifacts
+                if "bin" in f.parts or "obj" in f.parts:
+                    continue
+                file_tree_lines.append(str(f.relative_to(output_path)).replace("\\", "/"))
             
-            for repo_file in repo_files:
-                test_filename = repo_file.stem + "Tests.cs"
-                test_file = repos_tests_dir / test_filename
-                if not test_file.exists():
-                    logger.warning(f"[Verification Step 6] Missing test: {test_filename}")
-                    failures.append(f"Missing Repository Test: {test_filename} (for {repo_file.name})")
+            tree_str = "\n".join(sorted(file_tree_lines))
             
-            if not any("Missing Repository Test" in f for f in failures):
-                logger.info("[Verification Step 6] PASS — All Repository tests present")
-        else:
-            logger.info("[Verification Step 6] SKIP — No Repositories directory")
+            audit_prompt = f"""Given this .NET solution file tree, identify source files in src/ that contain logic/functionality but have NO corresponding test file in tests/.
+
+Exclude from check (these don't need tests):
+- Entity/POCO classes (data-only, no logic)
+- Interfaces (I*.cs)
+- Enums
+- Configuration/Settings classes
+- DbContext files
+- Program.cs, IJob.cs, Migration files
+
+Return ONLY a JSON array of filenames (relative paths) that need tests but don't have them.
+If all logic files have tests, return an empty array [].
+
+File tree:
+{tree_str}
+"""
+            # Call Sonnet 4.5
+            llm_audit = get_llm(CODEGEN, model=LLMModel.CLAUDE_SONNET_4_5)
+            audit_response = llm_audit.invoke([HumanMessage(content=audit_prompt)])
+            
+            # Parse JSON
+            content_str = str(audit_response.content).strip()
+            # Extract JSON if wrapped in markdown
+            if "```json" in content_str:
+                content_str = content_str.split("```json")[1].split("```")[0].strip()
+            elif "```" in content_str:
+                content_str = content_str.split("```")[1].split("```")[0].strip()
+                
+            missing_tests = json.loads(content_str)
+            
+            if missing_tests:
+                logger.warning(f"[Verification Step 5] FAIL — {len(missing_tests)} missing test files")
+                for missing in missing_tests:
+                    failures.append(f"Missing Test for: {missing}")
+            else:
+                logger.info("[Verification Step 5] PASS — Test coverage looks good")
+                
+        except Exception as e:
+            logger.warning(f"[Verification Step 5] SKIP — Audit failed: {e}")
 
         # -----------------------------------------------------------------
-        # STEP 7: Job class tests exist
+        # STEP 6: 1:1 Job Mapping (.ps1 ↔ Worker Class)
         # -----------------------------------------------------------------
-        logger.info("[Verification Step 7] Checking Job class tests...")
-        jobs_src_dir = output_path / "src" / "Worker" / "Jobs"
-        jobs_tests_dir = output_path / "tests" / "Worker" / "Jobs"
+        logger.info("[Verification Step 6] Checking 1:1 Job Mapping (.ps1 ↔ Worker logic)...")
+        worker_jobs_dir = output_path / "src" / "Worker" / "Jobs"
+        
+        ps1_jobs = set()
+        if scripts_dir.exists():
+            for f in scripts_dir.glob("run-*.ps1"):
+                # run-setljob.ps1 -> setljob
+                job_name = f.stem[4:].lower() 
+                ps1_jobs.add(job_name)
+        
+        worker_classes = set()
+        if worker_jobs_dir.exists():
+            for f in worker_jobs_dir.glob("*.cs"):
+                if f.name == "IJob.cs": continue
+                # Setljob.cs -> setljob
+                worker_classes.add(f.stem.lower())
+                
+        # Cross-check: Orphan scripts
+        for job in ps1_jobs:
+            if job not in worker_classes:
+                logger.warning(f"[Verification Step 6] Orphans: run-{job}.ps1 has no Worker class")
+                failures.append(f"Missing Worker Class: {job.title()}.cs (for run-{job}.ps1)")
+        
+        # Cross-check: Orphan workers
+        for cls in worker_classes:
+            if cls not in ps1_jobs:
+                logger.warning(f"[Verification Step 6] Orphans: {cls}.cs has no .ps1 script")
+                failures.append(f"Missing Script: run-{cls}.ps1 (for {cls.title()}.cs)")
+        
+        if not failures:
+             logger.info("[Verification Step 6] PASS — All jobs mapped 1:1")
 
-        if jobs_src_dir.exists():
-            job_files = [f for f in jobs_src_dir.glob("*.cs") if f.name != "IJob.cs"]
-            logger.info(f"[Verification Step 7] Found {len(job_files)} Job classes")
-            
-            for job_file in job_files:
-                test_filename = job_file.stem + "Tests.cs"
-                test_file = jobs_tests_dir / test_filename
-                if not test_file.exists():
-                    logger.warning(f"[Verification Step 7] Missing test: {test_filename}")
-                    failures.append(f"Missing Job Test: {test_filename} (for {job_file.name})")
-            
-            if not any("Missing Job Test" in f for f in failures):
-                logger.info("[Verification Step 7] PASS — All Job class tests present")
-        else:
-            logger.info("[Verification Step 7] SKIP — No Worker/Jobs directory")
+        # -----------------------------------------------------------------
+        # STEP 7: Job Tests
+        # -----------------------------------------------------------------
+        # (This is partially redundant with Step 5 audit but good as a sanity check)
+        # We'll skip specific file checking here and rely on Step 5 audit.
 
         # -----------------------------------------------------------------
         # STEP 8: Functionality audit (soft — does NOT block)
@@ -586,7 +626,9 @@ def create_codegen_agent(tools: list, project_id: str):
                     logger.info(f"[Verification Step 8] Coverage: {len(found_ids)}/{len(unique_f_ids)} functionalities tagged")
                     
                     if missing_fids:
-                        logger.warning(f"[Verification Step 8] WARNING — Missing F-ID tags: {', '.join(missing_fids)}")
+                        msg = f"Missing F-ID tags: {', '.join(missing_fids)}. You MUST implement these functionalities and tag them with comments (e.g. // {missing_fids[0]}) in the code."
+                        logger.warning(f"[Verification Step 8] FAIL — {msg}")
+                        failures.append(msg)
                     else:
                         logger.info("[Verification Step 8] PASS — All functionalities tagged")
             except Exception as e:
