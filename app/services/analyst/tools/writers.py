@@ -131,14 +131,17 @@ def create_writer_tools(project_id: str) -> list:
         gap_type: str,
         reason: str,
         remediation: str,
+        cross_reference: str = "",
     ) -> str:
-        """Submit a gap (something we don't fully understand).
+        """
+        Document a gap or issue discovered during analysis.
         
         Args:
             component: The component with the gap
             gap_type: Category (missing_source, dynamic_call, unknown_utility, external_interface, other)
             reason: Why this is a gap
             remediation: What information would fix it
+            cross_reference: Optional link to related documentation (e.g., process_flow.md).
         """
         try:
             filepath = output_path / "gaps.md"
@@ -146,15 +149,13 @@ def create_writer_tools(project_id: str) -> list:
             if not filepath.exists():
                 _append_to_file(filepath, "# Gaps\n\nItems requiring additional information.\n\n")
             
-            content = f"""## {component}
-**Type**: {gap_type}
-**Reason**: {reason}
-**Remediation**: {remediation}
-
----
-
-"""
-            _append_to_file(filepath, content)
+            content = f"### Gap: {component} ({gap_type})\n"
+            content += f"- **Reason**: {reason}\n"
+            content += f"- **Remediation**: {remediation}\n"
+            if cross_reference:
+                content += f"- **Cross-Reference**: {cross_reference}\n"
+            
+            content += "\n---\n\n"
             logger.info(f"Submitted gap: {component}")
             return f"Successfully submitted gap: {component}"
             

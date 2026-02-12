@@ -151,7 +151,99 @@ def create_analyst_agent(tools: list, project_id: str):
         
         return {"messages": result}
     
-    def should_continue(state: AnalystState) -> Literal["tool_node", "__end__"]:
+    
+    def verification_gate(state: AnalystState) -> dict:
+        """Verifier that gates completion based on required artifacts."""
+        messages = state["messages"]
+        iteration = state.get("iteration_count", 0)
+        
+        # Don't verify if we're hitting the hard limit (let it end)
+        if iteration >= 200:
+            return {"messages": [HumanMessage(content="Hard iteration limit reached. Stopping.")]}
+
+        # Check for completeness
+        # We need to peek at the artifact tools or file system.
+        # Since this is a pure node, we'll use the bound tools helper or direct check.
+        # But we don't have direct access to tools here easily without importing.
+        # BETTER STRATEGY: Use the message history or just check the file system directly?
+        # Direct file check is safest for a "Supervisor" node.
+        
+        from app.config.settings import settings
+        from pathlib import Path
+        import json
+        
+        artifacts_path = Path(settings.PROJECT_ARTIFACTS_PATH) / project_id
+        ctx_path = artifacts_path / "system_context"
+        
+        issues = []
+        
+        import re
+
+        # 1. Functionality Catalog
+        func_cat = ctx_path / "functionality_catalog.md"
+        if not func_cat.exists() or len(func_cat.read_text(encoding="utf-8")) < 50:
+            issues.append("ERROR: `functionality_catalog.md` is missing or empty.")
+        else:
+            content = func_cat.read_text(encoding="utf-8")
+            # Check for IDs: Must match ### F001, ### F002, etc.
+            if not re.search(r"###\s*F\d{3}", content):
+                issues.append("ERROR: `functionality_catalog.md` must contain functionality IDs in format '### F001', '### F002', etc.")
+
+        # 2. Job Chains
+        job_chains = ctx_path / "job_chains.md"
+        if not job_chains.exists():
+             issues.append("WARNING: `job_chains.md` has not been created. If there are no jobs, create it with a 'No jobs found' note.")
+
+        # 3. File Processing Coverage (Strict)
+        tracker = ctx_path / "_processing_tracker.json"
+        if tracker.exists():
+            try:
+                data = json.loads(tracker.read_text(encoding="utf-8"))
+                pending = data.get("pending_files", [])
+                if pending:
+                    count = len(pending)
+                    issues.append(f"ERROR: {count} files are still unprocessed. Use `get_unprocessed_files` and process them. All files must be accounted for.")
+            except:
+                issues.append("WARNING: Could not parse `_processing_tracker.json`.")
+        else:
+            issues.append("ERROR: `_processing_tracker.json` not found. You must initialize the file tracker.")
+
+        # 4. Gaps Analysis (Check for CA-7/Process Flow refs)
+        gaps_file = ctx_path / "gaps.md"
+        if gaps_file.exists():
+            gaps_content = gaps_file.read_text(encoding="utf-8")
+            # Check each gap block for CA-7 rules
+            gap_blocks = re.split(r"^### Gap:", gaps_content, flags=re.MULTILINE)
+            for block in gap_blocks:
+                if not block.strip(): continue
+                
+                lower_block = block.lower()
+                # If gap is about scheduling/CA-7
+                if "ca-7" in lower_block or "scheduler" in lower_block or "schedule" in lower_block:
+                    # Must reference process_flow or manual process
+                    if "process_flow" not in lower_block and "manual process" not in lower_block:
+                         issues.append("ERROR: Found CA-7/Schedule gap without reference to 'process_flow.md'. You must check manual process flows first.")
+
+        if not issues:
+            return {"messages": [HumanMessage(content="[Automated Verification] Verification passed. Analysis complete.")]}
+        
+        # Logic for retries
+        # We check how many "verification failures" we've had.
+        # Simplest way: check how many HumanMessages come from THIS node.
+        # Or just use a simple counter if we had one.
+        # For now, let's rely on the LLM to fix it.
+        # But we need to avoid infinite loops.
+        # Let's count how many times we see "Verification Failed" in history.
+        
+        failure_count = sum(1 for m in messages if isinstance(m, HumanMessage) and "Verification Failed" in str(m.content))
+        
+        if failure_count > 2:
+            logger.warning("Verification failed too many times. Stopping.")
+            return {"messages": [HumanMessage(content=f"[Automated Verification] Verification failed 3 times. Stopping. Outstanding issues:\n" + "\n".join(issues))]}
+            
+        return {"messages": [HumanMessage(content="[Automated Verification] Verification Failed. Auto-Retrying. You must fix these issues before finishing:\n" + "\n".join(issues))]}
+
+    def should_continue(state: AnalystState) -> Literal["tool_node", "verification_gate", "__end__"]:
         """Decide if we should continue the loop or stop."""
         messages = state["messages"]
         last_message = messages[-1]
@@ -165,8 +257,18 @@ def create_analyst_agent(tools: list, project_id: str):
         if last_message.tool_calls:
             return "tool_node"
         
-        # Otherwise, we're done
-        return END
+        # If the LLM *says* it's done (no tool calls), we send it to verification
+        # But we need to distinguish between "Verification passed" (END) and "Ready to stop" (GATE)
+        # If the LAST message was a HumanMessage saying "Verification passed", then END.
+        if isinstance(last_message, HumanMessage) and "Verification passed" in str(last_message.content):
+            return END
+            
+        # If the LAST message was a HumanMessage saying "Verification Failed... Stopping", then END.
+        if isinstance(last_message, HumanMessage) and "Stopping" in str(last_message.content):
+             return END
+
+        # Otherwise, the LLM thinks it's done. Send to Gate.
+        return "verification_gate"
     
     # Build the graph
     builder = StateGraph(AnalystState)
@@ -174,15 +276,21 @@ def create_analyst_agent(tools: list, project_id: str):
     # Add nodes
     builder.add_node("llm_call", llm_call)
     builder.add_node("tool_node", tool_node)
+    builder.add_node("verification_gate", verification_gate)
     
     # Add edges
     builder.add_edge(START, "llm_call")
+    builder.add_edge("tool_node", "llm_call")
+    
     builder.add_conditional_edges(
         "llm_call",
         should_continue,
-        ["tool_node", END],
+        ["tool_node", "verification_gate", END],
     )
-    builder.add_edge("tool_node", "llm_call")
+    
+    # Gate either loops back to LLM (with feedback) or Ends
+    # We essentially rely on the `llm_call` receiving the injected HumanMessage
+    builder.add_edge("verification_gate", "llm_call")
     
     # Compile
     agent = builder.compile()

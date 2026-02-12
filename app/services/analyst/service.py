@@ -13,7 +13,7 @@ from app.config.settings import settings
 from app.core.tools.artifact_tools import create_artifact_tools
 from app.core.tools.rag_tools import search_docs
 from app.services.analyst.agent import create_analyst_agent
-from app.services.analyst.tools import create_knowledge_tools, create_writer_tools
+from app.services.analyst.tools import create_knowledge_tools, create_writer_tools, create_file_tracker_tools
 from app.db.base import async_session_factory
 from app.services.summarizer.service import SummarizerService
 from app.services.dependency_extractor.service import DependencyExtractorService
@@ -135,8 +135,9 @@ class AnalystService:
             artifact_tools = create_artifact_tools(project_id_str)
             writer_tools = create_writer_tools(project_id_str)
             knowledge_tools = create_knowledge_tools()
+            file_tracker_tools = create_file_tracker_tools(project_id_str)
             rag_tools = [search_docs]
-            all_tools = artifact_tools + writer_tools + knowledge_tools + rag_tools
+            all_tools = artifact_tools + writer_tools + knowledge_tools + file_tracker_tools + rag_tools
             
             # Wrap tools with tracing
             all_tools = [trace_tool(t) for t in all_tools]
