@@ -1888,7 +1888,7 @@ class FunctionalSpecBuilder(BaseBuilder):
                 self.h3(f"3.2.{idx} {cat}")
                 self.para(f"This group contains {len(progs)} modules responsible for {cat.lower()}.")
 
-                for p in progs[:10]:
+                for p in progs:
                     self.bullet(f"{p.filename}: {p.business_overview.get('purpose', 'N/A')}")
         else:
             self.para("No specific functional groups identified.")
@@ -2206,9 +2206,7 @@ class FunctionalSpecBuilder(BaseBuilder):
 
         if report_rows:
             report_rows.sort(key=lambda x: x[0])
-            self.table(["Generating Job / Module", "Report / Dataset Name", "Business Purpose"], report_rows[:60], [50*mm, 60*mm, 60*mm])
-            if len(report_rows) > 60:
-                self.para(f"<i>Note: Total of {len(report_rows)} reports identified. First 60 items shown.</i>")
+            self.table(["Generating Job / Module", "Report / Dataset Name", "Business Purpose"], report_rows, [50*mm, 60*mm, 60*mm])
         else:
             self.para("No standard human-readable reports (SYSOUT or .RPT) were identified in the analyzed JCL/Source.")
 
