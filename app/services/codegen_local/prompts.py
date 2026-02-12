@@ -29,8 +29,6 @@ Convert all source files (COBOL programs, copybooks, JCL jobs) to a complete .NE
 - `write_code_file(relative_path, content)` - Write a .cs/.csproj file
 - `create_directory(relative_path)` - Create folder
 - `list_generated_files()` - See what's already generated
-- `remove_file(relative_path)` - Remove a file
-- `remove_directory(relative_path)` - Remove a directory
 - `list_batch_components()` - List all JCL Jobs and Procedures to convert
 
 ### Build Tools:
@@ -140,7 +138,14 @@ local-migration/
 
 ## Important Guidelines
 
+- **OUTPUT CLEANLINESS (CRITICAL)**:
+  - **Direct Write Only**: Write files directly to their final destination (e.g., `src/Core/Services/XService.cs`).
+  - **NO Temporary Files**: Do NOT create `temp.txt`, `debug.log`, `step1.md`, or any "intermediate" files.
+  - **NO Ghost Files**: Do NOT create `complete.md`, `verify.md`, `done.txt`. Use `log_component_status` to track progress.
+  - **One & Done**: Do not write a file to `output/` and then move it. Write it to `src/` immediately.
+
 - Write files IMMEDIATELY after generating - don't hold in memory
+- Trust `read_conversion_status()` as the single source of truth for items completed.
 - Log status after each component so progress is trackable
 - If you encounter an unknown utility, use `lookup_utility(name)`
 - If utility is still unknown, log it with `log_issue()` and continue

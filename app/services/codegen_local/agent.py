@@ -299,7 +299,22 @@ def create_codegen_agent(tools: list, project_id: str):
                 should_reset = True  # Need to replace state, not add
         
         # Invoke LLM with system prompt + processed messages
-        full_messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+        
+        system_instructions = [SystemMessage(content=SYSTEM_PROMPT)]
+        
+        # Conditionally add memory management instructions
+        if settings.CODEGEN_ENABLE_SUMMARIZATION:
+            memory_note = """
+## Memory Management (System Automated)
+- The system will automatically prune large tool outputs (like file reads) to save context.
+- The system will summarize older history periodically.
+- **DO NOT** try to summarize history yourself. 
+- Rely on `read_conversion_status()` to know exactly what is done, rather than scrolling back in chat history.
+- If you need details about a previously converted component that is no longer in chat history, use `search_session_logs(query)`.
+"""
+            system_instructions.append(SystemMessage(content=memory_note))
+
+        full_messages = system_instructions + messages
         response = model_with_tools.invoke(full_messages)
         
         if should_reset:
@@ -351,6 +366,10 @@ def create_codegen_agent(tools: list, project_id: str):
     def verify_completion(state: CodegenState) -> dict:
         """Verify that critical artifacts exist before finishing."""
         output_path_str = state.get("codegen_output_path", "")
+        source_path_str = state.get("codegen_source_path", "")
+        
+        logger.info(f"[Verification] Starting checks. Output: {output_path_str}, Source: {source_path_str}")
+
         if not output_path_str:
             # If path not provided, we can't verify, so assume partial success but warn log
             logger.warning("No codegen_output_path in state, skipping verification")
@@ -385,7 +404,7 @@ def create_codegen_agent(tools: list, project_id: str):
                 test_file = tests_dir / test_filename
                 
                 if not test_file.exists():
-                    missing_tests.append(f"Service: {service_file.name}")
+                    missing_tests.append(f"Missing Service Test: '{test_file}' (for {service_file.name})")
 
         # Check for missing Repository tests
         repos_dir = output_path / "src" / "Infrastructure" / "Repositories"
@@ -397,7 +416,7 @@ def create_codegen_agent(tools: list, project_id: str):
                 test_file = repos_tests_dir / test_filename
                 
                 if not test_file.exists():
-                     missing_tests.append(f"Repository: {repo_file.name}")
+                     missing_tests.append(f"Missing Repository Test: '{test_file}' (for {repo_file.name})")
 
         # Check for missing Job tests
         # Jobs are typically src/Worker/Jobs/StepName/Program.cs
@@ -413,14 +432,21 @@ def create_codegen_agent(tools: list, project_id: str):
             if source_path.exists():
                 # Only look for TOP-LEVEL JOBS (.jcl), not Procedures (.proc/.prc)
                 # Procedures are dependencies, not executable entry points.
-                for jcl_file in source_path.rglob("*.jcl"):
+                jcl_files = list(source_path.rglob("*.jcl"))
+                logger.info(f"[Verification] Found {len(jcl_files)} JCL files in {source_path}")
+                
+                if not jcl_files:
+                    logger.warning(f"[Verification] No JCL files found in {source_path}. Skipping strict JCL check.")
+
+                for jcl_file in jcl_files:
                     # Expected script name: run-{filename_lower}.ps1
                     # e.g., JOB01.jcl -> run-job01.ps1
                     job_name = jcl_file.stem.lower()
                     expected_script = scripts_dir / f"run-{job_name}.ps1"
                     
                     if not expected_script.exists():
-                         missing_tests.append(f"Missing Script: scripts/jobs/run-{job_name}.ps1 (for {jcl_file.name})")
+                         logger.warning(f"[Verification] Missing script for {jcl_file.name}. Expected: {expected_script}")
+                         missing_tests.append(f"Missing Script: '{expected_script}' (Derived from {jcl_file.name})")
 
         # Check for missing Job tests (Worker/Jobs)
         if jobs_src_dir.exists():
@@ -433,7 +459,7 @@ def create_codegen_agent(tools: list, project_id: str):
                         test_file = jobs_tests_dir / test_filename
                         
                         if not test_file.exists():
-                            missing_tests.append(f"Job Test: {job_folder.name}")
+                            missing_tests.append(f"Missing Job Test: '{test_file}' (for {job_folder.name})")
         
         # ---------------------------------------------------------------------
         # FUNCTIONALITY AUDIT (Soft Check)
