@@ -741,6 +741,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm, inch
 from reportlab.lib.utils import ImageReader
+from PIL import Image as PILImage # Use an alias to avoid conflict with ReportLab Image
 import html
 from pathlib import Path
 from reportlab.platypus import (
@@ -1168,28 +1169,49 @@ class TechnicalSpecBuilder(BaseBuilder):
         try:
             from reportlab.platypus import Image as RLImage
             
-            img_reader = ImageReader(path)
-            iw, ih = img_reader.getSize()
-            
-            # Dial in the elongation factor to fix source-level squeezing
-            ELONGATION_FACTOR = 1.5 
-            target_width = self.AVAILABLE_WIDTH
-            aspect = ih / float(iw)
-            target_height = target_width * aspect * ELONGATION_FACTOR
-            
-            # Page height guard
-            max_h = 230 * mm
-            if target_height > max_h:
-                target_height = max_h
-                target_width = target_height / (aspect * ELONGATION_FACTOR)
+            # 1. Open image with Pillow
+            with PILImage.open(path) as img:
+                iw, ih = img.size
+                
+                # 2. ELONGATION LOGIC
+                # If width is much larger than height, the graph is "flat"
+                if iw > ih:
+                    # We want a target height that is at least 60% of the width
+                    # This physically adds vertical pixels to the image
+                    new_width = iw
+                    new_height = int(iw * 0.8) # Force a 4:5 or 1:1 ratio
+                    
+                    # Resize using High-Quality Lanczos filtering
+                    # This prevents the text from looking blurry
+                    img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
+                    
+                    # Save the "Elongated" version to a temporary file
+                    stretched_path = path.replace(".png", "_stretched.png")
+                    img.save(stretched_path)
+                    final_path = stretched_path
+                else:
+                    final_path = path
 
-            img = RLImage(path, width=target_width, height=target_height)
-            img.hAlign = 'CENTER'
-            self.elements.append(img)
-            self.elements.append(Spacer(1, 3*mm))
+            # 3. Calculate ReportLab dimensions
+            # Now the image is physically tall, so ReportLab's aspect ratio calculation
+            # will naturally produce a tall result.
+            img_reader = ImageReader(final_path)
+            riw, rih = img_reader.getSize()
+            aspect = rih / float(riw)
+
+            target_width = self.AVAILABLE_WIDTH
+            target_height = target_width * aspect
+            
+            if target_height > 230 * mm: target_height = 230 * mm
+
+            img_flowable = RLImage(final_path, width=target_width, height=target_height)
+            img_flowable.hAlign = 'CENTER'
+            self.elements.append(img_flowable)
+            self.elements.append(Spacer(1, 5*mm))
             self.para(f"<i>{caption}</i>")
+
         except Exception as e:
-            logger.error(f"Image render error: {e}")
+            logger.error(f"Pillow stretching failed: {e}")
             self.para("<i>[Error rendering diagram]</i>")
 
     def _batch(self):
