@@ -323,11 +323,25 @@ You can now write code files using write_code_file()."""
         Returns:
             Success or error message
         """
+        ALLOWED_EXTENSIONS = {
+            ".cs", ".csproj", ".sln",
+            ".ps1", ".sh", ".bat",
+            ".md",
+            ".json", ".yaml", ".yml", ".config", ".xml",
+            ".gitignore", ".dockerignore", ".editorconfig"
+        }
+
         try:
             # Validate path doesn't escape
             target = (output_dir / relative_path).resolve()
             if not str(target).startswith(str(output_dir)):
                 return f"Error: Path '{relative_path}' is outside output directory"
+            
+            # Validate extension
+            ext = target.suffix.lower()
+            if ext not in ALLOWED_EXTENSIONS:
+                return (f"Error: Extension '{ext}' is not allowed. "
+                        f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}")
             
             # Create parent directories
             target.parent.mkdir(parents=True, exist_ok=True)

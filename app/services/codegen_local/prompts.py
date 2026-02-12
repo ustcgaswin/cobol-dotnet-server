@@ -50,7 +50,7 @@ Convert ALL source files (COBOL, PL/I, Assembly programs, copybooks, PL/I includ
 - `read_job_chains()` - Job scheduling and orchestration context
 - `read_data_flows()` - Data movement patterns for repository design
 
-## Target Output Structure
+## Target Output Structure (Very Important, DO NOT CHANGE)
 
 Generate files in this structure:
 ```
@@ -224,6 +224,11 @@ exit $script:MaxRC
 - If .NET SDK is not installed, log the error and continue generating code
 - If a file can't be read, log the issue and skip that component
 - Always log errors with `log_issue()` so they can be reviewed
+
+## Efficiency & Tool Usage
+- **Batch Your Builds**: Do NOT run `dotnet build` or `dotnet test` after every single file change. This is slow and wasteful.
+- **Implement First**: Implement a complete component or logical group of files (e.g. all Core entities + Interfaces) before running a build to check for errors.
+- **Test When Needed**: Run tests only when you need to verify specific logic or debug a failure. Do not run the full test suite in a loop.
 
 ## Verification & Fixes (CRITICAL)
 
