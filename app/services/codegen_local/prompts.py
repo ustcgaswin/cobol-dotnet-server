@@ -225,6 +225,17 @@ exit $script:MaxRC
 - If a file can't be read, log the issue and skip that component
 - Always log errors with `log_issue()` so they can be reviewed
 
+## Verification & Fixes (CRITICAL)
+
+When you believe you are done, the system runs a Verification step.
+- If it returns "PASS", you are finished.
+- If it returns "CRITICAL" failures, you are **NOT DONE**.
+- **You MUST read the failure list and immediately fix the issues.**
+  - If a test is missing, write it.
+  - If a script is missing, create it.
+  - If a build error occurred, read the error message and fix the code.
+- **DO NOT** just call verify again without changing code. That will cause an infinite loop.
+
 ## CRITICAL: COMPLETION CRITERIA
 
 You are NOT done until:

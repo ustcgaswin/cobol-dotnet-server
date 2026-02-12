@@ -484,18 +484,28 @@ def create_codegen_agent(tools: list, project_id: str):
             logger.warning("[Verification Step 4] FAIL — scripts/jobs is empty or missing")
             failures.append("scripts/jobs directory is empty or missing. You MUST convert JCL jobs to PowerShell scripts.")
         else:
-            if source_path_str:
+            if not source_path_str:
+                logger.warning("[Verification Step 4] SKIP — No source path found in state")
+            else:
                 source_path = Path(source_path_str)
-                if source_path.exists():
+                if not source_path.exists():
+                    logger.warning(f"[Verification Step 4] SKIP — Source path not found: {source_path}")
+                else:
                     jcl_files = list(source_path.rglob("*.jcl"))
-                    logger.info(f"[Verification Step 4] Found {len(jcl_files)} JCL source files")
-                    
-                    for jcl_file in jcl_files:
-                        job_name = jcl_file.stem.lower()
-                        expected_script = scripts_dir / f"run-{job_name}.ps1"
-                        if not expected_script.exists():
-                            logger.warning(f"[Verification Step 4] Missing script for {jcl_file.name} → {expected_script.name}")
-                            failures.append(f"Missing Script: run-{job_name}.ps1 (from {jcl_file.name})")
+                    if jcl_files:
+                        logger.info(f"[Verification Step 4] Found {len(jcl_files)} JCL source files")
+                        
+                        for jcl_file in jcl_files:
+                            job_name = jcl_file.stem.lower()
+                            expected_script = scripts_dir / f"run-{job_name}.ps1"
+                            if not expected_script.exists():
+                                logger.warning(f"[Verification Step 4] Missing script for {jcl_file.name} → {expected_script.name}")
+                                failures.append(f"Missing Script: run-{job_name}.ps1 (from {jcl_file.name})")
+                    else:
+                        logger.info("[Verification Step 4] SKIP — No JCL files found in source path")
+            
+            if not any(f.startswith("Missing Script") for f in failures):
+                logger.info("[Verification Step 4] PASS — All JCL scripts present")
 
         # -----------------------------------------------------------------
         # STEP 5: LLM-based Test Coverage Audit (Replaces suffix checks)
