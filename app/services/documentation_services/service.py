@@ -449,10 +449,7 @@ class DocumentationService:
             try:
                 return json.loads(clean_json)
             except json.JSONDecodeError:
-                logger.warning("JSON truncated or invalid. Attempting to repair...")
-                # Option 1: Try a library like 'json_repair' (pip install json-repair)
-                from json_repair import repair_json
-                return json.loads(repair_json(clean_json))
+                logger.warning("JSON truncated or invalid")
             
         except Exception as e:
             logger.error(f"Failed to generate system summary: {e}")
@@ -684,8 +681,17 @@ class DocumentationService:
             # Extracted from the LLM response in system_overview_json
             func_mermaid = system_overview_json.get('functional_flow_diagram', {}).get('mermaid_code')
             if func_mermaid:
+                clean_mermaid = func_mermaid.replace("```mermaid", "").replace("```", "").strip()
+                if "sequenceDiagram" in clean_mermaid:
+
+                    start_index = clean_mermaid.find("sequenceDiagram")
+                    clean_mermaid = clean_mermaid[start_index:]
+                else:
+                    # Fallback if missing header
+                    clean_mermaid = "sequenceDiagram\n" + clean_mermaid
+
                 func_path = output_dir / "functional_flow.png"
-                if analyzer.render_mermaid_code_to_png(func_mermaid, str(func_path)):
+                if analyzer.render_mermaid_code_to_png(clean_mermaid, str(func_path)):
                     image_paths['functional'] = str(func_path)
                     success = str(func_path)
 
