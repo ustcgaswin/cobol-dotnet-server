@@ -532,25 +532,25 @@ def create_codegen_agent(tools: list, project_id: str):
             logger.info("[Verification Step 6] SKIP — No Repositories directory")
 
         # -----------------------------------------------------------------
-        # STEP 7: Job step tests exist
+        # STEP 7: Job class tests exist
         # -----------------------------------------------------------------
-        logger.info("[Verification Step 7] Checking Job step tests...")
+        logger.info("[Verification Step 7] Checking Job class tests...")
         jobs_src_dir = output_path / "src" / "Worker" / "Jobs"
         jobs_tests_dir = output_path / "tests" / "Worker" / "Jobs"
 
         if jobs_src_dir.exists():
-            job_folders = [d for d in jobs_src_dir.iterdir() if d.is_dir() and (d / "Program.cs").exists()]
-            logger.info(f"[Verification Step 7] Found {len(job_folders)} Job Steps")
+            job_files = [f for f in jobs_src_dir.glob("*.cs") if f.name != "IJob.cs"]
+            logger.info(f"[Verification Step 7] Found {len(job_files)} Job classes")
             
-            for job_folder in job_folders:
-                test_filename = f"{job_folder.name}Tests.cs"
+            for job_file in job_files:
+                test_filename = job_file.stem + "Tests.cs"
                 test_file = jobs_tests_dir / test_filename
                 if not test_file.exists():
                     logger.warning(f"[Verification Step 7] Missing test: {test_filename}")
-                    failures.append(f"Missing Job Test: {test_filename} (for {job_folder.name})")
+                    failures.append(f"Missing Job Test: {test_filename} (for {job_file.name})")
             
             if not any("Missing Job Test" in f for f in failures):
-                logger.info("[Verification Step 7] PASS — All Job step tests present")
+                logger.info("[Verification Step 7] PASS — All Job class tests present")
         else:
             logger.info("[Verification Step 7] SKIP — No Worker/Jobs directory")
 
@@ -558,7 +558,8 @@ def create_codegen_agent(tools: list, project_id: str):
         # STEP 8: Functionality audit (soft — does NOT block)
         # -----------------------------------------------------------------
         logger.info("[Verification Step 8] Running functionality audit...")
-        catalog_path = output_path.parent / "system_context" / "functionality_catalog.md"
+        artifacts_base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / state["project_id"]
+        catalog_path = artifacts_base / "system_context" / "functionality_catalog.md"
         
         if catalog_path.exists():
             try:

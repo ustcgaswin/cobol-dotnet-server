@@ -399,10 +399,9 @@ class CodegenLocalService:
             
             # Run agent with project name and system overview in the message
             initial_message = HumanMessage(
-                content=f"Convert this mainframe project '{project_name}' to .NET. "
+                content=f"Convert mainframe project '{project_name}' to .NET 8. "
                         f"Use '{project_name}' as the solution name when calling initialize_solution(). "
-                        "Start by checking existing progress, read the functionality catalog as your checklist, "
-                        "then read the dependency graph and begin converting components in dependency order."
+                        "Follow the MANDATORY FIRST ACTIONS in your system prompt before writing any code."
                         f"{system_overview_content}"
             )
             

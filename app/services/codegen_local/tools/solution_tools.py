@@ -219,6 +219,46 @@ EndGlobal
             (worker_path / "Worker.csproj").write_text(worker_csproj)
             (worker_path / "Jobs").mkdir(exist_ok=True)
             
+            # Scaffold IJob interface
+            ijob_content = '''namespace ConvertedBatch.Worker.Jobs;
+
+/// <summary>
+/// Common interface for all batch job classes.
+/// Each JCL job is implemented as a class that implements this interface.
+/// </summary>
+public interface IJob
+{
+    Task<int> ExecuteAsync(string[] args);
+}
+'''
+            (worker_path / "Jobs" / "IJob.cs").write_text(ijob_content)
+            
+            # Scaffold single Program.cs entry point
+            program_content = '''using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using ConvertedBatch.Worker.Jobs;
+
+var builder = Host.CreateApplicationBuilder(args);
+
+// === Service & Repository Registration ===
+// TODO: Register Core services and Infrastructure repositories here
+
+// === Job Registration ===
+// TODO: Register job classes here, e.g.:
+// builder.Services.AddKeyedTransient<IJob, SetlJob>("SetlJob");
+
+var host = builder.Build();
+
+var jobName = args.FirstOrDefault()
+    ?? throw new ArgumentException("Usage: dotnet run -- <JobName> [--step StepName] [--input file] [--output file]");
+
+var job = host.Services.GetRequiredKeyedService<IJob>(jobName);
+var remainingArgs = args.Skip(1).ToArray();
+var exitCode = await job.ExecuteAsync(remainingArgs);
+return exitCode;
+'''
+            (worker_path / "Program.cs").write_text(program_content)
+            
             # Create Tests.csproj
             tests_csproj = '''<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -230,6 +270,8 @@ EndGlobal
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\\src\\Core\\Core.csproj" />
+    <ProjectReference Include="..\\src\\Infrastructure\\Infrastructure.csproj" />
+    <ProjectReference Include="..\\src\\Worker\\Worker.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />

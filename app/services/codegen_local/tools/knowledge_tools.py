@@ -144,9 +144,39 @@ def create_knowledge_tools() -> list:
             logger.error(f"search_knowledge error: {e}")
             return f"Error searching knowledge: {e}"
     
+    @tool("read_process_flow")
+    def read_process_flow() -> str:
+        """Read the process flow documentation from the knowledge folder.
+        
+        Contains the overall system architecture, job chains, program inventory,
+        and processing flow. Use this to understand the complete system being
+        converted before starting code generation.
+        
+        Returns:
+            The process flow content, or message if not available
+        """
+        try:
+            filepath = knowledge_path / "process_flow.md"
+            if not filepath.exists():
+                logger.info("No process_flow.md found in knowledge folder")
+                return "No process flow documentation available. Rely on dependency_graph.md and job_chains for system context."
+            
+            content = filepath.read_text(encoding="utf-8")
+            
+            if not content.strip():
+                return "Process flow document is empty. Rely on dependency_graph.md for system context."
+            
+            logger.info(f"Read process_flow.md ({len(content)} chars)")
+            return f"=== Process Flow ===\n\n{content}"
+            
+        except Exception as e:
+            logger.error(f"read_process_flow error: {e}")
+            return f"Error reading process flow: {e}"
+    
     return [
         read_conversion_guide,
         read_style_guide,
+        read_process_flow,
         lookup_utility,
         search_knowledge,
     ]

@@ -18,16 +18,6 @@ def _get_project_path(project_id: str) -> Path:
     return base / project_id
 
 
-def _validate_path(project_id: str, relative_path: str) -> Path:
-    """Validate and resolve a path within project scope."""
-    project_path = _get_project_path(project_id)
-    target = (project_path / relative_path).resolve()
-    
-    if not str(target).startswith(str(project_path)):
-        raise ValueError(f"Path '{relative_path}' is outside project scope")
-    
-    return target
-
 
 def create_source_file_tools(project_id: str) -> list:
     """Create source file access tools bound to a specific project.
@@ -41,17 +31,18 @@ def create_source_file_tools(project_id: str) -> list:
     
     @tool("view_source_file")
     def view_source_file(
-        filepath: str,
+        filename: str,
         start_line: int = 1,
         end_line: int = 100,
     ) -> str:
-        """View specific lines from a source file.
+        """View a source file by filename (searches the entire project).
         
-        Use this to read portions of COBOL, copybook, JCL, or other source files.
+        Provide just the filename — the tool will find it automatically.
+        Supports COBOL, PL/I, Assembly, REXX, JCL, copybooks, DCLGEN, parmlib, and all other source files.
         Line numbers are 1-indexed.
         
         Args:
-            filepath: Relative path to the file (e.g., "cobol/MAIN.cbl")
+            filename: Just the filename (e.g., "FSMAIN.cbl", "FSFEE.pli", "SETLJOB.jcl")
             start_line: First line to read (1-indexed, default 1)
             end_line: Last line to read (1-indexed, default 100)
             
@@ -59,13 +50,33 @@ def create_source_file_tools(project_id: str) -> list:
             The requested lines with line numbers
         """
         try:
-            target = _validate_path(project_id, filepath)
+            project_path = _get_project_path(project_id)
             
-            if not target.exists():
-                return f"Error: File '{filepath}' not found"
+            if not project_path.exists():
+                return f"Error: Project directory not found"
             
-            if not target.is_file():
-                return f"Error: '{filepath}' is not a file"
+            # Search for the file anywhere in the project (exact match first)
+            matches = list(project_path.rglob(filename))
+            
+            # If no exact match, try case-insensitive via indexed scan
+            if not matches:
+                target_lower = filename.lower()
+                matches = [
+                    f for f in project_path.rglob("*.*")
+                    if f.is_file() and f.name.lower() == target_lower
+                ]
+            
+            if not matches:
+                return f"Error: File '{filename}' not found in project. Use list_source_files() to see available files."
+            
+            if len(matches) > 1:
+                listing = "\n".join(
+                    str(m.relative_to(project_path)) for m in matches
+                )
+                return f"Multiple files named '{filename}' found. Specify the full relative path:\n{listing}"
+            
+            target = matches[0]
+            rel_path = target.relative_to(project_path)
             
             lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
             total_lines = len(lines)
@@ -83,7 +94,7 @@ def create_source_file_tools(project_id: str) -> list:
                 for i, line in enumerate(selected, start=start_line)
             ]
             
-            return f"File: {filepath} (lines {start_line}-{end_line} of {total_lines})\n" + "\n".join(result_lines)
+            return f"File: {rel_path} (lines {start_line}-{end_line} of {total_lines})\n" + "\n".join(result_lines)
             
         except ValueError as e:
             return f"Error: {e}"
