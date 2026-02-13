@@ -21,8 +21,8 @@ from app.config.settings import settings
 from app.services.codegen_local.prompts import SYSTEM_PROMPT
 
 # Summarization configuration
-SUMMARIZE_THRESHOLD = 80  # Trigger summarization at this message count
-KEEP_RECENT_MESSAGES = 10  # Keep last N messages after compression
+SUMMARIZE_THRESHOLD = 60  # Trigger summarization at this message count
+KEEP_RECENT_MESSAGES = 15  # Keep last N messages after compression
 PRUNE_AFTER_EXCHANGES = 4  # Prune tool outputs older than N exchanges (N*2 messages)
 
 # Tools whose outputs should be pruned (large outputs)
@@ -146,6 +146,344 @@ def _extract_structured_state(messages: list[AnyMessage]) -> str:
     return "\n".join(summary_lines)
 
 
+def _extract_structured_state_from_disk(project_id: str, output_path: Path) -> str:
+    """
+    Extract progress state from actual filesystem instead of message history.
+    More accurate than message parsing — survives compression without info loss.
+    """
+    summary_lines = ["### Current Project State (from disk scan)"]
+    
+    if not output_path.exists():
+        summary_lines.append("\nNo output directory yet.")
+        return "\n".join(summary_lines)
+    
+    # Count files by category
+    categories = {
+        "Entities": "src/Core/Entities",
+        "Services": "src/Core/Services",
+        "Interfaces": "src/Core/Interfaces",
+        "Repositories": "src/Infrastructure/Repositories",
+        "Jobs": "src/Worker/Jobs",
+        "Tests": "tests",
+        "Scripts": "scripts/jobs",
+    }
+    
+    summary_lines.append("\n**Generated Files by Category:**")
+    for label, rel_path in categories.items():
+        dir_path = output_path / rel_path
+        if dir_path.exists():
+            cs_files = [f.name for f in dir_path.rglob("*.cs") if "bin" not in f.parts and "obj" not in f.parts]
+            ps1_files = [f.name for f in dir_path.rglob("*.ps1")] if "scripts" in rel_path else []
+            files = cs_files + ps1_files
+            if files:
+                summary_lines.append(f"- {label}: {len(files)} files ({', '.join(sorted(files)[:5])}{'...' if len(files) > 5 else ''})")
+            else:
+                summary_lines.append(f"- {label}: 0 files")
+        else:
+            summary_lines.append(f"- {label}: directory not created")
+    
+    # F-ID progress
+    try:
+        catalog = _parse_functionality_catalog(project_id)
+        if catalog:
+            _, missing = _scan_fid_coverage(output_path, catalog)
+            total = len(catalog)
+            done = total - len(missing)
+            missing_ids = [m["id"] for m in missing]
+            summary_lines.append(f"\n**Functionality Progress: {done}/{total} implemented**")
+            if missing_ids:
+                summary_lines.append(f"Missing: {', '.join(missing_ids[:10])}{'...' if len(missing_ids) > 10 else ''}")
+    except Exception:
+        pass
+    
+    return "\n".join(summary_lines)
+
+
+# =========================================================================
+# Verification Helper Functions
+# =========================================================================
+
+def _parse_functionality_catalog(project_id: str) -> list[dict]:
+    """Parse the functionality catalog into structured entries.
+    
+    Returns list of dicts with keys: id, title, programs, description, domain
+    Returns empty list if catalog doesn't exist.
+    """
+    artifacts_base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / project_id
+    catalog_path = artifacts_base / "system_context" / "functionality_catalog.md"
+    
+    if not catalog_path.exists():
+        logger.info("[Catalog] No functionality_catalog.md found")
+        return []
+    
+    try:
+        content = catalog_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        logger.warning(f"[Catalog] Failed to read catalog: {e}")
+        return []
+    
+    entries = []
+    # Split by ### F0XX headers
+    blocks = re.split(r"(?=^### F\d{3}:)", content, flags=re.MULTILINE)
+    
+    for block in blocks:
+        block = block.strip()
+        if not block.startswith("### F"):
+            continue
+        
+        # Extract F-ID and title
+        header_match = re.match(r"### (F\d{3}): (.+)", block)
+        if not header_match:
+            continue
+        
+        fid = header_match.group(1)
+        title = header_match.group(2).strip()
+        
+        # Extract domain
+        domain_match = re.search(r"\*\*Domain\*\*:\s*(.+)", block)
+        domain = domain_match.group(1).strip() if domain_match else ""
+        
+        # Extract implemented by (program names)
+        impl_match = re.search(r"\*\*Implemented By\*\*:\s*(.+)", block)
+        programs = []
+        if impl_match:
+            programs = [p.strip() for p in impl_match.group(1).split(",")]
+        
+        # Extract description
+        desc_match = re.search(r"\*\*Description\*\*:\s*(.+)", block, re.DOTALL)
+        description = ""
+        if desc_match:
+            # Take text until next --- or end of block
+            desc_text = desc_match.group(1).strip()
+            # Remove trailing --- separator
+            desc_text = re.split(r"\n---", desc_text)[0].strip()
+            description = desc_text
+        
+        entries.append({
+            "id": fid,
+            "title": title,
+            "domain": domain,
+            "programs": programs,
+            "description": description,
+        })
+    
+    logger.info(f"[Catalog] Parsed {len(entries)} functionalities")
+    return entries
+
+
+def _scan_fid_coverage(
+    output_path: Path, catalog: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Scan generated .cs files for F-ID implementation tags.
+    
+    Returns (implemented, missing) where each is a list of catalog entries
+    enriched with 'found_in' for implemented entries.
+    """
+    if not output_path.exists():
+        return [], list(catalog)
+    
+    # Build F-ID → file mapping by scanning all .cs files
+    fid_locations: dict[str, list[str]] = {}
+    
+    for cs_file in output_path.rglob("*.cs"):
+        if "bin" in cs_file.parts or "obj" in cs_file.parts:
+            continue
+        try:
+            content = cs_file.read_text(encoding="utf-8", errors="replace")
+            rel_path = str(cs_file.relative_to(output_path)).replace("\\", "/")
+            # Only match F-IDs inside "// Implements:" comment lines (not arbitrary text)
+            for impl_match in re.finditer(r"//\s*Implements:\s*(.+)", content):
+                for fid in re.findall(r"F\d{3}", impl_match.group(1)):
+                    fid_locations.setdefault(fid, []).append(rel_path)
+        except Exception:
+            continue
+    
+    implemented = []
+    missing = []
+    
+    for entry in catalog:
+        fid = entry["id"]
+        if fid in fid_locations:
+            enriched = {**entry, "found_in": fid_locations[fid]}
+            implemented.append(enriched)
+        else:
+            missing.append(entry)
+    
+    return implemented, missing
+
+
+def _get_file_summary(project_id: str, program_name: str) -> str:
+    """Get the file summary for a specific program from file_summaries.md.
+    
+    Args:
+        project_id: Project ID
+        program_name: Program name (e.g., 'FSFEE', 'FSMAIN')
+    
+    Returns:
+        The summary section text, or empty string if not found.
+    """
+    artifacts_base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / project_id
+    summaries_path = artifacts_base / "file_summaries.md"
+    
+    if not summaries_path.exists():
+        return ""
+    
+    try:
+        content = summaries_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    
+    # Find section for this program (case-insensitive)
+    # Format: ### PROGRAM_ext.txt (TYPE)
+    pattern = rf"(### {re.escape(program_name)}[\w_]*\.txt.*?)(?=\n### |\n## |\Z)"
+    match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+    if match:
+        section = match.group(1).strip()
+        # Limit to ~500 chars to avoid bloating the message
+        if len(section) > 500:
+            section = section[:500] + "..."
+        return section
+    
+    return ""
+
+
+def _get_dependencies(project_id: str, program_name: str) -> str:
+    """Get dependency information for a program from dependency_graph.md.
+    
+    Args:
+        project_id: Project ID
+        program_name: Program name (e.g., 'FSFEE')
+    
+    Returns:
+        Formatted dependency string, or empty string if not found.
+    """
+    artifacts_base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / project_id
+    dep_path = artifacts_base / "dependency_graph.md"
+    
+    if not dep_path.exists():
+        return ""
+    
+    try:
+        content = dep_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    
+    deps = {"calls": set(), "copybooks": set(), "tables": set()}
+    name_upper = program_name.upper()
+    
+    for line in content.splitlines():
+        # Look for table rows containing this program
+        if f"| {name_upper}" in line.upper() or f"|{name_upper}" in line.upper():
+            cells = [c.strip() for c in line.split("|") if c.strip()]
+            if len(cells) >= 2:
+                source = cells[0].upper().strip()
+                target = cells[1].strip()
+                
+                if source == name_upper and target:
+                    # Determine relationship type from surrounding context
+                    if "CALL" in line.upper() or "→ Program" in content[max(0, content.find(line)-200):content.find(line)]:
+                        deps["calls"].add(target)
+                    elif "Copybook" in content[max(0, content.find(line)-200):content.find(line)]:
+                        deps["copybooks"].add(target)
+                    elif "Table" in content[max(0, content.find(line)-200):content.find(line)] or "SQL" in content[max(0, content.find(line)-200):content.find(line)]:
+                        deps["tables"].add(target)
+                    else:
+                        deps["calls"].add(target)
+    
+    parts = []
+    if deps["calls"]:
+        parts.append(f"Calls: {', '.join(sorted(deps['calls']))}")
+    if deps["copybooks"]:
+        parts.append(f"Uses copybooks: {', '.join(sorted(deps['copybooks']))}")
+    if deps["tables"]:
+        parts.append(f"SQL tables: {', '.join(sorted(deps['tables']))}")
+    
+    return " | ".join(parts)
+
+
+def _scan_placeholder_files(output_path: Path) -> list[dict]:
+    """Scan generated source files for placeholder/stub patterns.
+    
+    Returns list of dicts with 'file', 'reason', and 'line_count' for each placeholder.
+    """
+    placeholders = []
+    
+    if not output_path.exists():
+        return placeholders
+    
+    src_dir = output_path / "src"
+    if not src_dir.exists():
+        return placeholders
+    
+    for cs_file in src_dir.rglob("*.cs"):
+        if "bin" in cs_file.parts or "obj" in cs_file.parts:
+            continue
+        # Skip interfaces and IJob.cs
+        if cs_file.name.startswith("I") and cs_file.name[1].isupper():
+            continue
+        if cs_file.name == "Program.cs":
+            continue
+            
+        try:
+            content = cs_file.read_text(encoding="utf-8", errors="replace")
+            lines = content.splitlines()
+            line_count = len(lines)
+            rel_path = str(cs_file.relative_to(output_path)).replace("\\", "/")
+            
+            # Check line count thresholds
+            is_service = "Services" in rel_path
+            is_job = "Jobs" in rel_path
+            
+            if is_service and line_count < 25:
+                placeholders.append({
+                    "file": rel_path,
+                    "reason": f"Service file is suspiciously short ({line_count} lines)",
+                    "line_count": line_count,
+                })
+                continue
+            
+            if is_job and line_count < 20:
+                placeholders.append({
+                    "file": rel_path,
+                    "reason": f"Job file is suspiciously short ({line_count} lines)",
+                    "line_count": line_count,
+                })
+                continue
+            
+            # Check if ALL methods are just NotImplementedException
+            method_bodies = re.findall(
+                r"\{[^{}]*\}", content, re.DOTALL
+            )
+            all_nie = True
+            has_methods = False
+            for body in method_bodies:
+                body_stripped = body.strip().strip("{}")
+                if not body_stripped.strip():
+                    continue
+                has_methods = True
+                # Check if body is ONLY NotImplementedException or return default
+                body_clean = body_stripped.strip()
+                if not re.match(
+                    r"^\s*(throw\s+new\s+NotImplementedException\s*\(\s*\)\s*;|return\s+(default|0|Task\.FromResult\s*\(\s*0\s*\))\s*;)\s*$",
+                    body_clean, re.DOTALL
+                ):
+                    all_nie = False
+                    break
+            
+            if has_methods and all_nie:
+                placeholders.append({
+                    "file": rel_path,
+                    "reason": "All method bodies are NotImplementedException or return default — no real logic",
+                    "line_count": line_count,
+                })
+                continue
+            
+        except Exception:
+            continue
+    
+    return placeholders
+
+
 def _dump_history(messages: list[AnyMessage], logs_path: Path) -> str:
     """
     Dump full conversation history to JSON file for recovery.
@@ -195,12 +533,14 @@ def _dump_history(messages: list[AnyMessage], logs_path: Path) -> str:
 
 def _compress_messages(
     messages: list[AnyMessage],
-    logs_path: Path
+    logs_path: Path,
+    project_id: str = "",
+    output_path: str = "",
 ) -> list[AnyMessage]:
     """
     Compress message history by:
     1. Dumping full history to file
-    2. Extracting structured state
+    2. Extracting structured state from messages AND disk
     3. Replacing old messages with summary + recent messages
     
     IMPORTANT: We must not split AIMessage/ToolMessage pairs.
@@ -209,8 +549,14 @@ def _compress_messages(
     # Dump before compressing
     _dump_history(messages, logs_path)
     
-    # Extract state summary
+    # Extract state summary from messages
     summary = _extract_structured_state(messages)
+    
+    # Enrich with disk-based state if available (more reliable than message parsing)
+    if project_id and output_path:
+        disk_state = _extract_structured_state_from_disk(project_id, output_path)
+        if disk_state:
+            summary += "\n\n" + disk_state
     
     # Find a clean cut point - walk backward from target position
     # to find a message that's NOT a ToolMessage (which would need its AIMessage)
@@ -293,7 +639,11 @@ def create_codegen_agent(tools: list, project_id: str):
             
             # Step 2: Compress if above threshold
             if len(messages) > SUMMARIZE_THRESHOLD and logs_path:
-                messages = _compress_messages(messages, logs_path)
+                messages = _compress_messages(
+                    messages, logs_path,
+                    project_id=state.get("project_id", ""),
+                    output_path=state.get("codegen_output_path", ""),
+                )
                 should_reset = True  # Need to replace state, not add
         
         # Invoke LLM with system prompt + processed messages
@@ -362,243 +712,266 @@ def create_codegen_agent(tools: list, project_id: str):
         return "verify_completion"
 
     def verify_completion(state: CodegenState) -> dict:
-        """Verify that critical artifacts exist before finishing.
+        """Verify that the generated solution is complete, correct, and high-quality.
 
         Runs structured verification steps with clear logging for each.
         Uses FAIL-FAST strategy: Returns immediately on the first failure to prioritize fixes.
+        
+        Step order (cheapest/most impactful first):
+          0. F-ID Catalog Coverage (progress gate)
+          1. Placeholder/Stub Quality Scan
+          2. JCL → PowerShell scripts existence
+          3. 1:1 Job Mapping (.ps1 ↔ Worker Class)
+          4. Test Quality (existence + assertion quality)
+          5. Architecture Sanity (DI, interfaces)
+          6. dotnet build
+          7. dotnet test
         """
         import subprocess
 
         output_path_str = state.get("codegen_output_path", "")
         source_path_str = state.get("codegen_source_path", "")
+        pid = state.get("project_id", "")
         
         # Increment verification attempts
         current_attempts = state.get("verification_attempts", 0) + 1
-        # Update state with new count (LangGraph will merge this)
         verification_update = {"verification_attempts": current_attempts}
 
-        logger.info(f"[Verification] ═══════════════════════════════════════")
+        # Hard cap: prevent infinite loops on genuinely unsolvable issues
+        MAX_VERIFICATION_ATTEMPTS = 8
+        if current_attempts > MAX_VERIFICATION_ATTEMPTS:
+            logger.warning(f"[Verification] Hit max attempts ({MAX_VERIFICATION_ATTEMPTS}). Proceeding with current state.")
+            return {"messages": [], **verification_update}
+
+        logger.info("[Verification] ═══════════════════════════════════════")
         logger.info(f"[Verification] Starting verification check #{current_attempts}")
         logger.info(f"[Verification] Output: {output_path_str}")
         logger.info(f"[Verification] Source: {source_path_str}")
-        logger.info(f"[Verification] ═══════════════════════════════════════")
+        logger.info("[Verification] ═══════════════════════════════════════")
 
         failures = []
 
-        def return_failures(current_failures):
-            logger.warning(f"[Verification] ═══ FAILED — {len(current_failures)} issue(s) found ═══")
+        def return_failures(current_failures, *, step_name: str = ""):
+            logger.warning(f"[Verification] ═══ FAILED at {step_name} — {len(current_failures)} issue(s) found ═══")
             for f in current_failures:
                 logger.warning(f"[Verification]   • {f}")
             return {
                 "messages": [
                     HumanMessage(
-                        content=f"CRITICAL: Verification (Attempt {current_attempts}) found issues:\n" +
+                        content=f"CRITICAL: Verification (Attempt {current_attempts}) — {step_name} found issues:\n" +
                                 "\n".join([f"- {f}" for f in current_failures]) +
-                                "\n\nYou MUST fix these issues. Use verify_failure_protocol."
+                                "\n\nYou MUST fix these issues before you can finish. "
+                                "If a file is a placeholder, call view_source_file() on the original mainframe source and implement real logic. "
+                                "Do NOT write stubs."
                     )
                 ],
                 **verification_update
             }
 
-        # -----------------------------------------------------------------
-        # STEP 1: Output directory exists
-        # -----------------------------------------------------------------
-        logger.info("[Verification Step 1] Checking output directory exists...")
+        # === STEP 0: Output directory exists ===
+        logger.info("[Verification Step 0] Checking output directory exists...")
         if not output_path_str:
-            return return_failures(["CRITICAL: No codegen_output_path in state. Cannot verify."])
+            return return_failures(["CRITICAL: No codegen_output_path in state. Cannot verify."], step_name="Step 0: Output Dir")
             
         output_path = Path(output_path_str)
         if not output_path.exists():
-            return return_failures(["CRITICAL: Output directory does not exist. You cannot be done."])
+            return return_failures(["CRITICAL: Output directory does not exist. You cannot be done."], step_name="Step 0: Output Dir")
         
-        logger.info("[Verification Step 1] PASS — Output directory exists")
+        logger.info("[Verification Step 0] PASS — Output directory exists")
 
-        # -----------------------------------------------------------------
-        # STEP 2: JCL scripts exist
-        # -----------------------------------------------------------------
-        logger.info("[Verification Step 2] Checking JCL → PowerShell scripts...")
+        # =================================================================
+        # STEP 1: F-ID Catalog Coverage (PROGRESS GATE)
+        # =================================================================
+        logger.info("[Verification Step 1] Checking Functionality Catalog coverage...")
+        catalog = _parse_functionality_catalog(pid)
+        
+        if catalog:
+            implemented, missing = _scan_fid_coverage(output_path, catalog)
+            total = len(catalog)
+            done = len(implemented)
+            logger.info(f"[Verification Step 1] Coverage: {done}/{total} functionalities implemented")
+            
+            if missing:
+                # Build rich failure message with context for next 1-2 F-IDs
+                fail_lines = [
+                    f"FUNCTIONALITY INCOMPLETE: {done} of {total} functionalities implemented. "
+                    f"You have {len(missing)} more to go."
+                ]
+                
+                # Show detailed info for the next 2 F-IDs to implement
+                for entry in missing[:2]:
+                    fid = entry["id"]
+                    title = entry["title"]
+                    programs = ", ".join(entry["programs"])
+                    desc = entry["description"][:200] + "..." if len(entry["description"]) > 200 else entry["description"]
+                    
+                    detail = f"\n**Next: {fid} — {title}**"
+                    detail += f"\n  Source programs: {programs}"
+                    detail += f"\n  Description: {desc}"
+                    
+                    # Add file summary if available
+                    for prog in entry["programs"][:1]:  # First program's summary
+                        summary = _get_file_summary(pid, prog)
+                        if summary:
+                            detail += f"\n  File Summary:\n  {summary[:300]}"
+                    
+                    # Add dependencies if available
+                    for prog in entry["programs"][:1]:
+                        deps = _get_dependencies(pid, prog)
+                        if deps:
+                            detail += f"\n  Dependencies: {deps}"
+                    
+                    detail += "\n  Action: Call view_source_file() for the source program(s) and implement this functionality."
+                    fail_lines.append(detail)
+                
+                # List remaining F-IDs briefly
+                if len(missing) > 2:
+                    remaining_ids = [m["id"] + ": " + m["title"] for m in missing[2:]]
+                    fail_lines.append(f"\nAlso remaining: {', '.join(remaining_ids)}")
+                
+                logger.warning(f"[Verification Step 1] FAIL — {len(missing)} functionalities missing")
+                return return_failures(fail_lines, step_name="Step 1: Functionality Coverage")
+            else:
+                logger.info("[Verification Step 1] PASS — All functionalities tagged")
+        else:
+            logger.info("[Verification Step 1] SKIP — No functionality catalog found")
+
+        # =================================================================
+        # STEP 2: Placeholder / Stub Quality Scan
+        # =================================================================
+        logger.info("[Verification Step 2] Scanning for placeholder/stub files...")
+        placeholders = _scan_placeholder_files(output_path)
+        
+        if placeholders:
+            fail_lines = [
+                f"QUALITY: {len(placeholders)} file(s) are placeholders with no real implementation."
+            ]
+            for ph in placeholders[:5]:  # Show top 5
+                fail_lines.append(
+                    f"  • {ph['file']} ({ph['line_count']} lines): {ph['reason']}\n"
+                    f"    → Read the original source with view_source_file() and implement real logic."
+                )
+            if len(placeholders) > 5:
+                fail_lines.append(f"  ... and {len(placeholders) - 5} more placeholder files.")
+            
+            logger.warning(f"[Verification Step 2] FAIL — {len(placeholders)} placeholders found")
+            return return_failures(fail_lines, step_name="Step 2: Quality Scan")
+        else:
+            logger.info("[Verification Step 2] PASS — No placeholders detected")
+
+        # =================================================================
+        # STEP 3: JCL → PowerShell scripts exist
+        # =================================================================
+        logger.info("[Verification Step 3] Checking JCL → PowerShell scripts...")
         scripts_dir = output_path / "scripts" / "jobs"
         
         if not scripts_dir.exists() or not any(scripts_dir.iterdir()):
-            logger.warning("[Verification Step 2] FAIL — scripts/jobs is empty or missing")
+            logger.warning("[Verification Step 3] FAIL — scripts/jobs is empty or missing")
             failures.append("scripts/jobs directory is empty or missing. You MUST convert JCL jobs to PowerShell scripts.")
         else:
-            if not source_path_str:
-                logger.warning("[Verification Step 2] SKIP — No source path found in state")
-            else:
+            if source_path_str:
                 source_path = Path(source_path_str)
-                if not source_path.exists():
-                    logger.warning(f"[Verification Step 2] SKIP — Source path not found: {source_path}")
-                else:
+                if source_path.exists():
                     jcl_files = list(source_path.rglob("*.jcl"))
                     if jcl_files:
-                        logger.info(f"[Verification Step 2] Found {len(jcl_files)} JCL source files")
+                        logger.info(f"[Verification Step 3] Found {len(jcl_files)} JCL source files")
                         for jcl_file in jcl_files:
                             job_name = jcl_file.stem.lower()
                             expected_script = scripts_dir / f"run-{job_name}.ps1"
                             if not expected_script.exists():
-                                logger.warning(f"[Verification Step 2] Missing script for {jcl_file.name} → {expected_script.name}")
-                                failures.append(f"Missing Script: run-{job_name}.ps1 (from {jcl_file.name})")
-                    else:
-                        logger.info("[Verification Step 2] SKIP — No JCL files found in source path")
+                                failures.append(f"Missing Script: run-{job_name}.ps1 (from {jcl_file.name}). Read {jcl_file.name} with view_source_file() first.")
+                            else:
+                                # Check script has substance (not just a header)
+                                try:
+                                    ps_content = expected_script.read_text(encoding="utf-8", errors="replace")
+                                    has_step_cmd = bool(re.search(r"dotnet run|Copy-Item|Remove-Item", ps_content))
+                                    if not has_step_cmd and len(ps_content.splitlines()) < 8:
+                                        failures.append(
+                                            f"Stub Script: run-{job_name}.ps1 has no step commands (no 'dotnet run', 'Copy-Item', etc.). "
+                                            f"Read {jcl_file.name} with view_source_file() and convert its actual steps."
+                                        )
+                                except Exception:
+                                    pass
             
-            if not any(f.startswith("Missing Script") for f in failures):
-                logger.info("[Verification Step 2] PASS — All JCL scripts present")
+            if not failures:
+                logger.info("[Verification Step 3] PASS — All JCL scripts present and substantive")
         
-        if failures: return return_failures(failures)
+        if failures:
+            return return_failures(failures, step_name="Step 3: JCL Scripts")
 
-        # -----------------------------------------------------------------
-        # STEP 3: 1:1 Job Mapping (.ps1 ↔ Worker Class)
-        # -----------------------------------------------------------------
-        logger.info("[Verification Step 3] Checking 1:1 Job Mapping (.ps1 ↔ Worker logic)...")
+        # =================================================================
+        # STEP 4: 1:1 Job Mapping (.ps1 ↔ Worker Class)
+        # =================================================================
+        logger.info("[Verification Step 4] Checking 1:1 Job Mapping (.ps1 ↔ Worker logic)...")
         worker_jobs_dir = output_path / "src" / "Worker" / "Jobs"
         
         ps1_jobs = set()
         if scripts_dir.exists():
             for f in scripts_dir.glob("run-*.ps1"):
-                job_name = f.stem[4:].lower() 
+                job_name = f.stem[4:].lower()
                 ps1_jobs.add(job_name)
         
         worker_classes = set()
         if worker_jobs_dir.exists():
             for f in worker_jobs_dir.glob("*.cs"):
-                if f.name == "IJob.cs": continue
+                if f.name == "IJob.cs":
+                    continue
                 worker_classes.add(f.stem.lower())
                 
         for job in ps1_jobs:
             if job not in worker_classes:
-                logger.warning(f"[Verification Step 3] Orphans: run-{job}.ps1 has no Worker class")
                 failures.append(f"Missing Worker Class: {job.title()}.cs (for run-{job}.ps1)")
         
         for cls in worker_classes:
             if cls not in ps1_jobs:
-                logger.warning(f"[Verification Step 3] Orphans: {cls}.cs has no .ps1 script")
                 failures.append(f"Missing Script: run-{cls}.ps1 (for {cls.title()}.cs)")
         
         if not failures:
-             logger.info("[Verification Step 3] PASS — All jobs mapped 1:1")
+            logger.info("[Verification Step 4] PASS — All jobs mapped 1:1")
         
-        if failures: return return_failures(failures)
+        if failures:
+            return return_failures(failures, step_name="Step 4: Job Mapping")
 
-        # -----------------------------------------------------------------
-        # STEP 4: LLM-based Test Coverage Audit
-        # -----------------------------------------------------------------
-        logger.info("[Verification Step 4] Running LLM-based Test Coverage Audit...")
-        file_tree_lines = []
-        try:
-            for f in output_path.rglob("*.cs"):
-                if "bin" in f.parts or "obj" in f.parts: continue
-                file_tree_lines.append(str(f.relative_to(output_path)).replace("\\", "/"))
-            
-            tree_str = "\n".join(sorted(file_tree_lines))
-            
-            audit_prompt = f"""Given this list of source files, identify the ones that contain business logic and SHOULD have unit tests.
-            
-Exclude:
-- Entity/POCO classes (data-only)
-- Interfaces (I*.cs)
-- Enums
-- Configuration/Settings
-- DbContext
-- Program.cs, IJob.cs, Migration files
-
-Return ONLY a JSON array of source filenames (relative paths) that require tests.
-If no files need tests, return [].
-
-File list:
-{tree_str}
-"""
-            llm_audit = get_llm(CODEGEN, model=LLMModel.CLAUDE_SONNET_4_5)
-            audit_response = llm_audit.invoke([HumanMessage(content=audit_prompt)])
-            
-            content_str = str(audit_response.content).strip()
-            if "```json" in content_str:
-                content_str = content_str.split("```json")[1].split("```")[0].strip()
-            elif "```" in content_str:
-                content_str = content_str.split("```")[1].split("```")[0].strip()
+        # =================================================================
+        # STEP 5: Test Existence (rule-based — deterministic, no LLM call)
+        # =================================================================
+        logger.info("[Verification Step 5] Checking test file existence...")
+        
+        # Map source directories to their expected test directories
+        test_mapping = [
+            ("src/Core/Services", "tests/Core.Tests/Services"),
+            ("src/Infrastructure/Repositories", "tests/Infrastructure.Tests/Repositories"),
+            ("src/Worker/Jobs", "tests/Worker.Tests/Jobs"),
+        ]
+        
+        skip_files = {"IJob.cs", "Program.cs"}
+        
+        for src_rel, test_rel in test_mapping:
+            src_dir = output_path / src_rel
+            if not src_dir.exists():
+                continue
+            for cs_file in src_dir.glob("*.cs"):
+                # Skip interfaces and special files
+                if cs_file.name in skip_files:
+                    continue
+                if cs_file.name.startswith("I") and len(cs_file.name) > 1 and cs_file.name[1].isupper():
+                    continue
                 
-            logic_files = json.loads(content_str)
-            
-            # Python-side Verification of Test Existence
-            for source_file in logic_files:
-                # Convert src/Core/Services/XService.cs -> tests/Core/Services/XServiceTests.cs
-                # 1. Replace src/ with tests/
-                # 2. Append Tests.cs to filename stem
-                
-                try:
-                    src_path = Path(source_file)
-                    # Handle path structure safely
-                    parts = list(src_path.parts)
-                    if parts[0] == "src":
-                        parts[0] = "tests"
-                        
-                    test_filename = src_path.stem + "Tests" + src_path.suffix
-                    parts[-1] = test_filename
-                    
-                    expected_test_path = output_path.joinpath(*parts)
-                    
-                    if not expected_test_path.exists():
-                        logger.warning(f"[Verification Step 4] Missing Test: {expected_test_path.name}")
-                        failures.append(f"Missing Test: {expected_test_path.name} (for {source_file})")
-                        
-                except Exception as e:
-                    logger.warning(f"[Verification Step 4] Path check error for {source_file}: {e}")
-
-            if not any(f.startswith("Missing Test") for f in failures):
-                logger.info("[Verification Step 4] PASS — Test coverage (existence) looks good")
-                
-        except Exception as e:
-            logger.warning(f"[Verification Step 4] SKIP — Audit failed: {e}")
-            
-        if failures: return return_failures(failures)
-
-        # -----------------------------------------------------------------
-        # STEP 5: Functionality audit (Conditional)
-        # -----------------------------------------------------------------
-        # If verification has failed 3 times already, relax this check.
-        if current_attempts > 3:
-             logger.warning(f"[Verification Step 5] SKIP — Relaxing functionality audit after {current_attempts-1} failures.")
+                expected_test = output_path / test_rel / (cs_file.stem + "Tests.cs")
+                if not expected_test.exists():
+                    failures.append(
+                        f"Missing Test: {test_rel}/{cs_file.stem}Tests.cs (for {src_rel}/{cs_file.name})"
+                    )
+        
+        if failures:
+            logger.warning(f"[Verification Step 5] FAIL — {len(failures)} missing test files")
+            return return_failures(failures, step_name="Step 5: Test Existence")
         else:
-            logger.info("[Verification Step 5] Running functionality audit...")
-            artifacts_base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / state["project_id"]
-            catalog_path = artifacts_base / "system_context" / "functionality_catalog.md"
-            
-            if catalog_path.exists():
-                try:
-                    catalog_content = catalog_path.read_text(encoding="utf-8", errors="replace")
-                    f_ids = re.findall(r"(F\d{3})", catalog_content)
-                    unique_f_ids = sorted(list(set(f_ids)))
-                    
-                    if unique_f_ids:
-                        found_ids = set()
-                        cs_files = list(output_path.rglob("*.cs"))
-                        for cs_file in cs_files:
-                            if "bin" in cs_file.parts or "obj" in cs_file.parts: continue
-                            try:
-                                content = cs_file.read_text(encoding="utf-8", errors="replace")
-                                for fid in unique_f_ids:
-                                    if fid in content: found_ids.add(fid)
-                            except Exception: continue
-                        
-                        missing_fids = [fid for fid in unique_f_ids if fid not in found_ids]
-                        logger.info(f"[Verification Step 5] Coverage: {len(found_ids)}/{len(unique_f_ids)} functionalities tagged")
-                        
-                        if missing_fids:
-                            msg = f"Missing F-ID tags: {', '.join(missing_fids)}. You MUST implement these functionalities and tag them with comments (e.g. // {missing_fids[0]}) in the code."
-                            logger.warning(f"[Verification Step 5] FAIL — {msg}")
-                            failures.append(msg)
-                        else:
-                            logger.info("[Verification Step 5] PASS — All functionalities tagged")
-                except Exception as e:
-                    logger.warning(f"[Verification Step 5] Audit error: {e}")
-            else:
-                logger.info("[Verification Step 5] SKIP — No functionality catalog found")
-                
-            if failures: return return_failures(failures)
+            logger.info("[Verification Step 5] PASS — All logic files have tests")
 
-        # -----------------------------------------------------------------
-        # STEP 6: Solution builds successfully
-        # -----------------------------------------------------------------
+        # =================================================================
+        # STEP 6: Solution builds successfully (includes code analysis warnings)
+        # =================================================================
         logger.info("[Verification Step 6] Checking dotnet build...")
         sln_files = list(output_path.glob("*.sln"))
         if not sln_files:
@@ -617,17 +990,18 @@ File list:
                     logger.info("[Verification Step 6] PASS — Build succeeded")
                 else:
                     build_output = result.stdout + result.stderr
-                    error_lines = [l for l in build_output.splitlines() if ": error " in l]
+                    error_lines = [line for line in build_output.splitlines() if ": error " in line]
                     logger.warning(f"[Verification Step 6] FAIL — Build failed with {len(error_lines)} errors")
                     failures.append(f"Build FAILED with {len(error_lines)} errors. Run `run_dotnet_build()` to see details and fix.")
             except Exception as e:
                 logger.warning(f"[Verification Step 6] SKIP — Build check error: {e}")
                 
-        if failures: return return_failures(failures)
+        if failures:
+            return return_failures(failures, step_name="Step 6: Build")
 
-        # -----------------------------------------------------------------
+        # =================================================================
         # STEP 7: Tests pass AND >0 tests ran
-        # -----------------------------------------------------------------
+        # =================================================================
         logger.info("[Verification Step 7] Checking dotnet test...")
         if sln_files:
             try:
@@ -644,26 +1018,29 @@ File list:
                     total_match = re.search(r'Total tests: (\d+)', test_output)
                     passed_match = re.search(r'Passed: (\d+)', test_output)
                     executed_count = 0
-                    if total_match: executed_count = int(total_match.group(1))
-                    elif passed_match: executed_count = int(passed_match.group(1))
+                    if total_match:
+                        executed_count = int(total_match.group(1))
+                    elif passed_match:
+                        executed_count = int(passed_match.group(1))
                     
                     if executed_count > 0:
-                        logger.info(f"[Verification Step 7] PASS — {executed_count} tests execution passed")
+                        logger.info(f"[Verification Step 7] PASS — {executed_count} tests passed")
                     else:
                         logger.warning("[Verification Step 7] FAIL — Build passed but 0 tests were executed")
                         failures.append("Test suite passed but 0 tests were executed. You MUST write unit tests.")
                 else:
-                    logger.warning(f"[Verification Step 7] FAIL — Tests failed")
-                    failures.append(f"Tests FAILED. Run `run_dotnet_test()` to see details and fix.")
+                    logger.warning("[Verification Step 7] FAIL — Tests failed")
+                    failures.append("Tests FAILED. Run `run_dotnet_test()` to see details and fix.")
             except Exception as e:
                 logger.warning(f"[Verification Step 7] SKIP — Test check error: {e}")
         else:
             logger.info("[Verification Step 7] SKIP — No solution to test")
             
-        if failures: return return_failures(failures)
+        if failures:
+            return return_failures(failures, step_name="Step 7: Tests")
 
         logger.info("[Verification] ═══ ALL CHECKS PASSED ═══")
-        return {"messages": []}
+        return {"messages": [], **verification_update}
 
     def generate_process_flow(state: CodegenState) -> dict:
         """Generate final Process Flow by reading the actual generated code files."""
@@ -767,72 +1144,17 @@ File list:
             ]
         }
 
-    def cleanup_intermediary_files(state: CodegenState) -> dict:
-        """Remove intermediary tracking files from the output before archiving.
-        
-        Cleans up markdown status files, Dockerfiles, and deployment scripts
-        that the agent may have created. Keeps only README.md in the root.
-        """
-        output_path_str = state.get("codegen_output_path", "")
-        if not output_path_str:
-            return {"messages": []}
-        
-        output_path = Path(output_path_str)
-        if not output_path.exists():
-            return {"messages": []}
-        
-        # Patterns to remove from root directory
-        remove_patterns = [
-            "completion.md", "pending.md", "DEPLOYMENT_CHECKLIST.md",
-            "FILE_MANIFEST.md", "FINAL_SUMMARY.md", "migration_plan.json",
-            "Dockerfile", "dockerfile", "docker-compose.yml", "docker-compose.yaml",
-            ".dockerignore",
-        ]
-        # Also remove any deploy scripts
-        deploy_patterns = ["deploy.*", "Deploy.*"]
-        
-        removed = []
-        
-        # Remove specific files from root
-        for pattern in remove_patterns:
-            target = output_path / pattern
-            if target.exists():
-                target.unlink()
-                removed.append(pattern)
-                logger.info(f"[Cleanup] Removed: {pattern}")
-        
-        # Remove any root .md files except README.md and setup.md
-        for md_file in output_path.glob("*.md"):
-            if md_file.name.lower() not in ("readme.md", "setup.md", "process_flow.md"):
-                md_file.unlink()
-                removed.append(md_file.name)
-                logger.info(f"[Cleanup] Removed: {md_file.name}")
-        
-        # Remove deploy scripts from root
-        for dp in deploy_patterns:
-            for match in output_path.glob(dp):
-                match.unlink()
-                removed.append(match.name)
-                logger.info(f"[Cleanup] Removed: {match.name}")
-        
-        if removed:
-            logger.info(f"[Cleanup] Removed {len(removed)} intermediary files: {removed}")
-        else:
-            logger.info("[Cleanup] No intermediary files to remove")
-        
-        return {"messages": []}
-
-    def post_verification_routing(state: CodegenState) -> Literal["llm_call", "cleanup_intermediary_files"]:
+    def post_verification_routing(state: CodegenState) -> Literal["llm_call", "generate_process_flow"]:
         """Decide next step after verification."""
         last_message = state["messages"][-1]
         
-        # 1. If verification failed (CRITICAL), go back to work (Fix Code)
+        # If verification failed (CRITICAL), go back to work (Fix Code)
         if isinstance(last_message, HumanMessage) and "CRITICAL" in str(last_message.content):
             return "llm_call"
             
-        # 2. If Code Passed, clean up then proceed to Architect
-        logger.info("Code Verified. Proceeding to cleanup and then Architect Node.")
-        return "cleanup_intermediary_files"
+        # Code Passed — proceed to Architect node (cleanup is handled by service layer)
+        logger.info("Code Verified. Proceeding to Architect Node.")
+        return "generate_process_flow"
 
     # Build the graph
     builder = StateGraph(CodegenState)
@@ -840,10 +1162,9 @@ File list:
     builder.add_node("llm_call", llm_call)
     builder.add_node("tool_node", tool_node)
     builder.add_node("verify_completion", verify_completion)
-    builder.add_node("cleanup_intermediary_files", cleanup_intermediary_files)
     builder.add_node("generate_process_flow", generate_process_flow)
 
-    # START -> LLM (no planning node)
+    # START -> LLM
     builder.add_edge(START, "llm_call")
     
     builder.add_conditional_edges(
@@ -856,11 +1177,10 @@ File list:
     builder.add_conditional_edges(
         "verify_completion",
         post_verification_routing,
-        ["llm_call", "cleanup_intermediary_files"]
+        ["llm_call", "generate_process_flow"]
     )
     
-    # Cleanup -> Architect -> END
-    builder.add_edge("cleanup_intermediary_files", "generate_process_flow")
+    # Architect -> END
     builder.add_edge("generate_process_flow", END) 
     
     agent = builder.compile()

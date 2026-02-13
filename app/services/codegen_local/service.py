@@ -207,7 +207,47 @@ class CodegenLocalService:
                 
         except Exception as e:
             logger.warning(f"Empty directory cleanup error: {e}")
-    
+
+    def _cleanup_intermediary_files(self, output_path: Path) -> None:
+        """Remove intermediary tracking files the agent may have created.
+        
+        Removes markdown status files, Dockerfiles, and deployment scripts.
+        Keeps only README.md, setup.md, and process_flow.md.
+        
+        Args:
+            output_path: Path to the generated solution
+        """
+        remove_patterns = [
+            "completion.md", "pending.md", "DEPLOYMENT_CHECKLIST.md",
+            "FILE_MANIFEST.md", "FINAL_SUMMARY.md", "migration_plan.json",
+            "Dockerfile", "dockerfile", "docker-compose.yml", "docker-compose.yaml",
+            ".dockerignore",
+        ]
+        deploy_patterns = ["deploy.*", "Deploy.*"]
+        removed = []
+
+        try:
+            for pattern in remove_patterns:
+                target = output_path / pattern
+                if target.exists():
+                    target.unlink()
+                    removed.append(pattern)
+
+            for md_file in output_path.glob("*.md"):
+                if md_file.name.lower() not in ("readme.md", "setup.md", "process_flow.md"):
+                    md_file.unlink()
+                    removed.append(md_file.name)
+
+            for dp in deploy_patterns:
+                for match in output_path.glob(dp):
+                    match.unlink()
+                    removed.append(match.name)
+
+            if removed:
+                logger.info(f"Cleaned up {len(removed)} intermediary files: {removed}")
+        except Exception as e:
+            logger.warning(f"Intermediary file cleanup error: {e}")
+
     async def _ensure_prerequisites(self) -> None:
         """Ensure Phase A outputs and Analyst outputs exist.
         
@@ -436,9 +476,10 @@ class CodegenLocalService:
                     trace.set_error(e)
                     raise
             
-            # Clean up build artifacts before marking complete
+            # Clean up all artifacts before marking complete
+            self._cleanup_intermediary_files(output_path)
             self._cleanup_build_artifacts(output_path)
-            self._cleanup_empty_directories(output_path)
+            self._cleanup_empty_directories(output_path)  # Must be last
             
             end_time = datetime.utcnow().isoformat()
             self._update_status(run_id, "complete", phase="done", completed_at=end_time)

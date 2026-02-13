@@ -3,13 +3,14 @@
 Handles .NET solution initialization and file writing.
 """
 
+import re
 import uuid
-import shutil
-import os
 from pathlib import Path
 
 from langchain.tools import tool
 from loguru import logger
+
+from app.services.codegen_local.tools.source_file_tools import get_source_read_registry
 
 
 def create_solution_tools(project_id: str, output_path: str, source_path: str) -> list:
@@ -100,7 +101,9 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str) -
             core_guid = str(uuid.uuid4()).upper()
             infra_guid = str(uuid.uuid4()).upper()
             worker_guid = str(uuid.uuid4()).upper()
-            tests_guid = str(uuid.uuid4()).upper()
+            core_tests_guid = str(uuid.uuid4()).upper()
+            infra_tests_guid = str(uuid.uuid4()).upper()
+            worker_tests_guid = str(uuid.uuid4()).upper()
             
             # Create .sln file
             sln_content = f'''Microsoft Visual Studio Solution File, Format Version 12.00
@@ -113,7 +116,11 @@ Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "Infrastructure", "src\\In
 EndProject
 Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "Worker", "src\\Worker\\Worker.csproj", "{{{worker_guid}}}"
 EndProject
-Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "Tests", "tests\\Tests.csproj", "{{{tests_guid}}}"
+Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "Core.Tests", "tests\\Core.Tests\\Core.Tests.csproj", "{{{core_tests_guid}}}"
+EndProject
+Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "Infrastructure.Tests", "tests\\Infrastructure.Tests\\Infrastructure.Tests.csproj", "{{{infra_tests_guid}}}"
+EndProject
+Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "Worker.Tests", "tests\\Worker.Tests\\Worker.Tests.csproj", "{{{worker_tests_guid}}}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -133,22 +140,33 @@ Global
 		{{{worker_guid}}}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{{{worker_guid}}}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{{{worker_guid}}}.Release|Any CPU.Build.0 = Release|Any CPU
-		{{{tests_guid}}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{{{tests_guid}}}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{{{tests_guid}}}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{{{tests_guid}}}.Release|Any CPU.Build.0 = Release|Any CPU
+		{{{core_tests_guid}}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{{{core_tests_guid}}}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{{{core_tests_guid}}}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{{{core_tests_guid}}}.Release|Any CPU.Build.0 = Release|Any CPU
+		{{{infra_tests_guid}}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{{{infra_tests_guid}}}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{{{infra_tests_guid}}}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{{{infra_tests_guid}}}.Release|Any CPU.Build.0 = Release|Any CPU
+		{{{worker_tests_guid}}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{{{worker_tests_guid}}}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{{{worker_tests_guid}}}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{{{worker_tests_guid}}}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
 '''
             (output_dir / f"{solution_name}.sln").write_text(sln_content)
             
-            # Create Core.csproj
+            # Create Core.csproj with code analysis enabled
             core_csproj = '''<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>ConvertedBatch.Core</RootNamespace>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
   </PropertyGroup>
 </Project>
 '''
@@ -160,16 +178,22 @@ EndGlobal
             (core_path / "Entities").mkdir(exist_ok=True)
             (core_path / "Services").mkdir(exist_ok=True)
             (core_path / "Interfaces").mkdir(exist_ok=True)
+            (core_path / "Interfaces" / "Repositories").mkdir(parents=True, exist_ok=True)
+            (core_path / "Interfaces" / "Services").mkdir(parents=True, exist_ok=True)
             (core_path / "Enums").mkdir(exist_ok=True)
             (core_path / "Configuration").mkdir(exist_ok=True)
+            (core_path / "Exceptions").mkdir(exist_ok=True)
             
-            # Create Infrastructure.csproj
+            # Create Infrastructure.csproj with security analysis
             infra_csproj = '''<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>ConvertedBatch.Infrastructure</RootNamespace>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\\Core\\Core.csproj" />
@@ -191,13 +215,7 @@ EndGlobal
             (infra_path / "Storage").mkdir(exist_ok=True)
             (infra_path / "Repositories").mkdir(exist_ok=True)
             
-            # Create Core subdirectories (Interfaces/Repositories created by default under Interfaces, 
-            # but let's be explicit if needed, or just let the agent create them as needed.)
-            # Actually, let's just make sure the Interfaces folder exists (it is already there).
-            # We can add a specialized folder for repo interfaces if we want strict structure.
-            (core_path / "Interfaces" / "Repositories").mkdir(parents=True, exist_ok=True)
-            
-            # Create Worker.csproj
+            # Create Worker.csproj with analysis
             worker_csproj = '''<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -205,6 +223,9 @@ EndGlobal
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>ConvertedBatch.Worker</RootNamespace>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\\Core\\Core.csproj" />
@@ -260,37 +281,83 @@ return exitCode;
 '''
             (worker_path / "Program.cs").write_text(program_content)
             
-            # Create Tests.csproj
-            tests_csproj = '''<Project Sdk="Microsoft.NET.Sdk">
+            # Shared test package references
+            test_packages = '''  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.6.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.4" />
+    <PackageReference Include="Moq" Version="4.20.70" />
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+  </ItemGroup>'''
+
+            tests_path = output_dir / "tests"
+            tests_path.mkdir(parents=True, exist_ok=True)
+
+            # Core.Tests — unit tests for Core services
+            core_tests_csproj = f'''<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <RootNamespace>ConvertedBatch.Core.Tests</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\\src\\Core\\Core.csproj" />
-    <ProjectReference Include="..\\src\\Infrastructure\\Infrastructure.csproj" />
-    <ProjectReference Include="..\\src\\Worker\\Worker.csproj" />
+    <ProjectReference Include="..\\..\\src\\Core\\Core.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
-    <PackageReference Include="xunit" Version="2.6.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.4" />
-    <PackageReference Include="Moq" Version="4.20.70" />
-    <PackageReference Include="FluentAssertions" Version="6.12.0" />
-  </ItemGroup>
+{test_packages}
 </Project>
 '''
-            tests_path = output_dir / "tests"
-            tests_path.mkdir(parents=True, exist_ok=True)
-            (tests_path / "Tests.csproj").write_text(tests_csproj)
+            core_tests_path = tests_path / "Core.Tests"
+            core_tests_path.mkdir(parents=True, exist_ok=True)
+            (core_tests_path / "Core.Tests.csproj").write_text(core_tests_csproj)
+            (core_tests_path / "Services").mkdir(exist_ok=True)
 
-            # Create Test subdirectories
-            (tests_path / "Core" / "Services").mkdir(parents=True, exist_ok=True)
-            (tests_path / "Infrastructure" / "Repositories").mkdir(parents=True, exist_ok=True)
-            (tests_path / "Worker" / "Jobs").mkdir(parents=True, exist_ok=True)
+            # Infrastructure.Tests — repository and data tests
+            infra_tests_csproj = f'''<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>ConvertedBatch.Infrastructure.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\\..\\src\\Core\\Core.csproj" />
+    <ProjectReference Include="..\\..\\src\\Infrastructure\\Infrastructure.csproj" />
+  </ItemGroup>
+{test_packages}
+</Project>
+'''
+            infra_tests_path = tests_path / "Infrastructure.Tests"
+            infra_tests_path.mkdir(parents=True, exist_ok=True)
+            (infra_tests_path / "Infrastructure.Tests.csproj").write_text(infra_tests_csproj)
+            (infra_tests_path / "Repositories").mkdir(exist_ok=True)
+
+            # Worker.Tests — job integration tests
+            worker_tests_csproj = f'''<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>ConvertedBatch.Worker.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\\..\\src\\Core\\Core.csproj" />
+    <ProjectReference Include="..\\..\\src\\Infrastructure\\Infrastructure.csproj" />
+    <ProjectReference Include="..\\..\\src\\Worker\\Worker.csproj" />
+  </ItemGroup>
+{test_packages}
+</Project>
+'''
+            worker_tests_path = tests_path / "Worker.Tests"
+            worker_tests_path.mkdir(parents=True, exist_ok=True)
+            (worker_tests_path / "Worker.Tests.csproj").write_text(worker_tests_csproj)
+            (worker_tests_path / "Jobs").mkdir(exist_ok=True)
             
             # Create scripts directories
             scripts_path = output_dir / "scripts" / "jobs"
@@ -301,19 +368,87 @@ return exitCode;
             (output_dir / "data" / "input").mkdir(parents=True, exist_ok=True)
             (output_dir / "data" / "output").mkdir(parents=True, exist_ok=True)
             
+            # Create .editorconfig for consistent code style enforcement
+            editorconfig = '''# EditorConfig — enforces consistent code style across all projects
+root = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+# Naming rules
+dotnet_naming_rule.private_fields_should_be_camel_case.severity = warning
+dotnet_naming_rule.private_fields_should_be_camel_case.symbols = private_fields
+dotnet_naming_rule.private_fields_should_be_camel_case.style = camel_case_underscore
+dotnet_naming_symbol.private_fields.applicable_kinds = field
+dotnet_naming_symbol.private_fields.applicable_accessibilities = private
+dotnet_naming_style.camel_case_underscore.required_prefix = _
+dotnet_naming_style.camel_case_underscore.capitalization = camel_case
+
+# Code quality
+dotnet_diagnostic.CA1062.severity = warning
+dotnet_diagnostic.CA2100.severity = error
+dotnet_diagnostic.CA2211.severity = warning
+dotnet_diagnostic.CA1822.severity = suggestion
+
+# Security: SQL injection prevention
+dotnet_diagnostic.CA2100.severity = error
+
+# Async best practices
+dotnet_diagnostic.CA2007.severity = suggestion
+dotnet_diagnostic.CA1849.severity = warning
+
+# Dispose pattern
+dotnet_diagnostic.CA1816.severity = warning
+dotnet_diagnostic.CA2000.severity = warning
+'''
+            (output_dir / ".editorconfig").write_text(editorconfig)
+            
+            # Create Directory.Build.props for solution-wide settings
+            build_props = '''<Project>
+  <PropertyGroup>
+    <!-- Solution-wide code analysis -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- Nullable reference types enabled everywhere -->
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>
+'''
+            (output_dir / "Directory.Build.props").write_text(build_props)
+            
+            # Create .gitignore
+            gitignore = '''bin/
+obj/
+*.user
+*.suo
+.vs/
+*.DotSettings.user
+'''
+            (output_dir / ".gitignore").write_text(gitignore)
+            
             logger.info(f"Initialized .NET solution: {solution_name}")
             
             return f"""Successfully initialized solution '{solution_name}' with structure:
 {solution_name}.sln
+.editorconfig       (code style enforcement)
+Directory.Build.props (solution-wide analyzers)
 src/
-  Core/ (Entities, Services, Interfaces, Enums)
-  Infrastructure/ (Data, Storage)
+  Core/ (Entities, Services, Interfaces, Interfaces/Repositories, Interfaces/Services, Enums, Configuration, Exceptions)
+  Infrastructure/ (Data, Storage, Repositories)
   Worker/Jobs/
 tests/
-scripts/jobs/
+  Core.Tests/Services/              (service unit tests)
+  Infrastructure.Tests/Repositories/ (repository tests)
+  Worker.Tests/Jobs/                (job tests)
+scripts/ (jobs, common)
 data/ (input, output)
 
-You can now write code files using write_code_file()."""
+Code analysis is enabled — the build will flag code quality and security issues.
+You can now write code files using write_code_file(). Use read_generated_file() to inspect your own output."""
             
         except Exception as e:
             logger.error(f"initialize_solution error: {e}")
@@ -381,6 +516,26 @@ You can now write code files using write_code_file()."""
             if not target.parent.exists():
                 return f"Error: Directory '{target.parent.name}' does not exist. You must use the existing folder structure."
             
+            # === PROVENANCE LOGGING (observability, not a gate) ===
+            # Log source grounding info for Service/Job files for post-run analysis.
+            is_service = "/Services/" in relative_path and ext == ".cs"
+            is_job = "/Jobs/" in relative_path and ext == ".cs" and target.name != "IJob.cs"
+            
+            if is_service or is_job:
+                source_tag = re.search(r'//\s*Source:\s*([\w.\-]+)', content)
+                if source_tag:
+                    source_name = source_tag.group(1).strip()
+                    registry = get_source_read_registry(project_id)
+                    source_key = source_name.lower()
+                    if source_key in registry:
+                        ri = registry[source_key]
+                        cov = (ri['lines_covered'] / max(ri['total_lines'], 1)) * 100
+                        logger.info(f"[Provenance] {target.name} ← {source_name} ({cov:.0f}% read)")
+                    else:
+                        logger.warning(f"[Provenance] {target.name} tags Source: {source_name} but it was never read")
+                else:
+                    logger.warning(f"[Provenance] {target.name} has no // Source: tag")
+            
             # Write file
             target.write_text(content, encoding="utf-8")
             
@@ -390,28 +545,6 @@ You can now write code files using write_code_file()."""
         except Exception as e:
             logger.error(f"write_code_file error: {e}")
             return f"Error writing file: {e}"
-    
-    @tool("create_directory")
-    def create_directory(relative_path: str) -> str:
-        """Create a directory in the generated solution.
-        
-        Args:
-            relative_path: Path relative to local-migration/
-            
-        Returns:
-            Success or error message
-        """
-        try:
-            target = (output_dir / relative_path).resolve()
-            if not str(target).startswith(str(output_dir)):
-                return f"Error: Path '{relative_path}' is outside output directory"
-            
-            target.mkdir(parents=True, exist_ok=True)
-            return f"Created directory: {relative_path}"
-            
-        except Exception as e:
-            logger.error(f"create_directory error: {e}")
-            return f"Error creating directory: {e}"
     
     @tool("list_generated_files")
     def list_generated_files() -> str:
@@ -461,6 +594,48 @@ You can now write code files using write_code_file()."""
             logger.error(f"list_generated_files error: {e}")
             return f"Error listing files: {e}"
 
+    @tool("read_generated_file")
+    def read_generated_file(relative_path: str, start_line: int = 1, end_line: int = 100) -> str:
+        """Read a file from the generated solution. Use this to inspect your own output.
+
+        Args:
+            relative_path: Path relative to local-migration/ (e.g., "src/Core/Services/FsmainService.cs")
+            start_line: First line to read (1-indexed, default 1)
+            end_line: Last line to read (1-indexed, default 100)
+
+        Returns:
+            The requested lines with line numbers, or error message
+        """
+        try:
+            target = (output_dir / relative_path).resolve()
+            if not str(target).startswith(str(output_dir)):
+                return f"Error: Path '{relative_path}' is outside output directory"
+
+            if not target.exists():
+                return f"Error: File '{relative_path}' does not exist. Use list_generated_files() to see available files."
+
+            if not target.is_file():
+                return f"Error: Path '{relative_path}' is not a file"
+
+            lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+            total_lines = len(lines)
+
+            if start_line < 1:
+                start_line = 1
+            if end_line > total_lines:
+                end_line = total_lines
+            if start_line > end_line:
+                return f"Error: Invalid line range ({start_line}-{end_line})"
+
+            selected = lines[start_line - 1:end_line]
+            result_lines = [f"{i}: {line}" for i, line in enumerate(selected, start=start_line)]
+
+            return f"File: {relative_path} (lines {start_line}-{end_line} of {total_lines})\n" + "\n".join(result_lines)
+
+        except Exception as e:
+            logger.error(f"read_generated_file error: {e}")
+            return f"Error reading file: {e}"
+
     @tool("remove_file")
     def remove_file(relative_path: str) -> str:
         """Remove a specific file from the solution.
@@ -490,57 +665,11 @@ You can now write code files using write_code_file()."""
             logger.error(f"remove_file error: {e}")
             return f"Error removing file: {e}"
 
-    @tool("remove_directory")
-    def remove_directory(relative_path: str, recursive: bool = False) -> str:
-        """Remove a directory from the solution.
-        
-        Args:
-            relative_path: Path relative to local-migration/
-            recursive: If True, remove directory and all contents. If False, fails if not empty.
-            
-        Returns:
-            Success or error message
-        """
-        import stat
-        
-        def remove_readonly(func, path, _):
-            """Clear the readonly bit and reattempt the removal"""
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-            
-        try:
-            target = (output_dir / relative_path).resolve()
-            if not str(target).startswith(str(output_dir)):
-                return f"Error: Path '{relative_path}' is outside output directory"
-            
-            if not target.exists():
-                return f"Error: Directory '{relative_path}' does not exist"
-            
-            if not target.is_dir():
-                return f"Error: Path '{relative_path}' is not a directory"
-            
-            if recursive:
-                # Use onerror to handle read-only files (common on Windows)
-                shutil.rmtree(target, onerror=remove_readonly)
-                logger.info(f"Removed directory (recursive): {relative_path}")
-                return f"Successfully removed directory (recursive): {relative_path}"
-            else:
-                try:
-                    target.rmdir()
-                    logger.info(f"Removed directory: {relative_path}")
-                    return f"Successfully removed directory: {relative_path}"
-                except OSError:
-                    return f"Error: Directory '{relative_path}' is not empty. Set recursive=True to force."
-            
-        except Exception as e:
-            logger.error(f"remove_directory error: {e}")
-            return f"Error removing directory: {e}"
-    
     return [
         initialize_solution,
         write_code_file,
-        # create_directory, # Disabled to enforce structure
         list_generated_files,
+        read_generated_file,
         remove_file,
         list_batch_components,
     ]

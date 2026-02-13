@@ -3,7 +3,9 @@
 Wraps the core file_tools with project_id binding to avoid ToolRuntime context issues.
 """
 
+import json
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from langchain.tools import tool
@@ -16,6 +18,71 @@ def _get_project_path(project_id: str) -> Path:
     """Get the absolute path to a project's storage directory."""
     base = Path(settings.PROJECT_STORAGE_PATH).resolve()
     return base / project_id
+
+
+def _get_read_registry_path(project_id: str) -> Path:
+    """Get the path to the source read registry (tracks which files the agent has actually read)."""
+    base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve()
+    return base / project_id / "code-migration" / "source_read_registry.json"
+
+
+def _register_source_read(project_id: str, filename: str, lines_read: tuple[int, int], total_lines: int):
+    """Record that the agent read a source file. Used by write_code_file to enforce grounding."""
+    registry_path = _get_read_registry_path(project_id)
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    registry = {}
+    if registry_path.exists():
+        try:
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        except Exception:
+            registry = {}
+    
+    key = filename.lower()
+    now = datetime.utcnow().isoformat()
+    
+    if key not in registry:
+        registry[key] = {
+            "filename": filename,
+            "reads": [],
+            "total_lines": total_lines,
+            "lines_covered": 0,
+        }
+    
+    # Track this read
+    registry[key]["reads"].append({
+        "start": lines_read[0],
+        "end": lines_read[1],
+        "timestamp": now,
+    })
+    
+    # Calculate total unique lines covered (merge ranges)
+    all_ranges = [(r["start"], r["end"]) for r in registry[key]["reads"]]
+    all_ranges.sort()
+    merged = []
+    for start, end in all_ranges:
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    total_covered = sum(e - s + 1 for s, e in merged)
+    registry[key]["lines_covered"] = total_covered
+    
+    try:
+        registry_path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to update read registry: {e}")
+
+
+def get_source_read_registry(project_id: str) -> dict:
+    """Read the source read registry. Used by write_code_file for enforcement."""
+    registry_path = _get_read_registry_path(project_id)
+    if registry_path.exists():
+        try:
+            return json.loads(registry_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
 
 
 
@@ -93,6 +160,9 @@ def create_source_file_tools(project_id: str) -> list:
                 f"{i}: {line}" 
                 for i, line in enumerate(selected, start=start_line)
             ]
+            
+            # Register this read for provenance tracking
+            _register_source_read(project_id, target.name, (start_line, end_line), total_lines)
             
             return f"File: {rel_path} (lines {start_line}-{end_line} of {total_lines})\n" + "\n".join(result_lines)
             

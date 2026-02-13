@@ -66,8 +66,8 @@ class Settings(BaseSettings):
 
     # Code Generation settings
     CODEGEN_ENABLE_SUMMARIZATION: bool = Field(
-        default=False,
-        description="Enable context summarization for codegen agent (experimental - may affect output quality)"
+        default=True,
+        description="Enable context summarization for codegen agent to prevent context overflow on large projects"
     )
 
     # MLflow

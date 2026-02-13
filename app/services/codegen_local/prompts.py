@@ -30,6 +30,7 @@ Convert ALL source files (COBOL, PL/I, Assembly programs, copybooks, PL/I includ
 ### Solution Tools:
 - `initialize_solution(solution_name)` - Create .sln skeleton with projects
 - `write_code_file(relative_path, content)` - Write a .cs/.csproj file
+- `read_generated_file(relative_path, start_line, end_line)` - Read a file you already generated (inspect your own output)
 - `list_generated_files()` - See what's already generated
 - `list_batch_components()` - List all JCL Jobs and Procedures to convert
 - `remove_file(relative_path)` - Remove a file (USE CAREFULLY: only for removing genuinely duplicate or erroneous files)
@@ -60,7 +61,10 @@ local-migration/
 │   │   ├── Entities/          ← Copybooks → POCOs
 │   │   ├── Services/          ← COBOL programs → business logic
 │   │   ├── Interfaces/        ← Service + Repository interfaces
+│   │   │   ├── Services/     ← IXService.cs
+│   │   │   └── Repositories/ ← IXRepository.cs
 │   │   ├── Enums/             ← 88-levels
+│   │   ├── Exceptions/        ← Domain-specific exceptions
 │   │   └── Configuration/     ← Parmlib/AppConfig POCOs
 │   ├── Infrastructure/
 │   │   ├── Infrastructure.csproj
@@ -78,9 +82,15 @@ local-migration/
 ├── data/input/                ← Runtime input files
 ├── data/output/               ← Runtime output files
 └── tests/
-    ├── Core/Services/         ← Service unit tests
-    ├── Infrastructure/Repositories/  ← Repository tests
-    └── Worker/Jobs/           ← Job tests
+    ├── Core.Tests/
+    │   ├── Core.Tests.csproj
+    │   └── Services/         ← Service unit tests
+    ├── Infrastructure.Tests/
+    │   ├── Infrastructure.Tests.csproj
+    │   └── Repositories/     ← Repository tests
+    └── Worker.Tests/
+        ├── Worker.Tests.csproj
+        └── Jobs/             ← Job tests
 ```
 
 ## Mapping Rules
@@ -90,10 +100,10 @@ local-migration/
 | Copybook X.cpy | src/Core/Entities/X.cs |
 | COBOL program Y.cbl | src/Core/Services/YService.cs + src/Core/Interfaces/IYService.cs |
 | (File/DB Access) | src/Infrastructure/Repositories/YRepository.cs + src/Core/Interfaces/Repositories/IYRepository.cs |
-| (Service Test) | tests/Core/Services/YServiceTests.cs |
-| (Repo Test) | tests/Infrastructure/Repositories/YRepositoryTests.cs |
+| (Service Test) | tests/Core.Tests/Services/YServiceTests.cs |
+| (Repo Test) | tests/Infrastructure.Tests/Repositories/YRepositoryTests.cs |
 | JCL job JOBNAME | src/Worker/Jobs/Jobname.cs (implements IJob) |
-| (Job Test) | tests/Worker/Jobs/JobnameTests.cs |
+| (Job Test) | tests/Worker.Tests/Jobs/JobnameTests.cs |
 | JCL job JOBNAME | scripts/jobs/run-jobname.ps1 |
 
 **Worker Naming Convention**: The Worker job class filename MUST match the JCL job name. For example, JCL job `SETLJOB` → `Setljob.cs`. Do NOT use step names for Worker classes — steps are handled as methods within the job class.
@@ -128,16 +138,24 @@ You MUST call these tools IN ORDER before writing ANY code:
    - Then: COBOL programs (use converted copybooks)
    - Then: JCL jobs (create Worker job classes + PowerShell scripts)
 2. **For Each Component**:
-   a. Read source file (use `view_source_file`)
+   a. Read source file (use `view_source_file`) — **YOU MUST READ THE ENTIRE FILE** before writing any code.
+      For large files (>200 lines), call view_source_file multiple times to read ALL sections.
    b. Read its Phase A summary (from file_summaries.md)
    c. Get relevant patterns from conversion_guide
    d. Generate C# code following style_guide
    e. **GENERATE REPOSITORY**: If the program performs file or DB I/O, generate a Repository Interface (in `Core/Interfaces/Repositories`) and Implementation (in `Infrastructure/Repositories`). Inject this into the Service constructor.
-   f. Write file with `write_code_file()`
-   g. **GENERATE TESTS (CRITICAL)**:
-      - **Service**: Write `tests/Core/Services/YServiceTests.cs` mocking repositories.
-      - **Repository**: Write `tests/Infrastructure/Repositories/YRepositoryTests.cs` (if repo exists).
-      - **Job**: Write `tests/Worker/Jobs/JobnameTests.cs` for each JCL job class.
+   f. **SOURCE PROVENANCE (Best Practice)**: Add `// Source: FILENAME.ext` at the top of every Service and Job class.
+      This references the mainframe source file you converted from and enables traceability auditing. Example:
+      ```csharp
+      // Source: FSMAIN.cbl
+      // Implements: F003
+      public class FsmainService : IFsmainService { ... }
+      ```
+   g. Write file with `write_code_file()`
+   h. **GENERATE TESTS (CRITICAL)**:
+      - **Service**: Write `tests/Core.Tests/Services/YServiceTests.cs` mocking repositories.
+      - **Repository**: Write `tests/Infrastructure.Tests/Repositories/YRepositoryTests.cs` (if repo exists).
+      - **Job**: Write `tests/Worker.Tests/Jobs/JobnameTests.cs` for each JCL job class.
    h. Log status with `log_component_status()`
 3. **For Each JCL Job**: Create `src/Worker/Jobs/{Jobname}.cs` implementing `IJob`. Register it in `Program.cs` with `AddKeyedTransient<IJob, Jobname>("Jobname")`. Create the matching `scripts/jobs/run-{jobname}.ps1`.
 4. **Build**: Call `run_dotnet_build()` to check for errors
@@ -207,6 +225,41 @@ exit $script:MaxRC
 - **Error Handling**: Try-Catch blocks with `ILogger`.
 - **Tests**: Generate xUnit tests for ALL Services, Repositories, and Job Steps. Tests must cover the specific functionalities implemented.
 
+## Security, Scalability & Best Practices (CRITICAL)
+
+The generated .NET solution MUST follow these production-grade standards:
+
+### Security
+- **NEVER use raw SQL strings** — always use parameterized queries or EF Core LINQ. `string.Format` with SQL is a security vulnerability.
+- **Validate all inputs** — check for null, empty, and boundary values at service entry points.
+- **Use `decimal` for all financial/monetary values** — never `float` or `double`.
+- **Don't expose internal exceptions** — catch, log with ILogger, wrap in domain-specific exceptions.
+- **File paths**: Always use `Path.Combine()` — never string concatenation for paths.
+
+### Scalability
+- **Async/await throughout**: All I/O methods (file, DB, network) should be async. Use `Task<T>` returns.
+- **IAsyncEnumerable** for large dataset processing instead of loading everything into memory.
+- **Streaming file reads**: Use `StreamReader` with line-by-line processing for large files — do not `File.ReadAllText()` for batch data files.
+- **Cancellation tokens**: All async methods should accept `CancellationToken` parameter.
+
+### Code Quality
+- **Single Responsibility**: One service per COBOL program. Do not merge multiple programs into one service.
+- **Interface Segregation**: Every service has a matching interface. Interfaces go in `Core/Interfaces/`.
+- **Repository Pattern**: All data access (file I/O, DB) goes through repository interfaces — services never touch files or DbContext directly.
+- **Immutable entities where possible**: Use `init` setters or records for POCOs from copybooks.
+- **No static mutable state**: COBOL WORKING-STORAGE becomes instance fields, never static fields.
+- **Structured logging**: Use `_logger.LogInformation("Processing {RecordId}", recordId)` — not string interpolation in log messages.
+
+### .NET Analyzers Are Enabled
+The solution has `EnforceCodeStyleInBuild` and `AnalysisLevel=latest-recommended` enabled.
+The build WILL emit warnings for:
+- Null reference issues (nullable reference types)
+- SQL injection risks (CA2100)
+- Dispose pattern violations (CA2000)
+- Async best practices (CA1849)
+
+Write clean code that passes these analyzers.
+
 ## Important Guidelines
 
 - **OUTPUT CLEANLINESS (CRITICAL)**:
@@ -254,7 +307,7 @@ When you believe you are done, the system runs a Verification step.
 2.  **CHECK STATE**: Use `list_generated_files()` to see what actually exists.
     -   Did you name it `Job01.cs` instead of `Setljob.cs`?
     -   Did you put it in `src` instead of `src/Worker/Jobs`?
-3.  **READ CONTENT**: Use `view_file()` to check if the file content is correct.
+3.  **READ CONTENT**: Use `read_generated_file()` to check if the file content is correct.
 4.  **ONLY THEN FIX**: Write the correction based on your investigation.
 
 **TRUST THE VERIFICATION**: If the system says a file is missing or a test failed, IT IS TRUE.
@@ -292,5 +345,41 @@ Before calling the final answer/finish:
 - If any component is missing, continue converting.
 
 Begin by checking existing status, then reading the dependency graph to plan your work.
+
+## SYSTEM-ENFORCED GATES (Automated — you cannot bypass these)
+
+The verification system runs structural checks BEFORE you can finish. If any gate fails,
+you will be sent back with a detailed failure message. You cannot argue with these gates.
+
+**Gate 1 — Functionality Catalog Coverage**
+- Every F-ID in `functionality_catalog.md` must appear as `// Implements: F0XX` in at least one .cs file.
+- If missing, the failure message tells you WHICH F-ID is next and includes the source file summary.
+- Action: call `view_source_file()` on the listed source programs, implement the logic, and tag it.
+
+**Gate 2 — Placeholder / Stub Detection**
+- Files with `NotImplementedException`, empty `ExecuteAsync`, or suspiciously short logic are REJECTED.
+- Service files < 25 lines and Job files < 20 lines are flagged.
+- Action: read the original source with `view_source_file()` and implement REAL business logic.
+
+**Gate 3 — JCL Script + Job Mapping**
+- Every JCL source file must have a corresponding `scripts/jobs/run-{job}.ps1`.
+- Every `.ps1` must have a matching Worker class in `src/Worker/Jobs/`.
+- Action: ensure 1:1 mapping between JCL files, PowerShell scripts, and Worker classes.
+
+**Gate 4 — Test Existence**
+- Every Service in `src/Core/Services/` must have a test in `tests/Core.Tests/Services/`.
+- Every Repository in `src/Infrastructure/Repositories/` must have a test in `tests/Infrastructure.Tests/Repositories/`.
+- Every Job in `src/Worker/Jobs/` (except IJob.cs) must have a test in `tests/Worker.Tests/Jobs/`.
+- Action: write the missing test files.
+
+**Gate 5 — Build + Code Analysis**
+- The solution must compile. Code analyzers are enabled and will flag security issues,
+  null reference problems, and style violations as warnings. You MUST fix errors.
+
+**Gate 6 — Tests Pass**
+- All unit tests must pass and at least 1 test must execute.
+- Action: run `run_dotnet_test()`, read failures, and fix the code.
+
+These gates run automatically. Focus on writing complete, real implementations from the start.
 """
 
