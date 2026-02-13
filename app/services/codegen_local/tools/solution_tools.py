@@ -351,9 +351,32 @@ You can now write code files using write_code_file()."""
                         f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}")
             
             # Block arbitrary markdown files (prevent pollution)
-            if ext == ".md" and target.name not in ("README.md", "setup.md"):
-                return "Error: Only README.md and setup.md are allowed. No other markdown files."
+            if ext == ".md" and target.name.lower() not in ("readme.md", "setup.md", "process_flow.md"):
+                return (f"Error: Content Policy Violation. Writing '{target.name}' is FORBIDDEN.\n"
+                        "Allowed Markdown: 'README.md', 'setup.md', 'process_flow.md'.\n"
+                        "DO NOT write intermediate plans, thoughts, or status files.")
             
+            # Block intermediate PowerShell scripts (prevent ad-hoc fix scripts)
+            if ext == ".ps1":
+                parent_dir = target.parent
+                # Check if path ends with scripts/jobs or scripts/common
+                # Robust check across OS
+                is_jobs_dir = parent_dir.name == "jobs" and parent_dir.parent.name == "scripts"
+                is_common_dir = parent_dir.name == "common" and parent_dir.parent.name == "scripts"
+                
+                if is_jobs_dir:
+                    if not target.name.startswith("run-"):
+                        return (f"Error: Content Policy Violation. Writing '{target.name}' to 'scripts/jobs/' is FORBIDDEN.\n"
+                                "Requirement: Scripts in 'scripts/jobs/' MUST start with 'run-' (e.g. 'run-job1.ps1').")
+                elif is_common_dir:
+                    pass # Allow common scripts
+                else:
+                    return (f"Error: Content Policy Violation. Writing '{target.name}' to '{parent_dir.name}' is FORBIDDEN.\n"
+                            "Allowed Locations:\n"
+                            "1. 'scripts/jobs/' (MUST start with 'run-')\n"
+                            "2. 'scripts/common/' (Shared logic)\n"
+                            "ALL other .ps1 files (e.g. ad-hoc inputs/tests) are PROHIBITED.")
+
             # Enforce directory structure (Agent cannot create new folders)
             if not target.parent.exists():
                 return f"Error: Directory '{target.parent.name}' does not exist. You must use the existing folder structure."

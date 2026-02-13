@@ -98,6 +98,11 @@ local-migration/
 
 **Worker Naming Convention**: The Worker job class filename MUST match the JCL job name. For example, JCL job `SETLJOB` → `Setljob.cs`. Do NOT use step names for Worker classes — steps are handled as methods within the job class.
 
+**Service Mapping**: Services (`src/Core/Services`) correspond to **COBOL/PLI PROGRAMS**, not JCL Jobs.
+- Do NOT create `JobnameService.cs` unless there is actually a program named `JOBNAME.cbl`.
+- The Worker Job orchestrates steps; the Steps call the Services (for `EXEC PGM=...`).
+- If a Job only runs system utilities (e.g., IDCAMS, SORT), it might not use a custom Service at all.
+
 **Non-COBOL Source Mappings** (follow same patterns as COBOL):
 | Source | Target Path |
 |--------|-------------|
@@ -206,8 +211,14 @@ exit $script:MaxRC
 
 - **OUTPUT CLEANLINESS (CRITICAL)**:
   - **Direct Write Only**: Write files directly to their final destination (e.g., `src/Core/Services/XService.cs`).
-  - **Allowed Documentation**: You may ONLY write `README.md` and `setup.md`. 
-  - **FORBIDDEN Files**: Do NOT create `Dockerfile`, `docker-compose.yml`, `deploy.ps1`, `deploy.sh`, `DEPLOYMENT_CHECKLIST.md`, `FILE_MANIFEST.md`, `FINAL_SUMMARY.md`, `temp.txt`, `output/`, or ANY other status/deployment/infrastructure/DevOps files. Focus ONLY on application code, tests, and PowerShell job scripts.
+  - **Allowed Files**:
+    - **C# Code**: `.cs`, `.csproj`, `.sln`
+    - **PowerShell**: 
+      - `scripts/jobs/run-{jobname}.ps1` (ONLY job runners)
+      - `scripts/common/*.ps1` (Shared logic only)
+      - **ALL OTHER .ps1 files are FORBIDDEN.**
+    - **Documentation**: `README.md`, `setup.md`, `process_flow.md` (ONLY)
+  - **FORBIDDEN Files**: Do NOT create `Dockerfile`, `docker-compose.yml`, `deploy.ps1`, `deploy.sh`, `fix_tests.ps1`, `run_all.ps1` (unless in common), `plan.md`, `thoughts.md`, `output/`, or ANY other status/deployment/infrastructure/DevOps files.
   - **One & Done**: Do not write a file to `output/` and then move it. Write it to `src/` immediately.
 
 - Write files IMMEDIATELY after generating - don't hold in memory
