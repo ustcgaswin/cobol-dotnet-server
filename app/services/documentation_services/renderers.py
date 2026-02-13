@@ -1305,49 +1305,148 @@ class TechnicalSpecBuilder(BaseBuilder):
 
     def _batch(self):
         self.h1("3. Batch Execution Specification")
+        
+        if not self.jcl_files:
+            self.para("No JCL/Batch Job artifacts identified in current scope.")
+            return
+        
         self.h2("3.1 Job Definitions")
+
         for jcl in self.jcl_files:
+            # 3.1 Job Identification
             self.h3(f"Job: {jcl.filename}")
+            
+            # Overview & Purpose
+            self.para(f"<b>Business Purpose:</b> {jcl.business_overview.get('purpose', 'N/A')}")
+            
             header = jcl.technical_analysis.get('job_header', {})
-            self.para(f"Class: {header.get('class', 'N/A')} | Owner: {header.get('owner', 'N/A')}")
+            self.para(f"<b>Technical Context:</b> Class {header.get('class', 'N/A')} | Owner: {header.get('owner', 'N/A')} | Region: {header.get('region_limit', 'Default')}")
+
+            # 3.1.1 Symbolic Parameters (JCL Variables)
+            sym_params = jcl.technical_analysis.get('symbolic_parameters', [])
+            if sym_params:
+                self.h4("Symbolic Parameters")
+                rows = [[p.get('name'), p.get('default_value'), p.get('description')] for p in sym_params if isinstance(p, dict)]
+                self.table(["Parameter", "Default Value", "Functional Description"], rows, [40*mm, 50*mm, 80*mm])
+
+            # 3.1.2 Step-wise Execution & I/O Mapping
             steps = jcl.technical_analysis.get('steps', [])
             if steps:
-                rows = [[str(s.get('step_name')), str(s.get('program')), str(s.get('description'))] for s in steps]
-                self.table(["Step", "Program", "Description"], rows, [30*mm, 40*mm, 100*mm])
+                self.h3("Step Execution Logic & I/O Mapping")
+                for step in steps:
+                    s_name = step.get('step_name', 'STEP')
+                    prog = step.get('program', 'UNKNOWN')
+                    self.para(f"<b>{s_name}</b> (Program: <b>{prog}</b>)")
+                    self.para(f"<b><i>Action:</i></b> {step.get('description', 'No description.')}")
+                    
+                    if step.get('condition_logic'):
+                        self.para(f"<b><i>Condition:</i></b>. {step.get('condition_logic')}")
 
-        self.h2("3.2 JCL Procedures")
+                    # THE GAP FILLER: Step-Level I/O Table
+                    io_list = step.get('io_mappings', [])
+                    if io_list:
+                        io_rows = []
+                        for io in io_list:
+                            dsn = io.get('dataset', 'Temporary / Inline')
+                            # Shorten long DSNs for table fit
+                            safe_dsn = dsn[:45] + "..." if len(dsn) > 45 else dsn
+                            io_rows.append([
+                                io.get('dd_name', 'SYSIN'),
+                                safe_dsn,
+                                io.get('disposition', 'SHR'),
+                                io.get('purpose', 'Work/Data')
+                            ])
+                        self.table(["DD Name", "Physical Dataset / Resource", "Disp", "Role"], io_rows, [30*mm, 80*mm, 20*mm, 40*mm])
+
+                    # Control Card Logic (e.g., SORT/IDCAMS instructions)
+                    if step.get('control_card_summary'):
+                        self.para(f"<b>Utility Logic:</b> {step.get('control_card_summary')}")
+                    
+                    self.elements.append(Spacer(1, 2*mm))
+
+            # 3.1.3 Restart & Recovery Instructions
+            recovery = jcl.technical_analysis.get('restart_and_recovery', {})
+            if recovery:
+                self.h3("Restart & Recovery")
+                self.para(f"<b>Restart Point:</b> {recovery.get('restart_point', 'Standard')}")
+                if recovery.get('cleanup_requirements'):
+                    self.para(f"<b>Cleanup Needed:</b> {recovery.get('cleanup_requirements')}")
+                checkpoints = recovery.get('critical_checkpoints', [])
+                if checkpoints:
+                    self.para(f"<b>Checkpoints:</b> {', '.join(checkpoints)}")
+
+            self.elements.append(Spacer(1, 5*mm))
+
+        # 3.2 JCL Procedures (PROCs)
+        self.h2("3.2 JCL Procedures (PROCs)")
         procs = [s for s in self.summaries if s.file_type == 'PROC']
         if procs:
-            rows = [[p.filename, p.business_overview.get('purpose', '')] for p in procs]
-            self.table(["Procedure", "Purpose"], rows, [60*mm, 110*mm])
+            rows = [[p.filename, p.business_overview.get('purpose', 'Logic snippet')] for p in procs]
+            self.table(["Procedure Name", "Encapsulated Logic Description"], rows, [60*mm, 110*mm])
         else:
-            self.para("No PROCs found.")
-
-        self.h2("3.3 Job Dependencies")
+            self.para("No shared procedures (PROCs) identified.")
+        
+        # --- NEW: 3.3 JOB DEPENDENCIES (The Execution Chain) ---
+        self.h2("3.3 Job Execution Dependencies")
+        self.para("The following execution dependencies have been identified via CA7/Control-M definitions and JCL triggers.")
+        
         chains = []
+        # Extract from the Graph Analyzer
         for u, v, d in self.graph_analyzer.graph.edges(data=True):
-            if d.get('type') in ['TRIGGER', 'EXEC_PGM', 'EXEC_PROC']:
-                chains.append([u, v, d.get('type')])
-        if chains:
-            self.table(["Source Job/File", "Target Component", "Relationship"], chains[:20], [60*mm, 60*mm, 40*mm])
-        else:
-            self.para("No automated job chains identified.")
+            if d.get('type') in ['TRIGGER', 'SUBMIT_JOB']:
+                chains.append([u, v, d.get('type', 'Sequential')])
 
+        if chains:
+            self.table(["Predecessor Job", "Successor Job", "Relationship Type"], chains[:30], [60*mm, 60*mm, 50*mm])
+        else:
+            # Fallback to JCL schedule notes if graph is sparse
+            notes_rows = []
+            for jcl in self.jcl_files:
+                notes = jcl.technical_analysis.get('schedule_notes')
+                if notes and notes != "N/A":
+                    notes_rows.append([jcl.filename, notes])
+            
+            if notes_rows:
+                self.table(["Job Name", "Scheduling / Dependency Notes"], notes_rows, [60*mm, 110*mm])
+            else:
+                self.para("No cross-job automated dependencies detected in the provided source.")
+
+        # --- NEW: 3.4 UTILITY & CONTROL SPECIFICATIONS ---
         self.h2("3.4 Utility & Control Specifications")
+        self.para("This section details the parameters for system utilities (SORT, IDCAMS, DB2 Utilities) found in control cards and parameter libraries.")
+
         if self.configs:
             for cfg in self.configs:
                 self.h3(f"Control Member: {cfg.filename}")
-                self.para(cfg.business_overview.get('purpose', ''))
+                self.para(f"<b>Associated Utility/Program:</b> {cfg.business_overview.get('title', 'System Utility')}")
+                self.para(f"<b>Description:</b> {cfg.business_overview.get('purpose', 'Configuration parameters.')}")
+
+                # Logic Rules (e.g., SORT FIELDS..., DELETE...)
                 rules = cfg.technical_analysis.get('configuration_areas', [])
                 if rules:
-                    self.h4("Logic Rules")
+                    self.h4("Configuration Logic")
                     self.bullet_list(rules)
+
+                # Key Parameters (extracted name/value pairs)
                 params = cfg.technical_analysis.get('key_parameters', [])
-                if params and isinstance(params[0], dict):
-                    rows = [[p.get('name'), p.get('value'), p.get('description')] for p in params]
-                    self.table(["Param", "Value", "Desc"], rows, [40*mm, 40*mm, 90*mm])
+                if params and isinstance(params, list) and isinstance(params[0], dict):
+                    p_rows = [[p.get('name', 'N/A'), p.get('value', 'N/A'), p.get('description', 'N/A')] for p in params]
+                    self.table(["Parameter", "Value", "Technical Impact"], p_rows, [40*mm, 40*mm, 90*mm])
+                
+                self.elements.append(Spacer(1, 4*mm))
         else:
-            self.para("No utilities identified")
+            # Check if JCL steps have inline control card summaries
+            inline_found = False
+            for jcl in self.jcl_files:
+                for step in jcl.technical_analysis.get('steps', []):
+                    if step.get('control_card_summary'):
+                        if not inline_found:
+                            self.para("Inline Utility Logic identified within Job Steps:")
+                            inline_found = True
+                        self.bullet(f"<b>{jcl.filename}</b> <b>({step.get('step_name')}):</b> {step.get('control_card_summary')}")
+            
+            if not inline_found:
+                self.para("No external or inline utility control specifications were identified.")
 
     def _logic(self):
         self.h1("4. Application Logic Specification")
