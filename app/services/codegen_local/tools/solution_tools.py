@@ -426,17 +426,36 @@ You can now write code files using write_code_file()."""
             if not output_dir.exists():
                 return "No files generated yet. Call initialize_solution() first."
             
-            files = []
-            for item in sorted(output_dir.rglob("*")):
-                if item.is_file():
-                    rel_path = item.relative_to(output_dir)
-                    size = item.stat().st_size
-                    files.append(f"{rel_path} ({size} bytes)")
+            # Simple tree generator
+            def tree(dir_path: Path, prefix: str = ""):
+                lines = []
+                # Helper to sort directories first, then files
+                def sort_key(p): return (not p.is_dir(), p.name.lower())
+                
+                try:
+                    contents = sorted(dir_path.iterdir(), key=sort_key)
+                except Exception: return []
+
+                for i, path in enumerate(contents):
+                    is_last = (i == len(contents) - 1)
+                    connector = "└── " if is_last else "├── "
+                    
+                    if path.is_dir():
+                        if path.name in (".git", ".vs", "bin", "obj"): continue # Skip noise
+                        lines.append(f"{prefix}{connector}{path.name}/")
+                        extension = "    " if is_last else "│   "
+                        lines.extend(tree(path, prefix + extension))
+                    else:
+                        size = path.stat().st_size
+                        lines.append(f"{prefix}{connector}{path.name} ({size} B)")
+                return lines
+
+            tree_lines = tree(output_dir)
             
-            if not files:
+            if not tree_lines:
                 return "Output directory exists but contains no files"
             
-            return f"Generated files ({len(files)} total):\n" + "\n".join(files)
+            return f"Generated Solution Structure ({len(tree_lines)} items):\nroot/\n" + "\n".join(tree_lines)
             
         except Exception as e:
             logger.error(f"list_generated_files error: {e}")

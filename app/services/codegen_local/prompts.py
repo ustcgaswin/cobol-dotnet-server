@@ -240,14 +240,22 @@ exit $script:MaxRC
 
 ## Efficiency & Tool Usage
 - **Batch Your Builds**: Do NOT run `dotnet build` or `dotnet test` after every single file change. This is slow and wasteful.
-- **Implement First**: Implement a complete component or logical group of files (e.g. all Core entities + Interfaces) before running a build to check for errors.
-- **Test When Needed**: Run tests only when you need to verify specific logic or debug a failure. Do not run the full test suite in a loop.
+- **Implement First**: Implement a complete component (e.g. Entity + Repo + Interface) before running a build.
+- **Test When Needed**: Run tests only when you need to verify specific logic or debug a failure.
 
 ## Verification Compliance (CRITICAL)
 
 When you believe you are done, the system runs a Verification step.
 - If it returns "PASS", you are finished.
 - If it returns "CRITICAL" failures, you are **NOT DONE**.
+
+**Verification Failure Protocol (CRITICAL)**:
+1.  **STOP & THINK**: Do not immediately write a file to "fix" a missing file error.
+2.  **CHECK STATE**: Use `list_generated_files()` to see what actually exists.
+    -   Did you name it `Job01.cs` instead of `Setljob.cs`?
+    -   Did you put it in `src` instead of `src/Worker/Jobs`?
+3.  **READ CONTENT**: Use `view_file()` to check if the file content is correct.
+4.  **ONLY THEN FIX**: Write the correction based on your investigation.
 
 **TRUST THE VERIFICATION**: If the system says a file is missing or a test failed, IT IS TRUE.
   - Do NOT argue that it is a "false positive".

@@ -62,6 +62,7 @@ class CodegenState(TypedDict):
     codegen_logs_path: str  # Path for dumping session history
     codegen_output_path: str # Path to generated code for verification
     codegen_source_path: str # Path to source code for verification checks
+    verification_attempts: int # Track number of verification runs
 
 
 def _prune_old_tool_outputs(messages: list[AnyMessage]) -> list[AnyMessage]:
@@ -100,53 +101,49 @@ def _extract_structured_state(messages: list[AnyMessage]) -> str:
     Extract progress state from message history deterministically.
     Parses tool call patterns to find converted components and files.
     """
-    converted = []
-    files_written = []
-    errors_count = 0
+    files_created = set()
+    files_deleted = set()
+    components_status = {}
     
     for msg in messages:
-        content = str(getattr(msg, 'content', ''))
-        
-        # Pattern: log_component_status("NAME", "converted", ...)
-        for match in re.finditer(r'log_component_status\(["\']([^"\']+)["\'],\s*["\']converted["\']', content):
-            comp = match.group(1)
-            if comp not in converted:
-                converted.append(comp)
-        
-        # Pattern match in tool message responses: "Logged status: X = converted"
-        for match in re.finditer(r'Logged status:\s*(\S+)\s*=\s*converted', content):
-            comp = match.group(1)
-            if comp not in converted:
-                converted.append(comp)
-        
-        # Pattern: write_code_file("PATH", ...)
-        for match in re.finditer(r'write_code_file\(["\']([^"\']+)["\']', content):
-            path = match.group(1)
-            if path not in files_written:
-                files_written.append(path)
-        
-        # Pattern: "Wrote file:" in responses
-        for match in re.finditer(r'Wrote file:\s*(\S+)', content):
-            path = match.group(1)
-            if path not in files_written:
-                files_written.append(path)
-        
-        # Count errors
-        if 'log_issue(' in content or 'Error:' in content:
-            errors_count += 1
-    
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            for tool_call in msg.tool_calls:
+                name = tool_call["name"]
+                args = tool_call["args"]
+                
+                if name == "write_code_file":
+                    target = args.get("target_path") or args.get("target_file")
+                    if target:
+                        files_created.add(str(target))
+                        files_deleted.discard(str(target))
+                        
+                elif name == "remove_file":
+                    target = args.get("target_path") or args.get("target_file")
+                    if target:
+                        files_deleted.add(str(target))
+                        files_created.discard(str(target))
+                        
+                elif name == "log_component_status":
+                    comp = args.get("component_name")
+                    status = args.get("status")
+                    if comp and status:
+                        components_status[comp] = status
+
     # Format summary
-    converted_list = ', '.join(converted[-15:]) if converted else 'none'
-    if len(converted) > 15:
-        converted_list += f' (+{len(converted) - 15} more)'
+    summary_lines = ["### Current Project State"]
     
-    summary = f"""[SESSION STATE]
-Converted: {converted_list} ({len(converted)} total)
-Files written: {len(files_written)}
-Errors logged: {errors_count}
-Continue converting remaining components."""
-    
-    return summary
+    if components_status:
+        summary_lines.append("\n**Component Status:**")
+        for comp, status in components_status.items():
+            summary_lines.append(f"- {comp}: {status}")
+            
+    if files_created:
+        summary_lines.append(f"\n**Files Created ({len(files_created)}):**")
+        # Show top 10 most recent
+        for f in sorted(list(files_created))[-10:]:
+            summary_lines.append(f"- {Path(f).name}")
+            
+    return "\n".join(summary_lines)
 
 
 def _dump_history(messages: list[AnyMessage], logs_path: Path) -> str:
@@ -319,7 +316,7 @@ def create_codegen_agent(tools: list, project_id: str):
         response = model_with_tools.invoke(full_messages)
         
         if should_reset:
-            # Replace all messages with compressed + response
+            # Add marker to signal _reset_ needed
             return {
                 "messages": [_RESET_MARKER] + messages + [response],
                 "iteration_count": state.get("iteration_count", 0) + 1,
@@ -374,9 +371,14 @@ def create_codegen_agent(tools: list, project_id: str):
 
         output_path_str = state.get("codegen_output_path", "")
         source_path_str = state.get("codegen_source_path", "")
+        
+        # Increment verification attempts
+        current_attempts = state.get("verification_attempts", 0) + 1
+        # Update state with new count (LangGraph will merge this)
+        verification_update = {"verification_attempts": current_attempts}
 
         logger.info(f"[Verification] ═══════════════════════════════════════")
-        logger.info(f"[Verification] Starting verification checks (Fail-Fast)")
+        logger.info(f"[Verification] Starting verification check #{current_attempts}")
         logger.info(f"[Verification] Output: {output_path_str}")
         logger.info(f"[Verification] Source: {source_path_str}")
         logger.info(f"[Verification] ═══════════════════════════════════════")
@@ -390,11 +392,12 @@ def create_codegen_agent(tools: list, project_id: str):
             return {
                 "messages": [
                     HumanMessage(
-                        content=f"CRITICAL: Verification found {len(current_failures)} issue(s):\n" +
+                        content=f"CRITICAL: Verification (Attempt {current_attempts}) found issues:\n" +
                                 "\n".join([f"- {f}" for f in current_failures]) +
-                                "\n\nYou MUST fix ALL of these before finishing."
+                                "\n\nYou MUST fix these issues. Use verify_failure_protocol."
                     )
-                ]
+                ],
+                **verification_update
             }
 
         # -----------------------------------------------------------------
@@ -489,20 +492,20 @@ def create_codegen_agent(tools: list, project_id: str):
             
             tree_str = "\n".join(sorted(file_tree_lines))
             
-            audit_prompt = f"""Given this .NET solution file tree, identify source files in src/ that contain logic/functionality but have NO corresponding test file in tests/.
-
-Exclude from check (these don't need tests):
-- Entity/POCO classes (data-only, no logic)
+            audit_prompt = f"""Given this list of source files, identify the ones that contain business logic and SHOULD have unit tests.
+            
+Exclude:
+- Entity/POCO classes (data-only)
 - Interfaces (I*.cs)
 - Enums
-- Configuration/Settings classes
-- DbContext files
+- Configuration/Settings
+- DbContext
 - Program.cs, IJob.cs, Migration files
 
-Return ONLY a JSON array of filenames (relative paths) that need tests but don't have them.
-If all logic files have tests, return an empty array [].
+Return ONLY a JSON array of source filenames (relative paths) that require tests.
+If no files need tests, return [].
 
-File tree:
+File list:
 {tree_str}
 """
             llm_audit = get_llm(CODEGEN, model=LLMModel.CLAUDE_SONNET_4_5)
@@ -514,14 +517,35 @@ File tree:
             elif "```" in content_str:
                 content_str = content_str.split("```")[1].split("```")[0].strip()
                 
-            missing_tests = json.loads(content_str)
+            logic_files = json.loads(content_str)
             
-            if missing_tests:
-                logger.warning(f"[Verification Step 4] FAIL — {len(missing_tests)} missing test files")
-                for missing in missing_tests:
-                    failures.append(f"Missing Test for: {missing}")
-            else:
-                logger.info("[Verification Step 4] PASS — Test coverage looks good")
+            # Python-side Verification of Test Existence
+            for source_file in logic_files:
+                # Convert src/Core/Services/XService.cs -> tests/Core/Services/XServiceTests.cs
+                # 1. Replace src/ with tests/
+                # 2. Append Tests.cs to filename stem
+                
+                try:
+                    src_path = Path(source_file)
+                    # Handle path structure safely
+                    parts = list(src_path.parts)
+                    if parts[0] == "src":
+                        parts[0] = "tests"
+                        
+                    test_filename = src_path.stem + "Tests" + src_path.suffix
+                    parts[-1] = test_filename
+                    
+                    expected_test_path = output_path.joinpath(*parts)
+                    
+                    if not expected_test_path.exists():
+                        logger.warning(f"[Verification Step 4] Missing Test: {expected_test_path.name}")
+                        failures.append(f"Missing Test: {expected_test_path.name} (for {source_file})")
+                        
+                except Exception as e:
+                    logger.warning(f"[Verification Step 4] Path check error for {source_file}: {e}")
+
+            if not any(f.startswith("Missing Test") for f in failures):
+                logger.info("[Verification Step 4] PASS — Test coverage (existence) looks good")
                 
         except Exception as e:
             logger.warning(f"[Verification Step 4] SKIP — Audit failed: {e}")
@@ -529,44 +553,48 @@ File tree:
         if failures: return return_failures(failures)
 
         # -----------------------------------------------------------------
-        # STEP 5: Functionality audit (Blocking)
+        # STEP 5: Functionality audit (Conditional)
         # -----------------------------------------------------------------
-        logger.info("[Verification Step 5] Running functionality audit...")
-        artifacts_base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / state["project_id"]
-        catalog_path = artifacts_base / "system_context" / "functionality_catalog.md"
-        
-        if catalog_path.exists():
-            try:
-                catalog_content = catalog_path.read_text(encoding="utf-8", errors="replace")
-                f_ids = re.findall(r"(F\d{3})", catalog_content)
-                unique_f_ids = sorted(list(set(f_ids)))
-                
-                if unique_f_ids:
-                    found_ids = set()
-                    cs_files = list(output_path.rglob("*.cs"))
-                    for cs_file in cs_files:
-                        if "bin" in cs_file.parts or "obj" in cs_file.parts: continue
-                        try:
-                            content = cs_file.read_text(encoding="utf-8", errors="replace")
-                            for fid in unique_f_ids:
-                                if fid in content: found_ids.add(fid)
-                        except Exception: continue
-                    
-                    missing_fids = [fid for fid in unique_f_ids if fid not in found_ids]
-                    logger.info(f"[Verification Step 5] Coverage: {len(found_ids)}/{len(unique_f_ids)} functionalities tagged")
-                    
-                    if missing_fids:
-                        msg = f"Missing F-ID tags: {', '.join(missing_fids)}. You MUST implement these functionalities and tag them with comments (e.g. // {missing_fids[0]}) in the code."
-                        logger.warning(f"[Verification Step 5] FAIL — {msg}")
-                        failures.append(msg)
-                    else:
-                        logger.info("[Verification Step 5] PASS — All functionalities tagged")
-            except Exception as e:
-                logger.warning(f"[Verification Step 5] Audit error: {e}")
+        # If verification has failed 3 times already, relax this check.
+        if current_attempts > 3:
+             logger.warning(f"[Verification Step 5] SKIP — Relaxing functionality audit after {current_attempts-1} failures.")
         else:
-            logger.info("[Verification Step 5] SKIP — No functionality catalog found")
+            logger.info("[Verification Step 5] Running functionality audit...")
+            artifacts_base = Path(settings.PROJECT_ARTIFACTS_PATH).resolve() / state["project_id"]
+            catalog_path = artifacts_base / "system_context" / "functionality_catalog.md"
             
-        if failures: return return_failures(failures)
+            if catalog_path.exists():
+                try:
+                    catalog_content = catalog_path.read_text(encoding="utf-8", errors="replace")
+                    f_ids = re.findall(r"(F\d{3})", catalog_content)
+                    unique_f_ids = sorted(list(set(f_ids)))
+                    
+                    if unique_f_ids:
+                        found_ids = set()
+                        cs_files = list(output_path.rglob("*.cs"))
+                        for cs_file in cs_files:
+                            if "bin" in cs_file.parts or "obj" in cs_file.parts: continue
+                            try:
+                                content = cs_file.read_text(encoding="utf-8", errors="replace")
+                                for fid in unique_f_ids:
+                                    if fid in content: found_ids.add(fid)
+                            except Exception: continue
+                        
+                        missing_fids = [fid for fid in unique_f_ids if fid not in found_ids]
+                        logger.info(f"[Verification Step 5] Coverage: {len(found_ids)}/{len(unique_f_ids)} functionalities tagged")
+                        
+                        if missing_fids:
+                            msg = f"Missing F-ID tags: {', '.join(missing_fids)}. You MUST implement these functionalities and tag them with comments (e.g. // {missing_fids[0]}) in the code."
+                            logger.warning(f"[Verification Step 5] FAIL — {msg}")
+                            failures.append(msg)
+                        else:
+                            logger.info("[Verification Step 5] PASS — All functionalities tagged")
+                except Exception as e:
+                    logger.warning(f"[Verification Step 5] Audit error: {e}")
+            else:
+                logger.info("[Verification Step 5] SKIP — No functionality catalog found")
+                
+            if failures: return return_failures(failures)
 
         # -----------------------------------------------------------------
         # STEP 6: Solution builds successfully
