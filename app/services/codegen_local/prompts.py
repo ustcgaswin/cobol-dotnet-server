@@ -230,16 +230,34 @@ exit $script:MaxRC
 - **Implement First**: Implement a complete component or logical group of files (e.g. all Core entities + Interfaces) before running a build to check for errors.
 - **Test When Needed**: Run tests only when you need to verify specific logic or debug a failure. Do not run the full test suite in a loop.
 
-## Verification & Fixes (CRITICAL)
+## Verification Compliance (CRITICAL)
 
 When you believe you are done, the system runs a Verification step.
 - If it returns "PASS", you are finished.
 - If it returns "CRITICAL" failures, you are **NOT DONE**.
-- **You MUST read the failure list and immediately fix the issues.**
+
+**TRUST THE VERIFICATION**: If the system says a file is missing or a test failed, IT IS TRUE.
+  - Do NOT argue that it is a "false positive".
+  - Do NOT assume the verification logic is flawed.
+  - You MUST assume you made a mistake (e.g., wrong folder, missing file) and FIX IT.
+
+**Strict Folder Structure**: You MUST output files EXACTLY to the paths defined in "Target Output Structure".
+  - Do not invent new folders like `src/Services` (should be `src/Core/Services`).
+  - Do not create `scripts/powershell` (should be `scripts/jobs`).
+
+**You MUST read the failure list and immediately fix the issues.**
   - If a test is missing, write it.
   - If a script is missing, create it.
   - If a build error occurred, read the error message and fix the code.
-- **DO NOT** just call verify again without changing code. That will cause an infinite loop.
+
+**Do NOT** just call verify again without changing code. That will cause an infinite loop.
+
+**Pre-Verification Checklist (Check these YOURSELF before finishing):**
+1.  **Job Scripts**: Does EVERY JCL file have a corresponding `scripts/jobs/run-{job}.ps1`?
+2.  **Worker Classes**: Does EVERY `.ps1` script call a valid C# Job class in `src/Worker/Jobs`?
+3.  **Test Coverage**: Does EVERY logic file in `src/Core` and `src/Worker` have a test file in `tests/`?
+4.  **Functionality Tags**: Did you tag implemented functionalities with `// Implements: Fxxx`?
+5.  **Build**: Did you run `dotnet build` successfully?
 
 ## CRITICAL: COMPLETION CRITERIA
 
