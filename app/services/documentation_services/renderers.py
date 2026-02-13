@@ -1594,27 +1594,63 @@ class FunctionalSpecBuilder(BaseBuilder):
 
     def _render_detailed_logic(self):
         self.h1("4. Detailed Functional Logic")
-        self.para("This section details the specific business rules enforced by the system components.")
-        
-        # Filter for "Business Logic" files (ignore simple reports/utilities)
-        # Use our new 'functional_description' field
-        biz_files = [f for f in self.code_files if f.business_overview.get('functional_description')]
-        
-        # Sort by length of description (richest content first)
-        biz_files.sort(key=lambda x: len(x.business_overview.get('functional_description', '')), reverse=True)
-        
-        for prog in biz_files:
-            self.h2(f"Module: {prog.filename}")
+        self.para("This section details the specific business rules enforced by the system components, ordered by their execution sequence in the batch schedule.")
 
-            desc = prog.business_overview.get('functional_description')
-            if desc:
-                self.para(desc)
-            
-            # 2. Specific Rules (Bullets)
+        code_map = {f.filename: f for f in self.code_files}
+        
+        ordered_files = []
+        seen_files = set()
+
+        sorted_jcls = sorted(self.jcl_files, key=lambda x: x.filename)
+        
+        for jcl in sorted_jcls:
+            steps = jcl.technical_analysis.get('steps', [])
+            for step in steps:
+                pgm_name = step.get('program', 'UNKNOWN')
+
+                if pgm_name in code_map and pgm_name not in seen_files:
+                    code_map[pgm_name].execution_context = f"Executed by {jcl.filename} (Step: {step.get('step_name')})"
+                    
+                    ordered_files.append(code_map[pgm_name])
+                    seen_files.add(pgm_name)
+
+        orphans = [f for f in self.code_files if f.filename not in seen_files]
+        orphans.sort(key=lambda x: x.filename)
+        
+        if orphans:
+            for f in orphans:
+                f.execution_context = "Called dynamically as Subroutine / Utility"
+            ordered_files.extend(orphans)
+
+        for prog in ordered_files:
+            description = prog.business_overview.get('functional_description')
             rules = prog.business_overview.get('scope', [])
-            if rules:
-                self.h4("Business Rules")
-                for r in rules: self.bullet(r)
+
+            if not rules:
+                rules = prog.technical_analysis.get('functional_capabilities', [])
+
+            clean_rules = [
+                str(r) for r in rules 
+                if not any(x in str(r).upper() for x in ['CALL ', 'PERFORM ', 'EXEC SQL', 'OPEN FILE'])
+            ]
+
+            if description or clean_rules:
+                self.h2(f"Module: {prog.filename}")
+                
+                # Show context (e.g. "Executed by JOB01")
+                context = getattr(prog, 'execution_context', 'Subroutine')
+                self.para(f"<i>Context: {context}</i>")
+
+                # 1. Narrative
+                if description:
+                    self.para(description)
+                
+                # 2. Rules
+                if clean_rules:
+                    self.h4("Business Rules")
+                    # Limit long lists to keep flow readable
+                    for r in clean_rules: 
+                        self.bullet(r)
 
     def _render_interfaces(self):
         self.h1("5. Interface Specification")
