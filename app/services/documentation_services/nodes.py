@@ -287,6 +287,8 @@ class DocAgentNodes:
         template = prompt_map.get(state["file_type"].upper(), COBOL_CHUNK_PROMPT)
         
         evidence = self._extract_code_snippets(state.get("messages", []))
+
+        all_jcl_names = [n for n in self.analyzer.graph.nodes() if n.endswith(('.jcl', '.txt', '.JCL'))]
         
         # Format the prompt
         prompt = template.format(
@@ -296,7 +298,8 @@ class DocAgentNodes:
             content=evidence, 
             previous_summary="{}",
             filename=state["target_file"],
-            file_type=state["file_type"]
+            file_type=state["file_type"],
+            all_job_names=", ".join(all_jcl_names)
         )
         
         res = await self.llm.ainvoke([HumanMessage(content=prompt)])

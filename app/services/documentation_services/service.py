@@ -603,6 +603,10 @@ class DocumentationService:
             # --- Representative Sampling ---
             categories = ['Transaction Processing', 'Reporting', 'Data Maintenance', 'Utility']
             representative_summaries = []
+
+            data_logic_files = [s for s in all_summaries if s.file_type in ['DCLGEN', 'COPYBOOK']]
+            representative_summaries.extend(data_logic_files[:10])
+
             for cat in categories:
                 cat_progs = [s for s in all_summaries if s.business_overview.get('functional_category') == cat]
                 representative_summaries.extend(cat_progs[:5])

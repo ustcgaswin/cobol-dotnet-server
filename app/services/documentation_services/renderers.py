@@ -774,132 +774,6 @@ class DocTemplateWithTOC(SimpleDocTemplate):
             elif style_name == 'Heading2':
                 self.notify('TOCEntry', (1, text, self.page))
 
-# class BaseBuilder:
-#     def __init__(self, summaries: List[FileSummary], metrics: SystemMetrics, graph_analyzer, system_summary: Dict = None, images: Dict[str, str] = None):
-#         self.summaries = summaries
-#         self.metrics = metrics
-#         self.system_summary = system_summary or {}
-#         self.graph_analyzer = graph_analyzer
-        
-#         # --- Multi-Image Handling ---
-#         self.images = images or {}
-#         self.context_image_path = self.images.get('context')
-#         self.architecture_image_path = self.images.get('architecture')
-#         self.functional_image_path = self.images.get('functional')
-        
-#         # Data Slicing
-#         self.jcl_files = [s for s in summaries if s.file_type == 'JCL']
-#         self.code_files = [s for s in summaries if s.file_type in ['COBOL', 'PLI', 'ASSEMBLY', 'REXX']]
-#         self.data_files = [s for s in summaries if s.file_type in ['DCLGEN', 'SQL', 'COPYBOOK', 'PLI_COPYBOOK']]
-#         self.configs = [s for s in summaries if s.file_type in ['PARMLIB', 'CONTROL_CARD']]
-
-#         # Styles Setup
-#         styles = getSampleStyleSheet()
-#         self.styleN = styles['Normal']
-#         self.styleN.fontSize = 10
-#         self.styleN.leading = 12
-        
-#         self.styleH1 = ParagraphStyle(
-#             'Heading1', parent=styles['Heading1'], 
-#             fontSize=16, leading=20, spaceBefore=18, spaceAfter=12, 
-#             textColor=colors.HexColor("#003366")
-#         )
-#         self.styleH2 = ParagraphStyle(
-#             'Heading2', parent=styles['Heading2'], 
-#             fontSize=13, leading=16, spaceBefore=12, spaceAfter=6, 
-#             textColor=colors.HexColor("#404040")
-#         )
-#         self.styleH3 = ParagraphStyle(
-#             'Heading3', parent=styles['Heading3'], 
-#             fontSize=11, leading=14, spaceBefore=10, spaceAfter=4, 
-#             textColor=colors.HexColor("#606060")
-#         )
-#         self.styleH4 = ParagraphStyle(
-#             'Heading4', parent=styles['Normal'], 
-#             fontSize=10, leading=12, spaceBefore=6, spaceAfter=2, 
-#             fontName='Helvetica-BoldOblique'
-#         )
-        
-#         self.elements = []
-
-#     def save(self, path: str):
-#         doc = DocTemplateWithTOC(
-#             path, pagesize=A4,
-#             rightMargin=20*mm, leftMargin=20*mm,
-#             topMargin=20*mm, bottomMargin=20*mm
-#         )
-#         story = []
-#         story.append(Spacer(1, 60*mm))
-#         story.append(Paragraph(self.title_text, ParagraphStyle('Title', parent=self.styleH1, fontSize=24, alignment=TA_CENTER)))
-#         story.append(Spacer(1, 10*mm))
-#         story.append(Paragraph("System Reference Document", ParagraphStyle('SubTitle', parent=self.styleN, fontSize=16, alignment=TA_CENTER)))
-#         story.append(PageBreak())
-#         story.append(Paragraph("Table of Contents", self.styleH1))
-#         story.append(doc.toc)
-#         story.append(PageBreak())
-#         story.extend(self.elements)
-#         doc.multiBuild(story)
-
-#     def h1(self, text):
-#         self.elements.append(PageBreak())
-#         self.elements.append(Paragraph(text, self.styleH1))
-
-#     def h2(self, text):
-#         self.elements.append(Paragraph(text, self.styleH2))
-
-#     def h3(self, text):
-#         self.elements.append(Paragraph(text, self.styleH3))
-    
-#     def h4(self, text):
-#         self.elements.append(Paragraph(text, self.styleH4))
-
-#     def para(self, text):
-#         if not text: return
-#         clean_text = str(text).replace('\n', '<br/>')
-#         self.elements.append(Paragraph(clean_text, self.styleN))
-#         self.elements.append(Spacer(1, 2*mm))
-
-#     def bullet_list(self, items: List[str]):
-#         if not items: return
-#         list_items = [ListItem(Paragraph(str(item).strip("[]'"), self.styleN)) for item in items]
-#         self.elements.append(ListFlowable(list_items, bulletType='bullet', start='•', leftIndent=15, bulletFontSize=12))
-#         self.elements.append(Spacer(1, 3*mm))
-
-#     def image(self, path, width=160*mm):
-#         if not path or not Path(path).exists():
-#             self.para("<i>[Diagram Image Not Available]</i>")
-#             return
-#         try:
-#             img = Image(path)
-#             aspect = img.drawHeight / img.drawWidth
-#             img.drawWidth = width
-#             img.drawHeight = width * aspect
-#             self.elements.append(img)
-#             self.elements.append(Spacer(1, 5*mm))
-#         except Exception as e:
-#             logger.error(f"Failed to embed image: {e}")
-#             self.para("<i>[Error rendering diagram file]</i>")
-
-#     def table(self, headers: List[str], rows: List[List[str]], col_widths=None):
-#         if not rows:
-#             self.para("<i>No data available.</i>")
-#             return
-#         data = [[Paragraph(f"<b>{h}</b>", self.styleN) for h in headers]]
-#         for row in rows:
-#             data.append([Paragraph(str(cell), self.styleN) for cell in row])
-#         t = Table(data, colWidths=col_widths, repeatRows=1)
-#         t.setStyle(TableStyle([
-#             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E6E6E6")),
-#             ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-#             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-#             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-#             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-#             ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-#             ('TOPPADDING', (0, 0), (-1, -1), 6),
-#         ]))
-#         self.elements.append(t)
-#         self.elements.append(Spacer(1, 6*mm))
-
 class BaseBuilder:
     def __init__(self, summaries: List[FileSummary], metrics: SystemMetrics, graph_analyzer, system_summary: Dict = None, images: Dict[str, str] = None):
         self.summaries = summaries
@@ -1541,295 +1415,6 @@ class FunctionalSpecBuilder(BaseBuilder):
         
         # return self.pdf
 
-    # def _render_doc_control(self):
-    #     self.h1("1. Document Control")
-    #     self.h2("1.1 Version Control")
-    #     self.table(["Version", "Date", "Description"], [["1.0", "Auto-Generated", "Initial System Documentation"]], [30*mm, 40*mm, 100*mm])
-
-    # def _render_introduction(self):
-    #     self.h1("2. Introduction")
-        
-    #     self.h2("2.1 Business Overview")
-    #     self.para(self.system_summary.get('business_purpose', 'High-level business overview of the system processing.'))
-
-    #     self.h2("2.2 System Purpose")
-    #     counts = self.metrics.files_by_type
-    #     primary_lang = "COBOL" if counts.get('COBOL', 0) > counts.get('PLI', 0) else "PL/I"
-        
-    #     sys_purpose = (
-    #         f"The primary purpose of this COBOL-based system is to facilitate high-volume "
-    #         f"batch processing and data management. It orchestrates {counts.get('JCL', 0)} job workflows "
-    #         f"to process transactions against {counts.get('DCLGEN', 0) + counts.get('SQL', 0)} relational tables."
-    #     )
-        
-    #     self.para(sys_purpose)
-    #     top_mods = self.metrics.top_complex_modules
-    #     if top_mods:
-    #         self.para("Key functional drivers identified by architectural centrality:")
-    #         clean_mods = [m for m in top_mods if not any(x in m for x in ['ABEND', 'ERROR'])]
-    #         for mod in clean_mods[:20]:
-    #             self.bullet(mod)
-
-    #             self.h2("2.3 Scope of Current Functionality")
-
-    #     self.h3("Technical Domains")
-    #     ftypes = self.metrics.files_by_type
-    #     scope_items = []
-    #     if ftypes.get('COBOL'): scope_items.append(" Business Logic and Calculations (COBOL)")
-    #     if ftypes.get('JCL'): scope_items.append("Batch Orchestration (JCL)")
-    #     if ftypes.get('DCLGEN') or ftypes.get('SQL'): scope_items.append("Relational Database Persistence (DB2)")
-    #     self.para("The analyzed system scope encompasses: " + ", ".join(scope_items) + ".")
-
-    #     self.h3("Key Business & Processing Boundaries")
-    #     boundaries = self.system_summary.get('system_processing_boundaries', [])
-        
-    #     if boundaries:
-    #         self.para("The following high-level constraints and data handling rules define the system's operational boundaries:")
-    #         self.bullet_list(boundaries)
-    #     else:
-    #         self.para("Operational boundaries extracted from module scopes:")
-    #         all_scopes = []
-    #         for s in self.code_files:
-    #             file_scope = s.business_overview.get('scope', [])
-    #             if file_scope: all_scopes.extend(file_scope)
-    #         unique_scopes = sorted(list(set(all_scopes)))
-
-    #         constraints = [s for s in unique_scopes if any(x in s.upper() for x in ['ONLY', 'MUST', 'RETAIN', 'LIMIT', 'MAX', 'MIN', 'MONTHS', 'YEARS'])]
-            
-    #         if constraints:
-    #             self.bullet_list(constraints[:10])
-    #         else:
-    #             self.para("No specific processing boundaries (retention, limits) explicitly defined in source comments.")
-
-    #     self.h2("2.4 Glossary")
-    #     glossary_data = self.system_summary.get('harvested_acronyms', [])
-
-    #     if not glossary_data:
-    #         glossary_data = self.system_summary.get('glossary', [])
-
-    #     if not glossary_data:
-    #         glossary_data = [
-    #             {"term": "GDG", "definition": "Generation Data Group (Versioning)"},
-    #             {"term": "JCL", "definition": "Job Control Language"},
-    #             {"term": "VSAM", "definition": "Virtual Storage Access Method"},
-    #             {"term": "DB2", "definition": "IBM Relational Database"}
-    #         ]
-
-    #     rows = []
-    #     for g in glossary_data:
-    #         if isinstance(g, dict):
-    #             term = g.get('term', 'N/A')
-    #             defi = g.get('definition', 'N/A')
-    #         else:
-    #             continue
-            
-    #         if term != "N/A" and len(term) < 20:
-    #             rows.append([term, defi])
-        
-    #     rows.sort(key=lambda x: x[0])
-        
-    #     if rows:
-    #         self.table(["Term / Acronym", "Definition"], rows[:40], [40*mm, 130*mm])
-    #     else:
-    #         self.para("No technical acronyms identified.")
-
-    # def _render_functional_flows(self):
-    #     self.h1("3. High-Level Functional Flows")
-        
-    #     self.h2("3.1 High-Level Process Diagram")
-    #     if self.functional_image_path:
-    #         self.image(self.functional_image_path)
-    #         self.para("<i>Figure: End-to-End Business Sequence.</i>")
-    #     else:
-    #         self.para("Logical flow: Inbound Feeds -> Batch Validation -> Core Processing -> Data Update -> Reporting.")
-        
-    #     self.h2("3.2 Batch Execution Flow (Data Lineage)")
-    #     self.para("The following table illustrates the sequential flow of data through the batch system, mapping how jobs chain together via shared datasets.")      
-    #     import re
-    #     def normalize_dsn(dsn):
-    #         return re.sub(r'\(.*?\)', '', str(dsn)).strip().upper()
-    #     producer_map = {}
-        
-    #     for jcl in self.jcl_files:
-    #         # Get program list for context
-    #         steps = jcl.technical_analysis.get('steps', [])
-    #         progs = [s.get('program', '') for s in steps if s.get('program')]
-    #         prog_str = ", ".join([p for p in progs if p not in ['IEFBR14', 'IEBGENER', 'IDCAMS', 'SORT']][:3])
-    #         if not prog_str: prog_str = "System Util"
-
-    #         for ds in jcl.technical_analysis.get('io_datasets', []):
-    #             if not isinstance(ds, dict): continue
-                
-    #             usage = str(ds.get('usage', '')).upper()
-    #             raw_name = str(ds.get('dataset', ''))
-    #             norm_name = normalize_dsn(raw_name)
-
-    #             # Ignore temp files
-    #             if 'TEMP' in norm_name or '&&' in norm_name or 'SYSOUT' in norm_name: continue
-
-    #             # If Creating/Writing
-    #             if 'NEW' in usage or 'WRITE' in usage or 'OUTPUT' in usage or 'CATLG' in usage:
-    #                 if norm_name not in producer_map:
-    #                     producer_map[norm_name] = {"job": jcl.filename, "progs": prog_str}
-
-    #     flow_rows = []
-    #     for jcl in self.jcl_files:
-    #         for ds in jcl.technical_analysis.get('io_datasets', []):
-    #             if not isinstance(ds, dict): continue
-                
-    #             usage = str(ds.get('usage', '')).upper()
-    #             raw_name = str(ds.get('dataset', ''))
-    #             norm_name = normalize_dsn(raw_name)
-
-    #             # If Reading
-    #             if 'OLD' in usage or 'READ' in usage or 'INPUT' in usage or 'SHR' in usage:
-    #                 producer = producer_map.get(norm_name)
-                    
-    #                 # If we found the creator, and it's a different job
-    #                 if producer and producer['job'] != jcl.filename:
-    #                     flow_rows.append([
-    #                         producer['job'],      # Predecessor
-    #                         producer['progs'],    # Logic applied
-    #                         raw_name,             # The specific file used
-    #                         jcl.filename          # Successor
-    #                     ])
-
-    #     if flow_rows:
-    #         # Deduplicate
-    #         unique_flows = [list(x) for x in set(tuple(x) for x in flow_rows)]
-    #         unique_flows.sort(key=lambda x: x[0])
-            
-    #         self.table(
-    #             ["Predecessor", "Logic", "Shared Data", "Successor"], 
-    #             unique_flows[:40], 
-    #             [40*mm, 50*mm, 50*mm, 40*mm]
-    #         )
-    #         if len(unique_flows) > 40:
-    #             self.para(f"<i>...and {len(unique_flows)-40} additional dependency chains.</i>")
-    #     else:
-    #         self.para("No file-based job dependencies detected.")
-
-    #     self.h2("3.3 Core Functional Groups")
-    #     tx_progs = []
-    #     rpt_progs = []
-    #     maint_progs = []
-
-    #     for p in self.code_files:
-    #         raw_text = (str(p.technical_analysis) + str(p.business_overview)).upper()
-            
-    #         if any(x in raw_text for x in ['BACKUP', 'ARCHIVE', 'DELETE', 'CLEANUP', 'PURGE', 'UTILITY', 'REORG', 'COPY', 'MAINTENANCE']):
-    #             maint_progs.append(p.filename)
-    #         elif any(x in raw_text for x in ['REPORT', 'PRINT', 'DISPLAY', 'EXTRACT', 'SYSOUT']):
-    #             rpt_progs.append(p.filename)
-    #         elif any(x in raw_text for x in ['INSERT', 'UPDATE', 'WRITE', 'TRANSACTION', 'CALCULATE', 'PROCESS']):
-    #             tx_progs.append(p.filename)
-
-    #     if tx_progs:
-    #         self.h3("3.3.1 Transaction Processing Group")
-    #         self.bullet_list(tx_progs[:15])
-
-    #     if rpt_progs:
-    #         self.h3("3.3.2 Reporting & Analysis Group")
-    #         self.bullet_list(rpt_progs[:15])
-
-    #     if maint_progs:
-    #         self.h3("3.3.3 Data Maintenance Group")
-    #         self.bullet_list(maint_progs[:10])
-
-    #     if not tx_progs and not rpt_progs and not maint_progs:
-    #         self.para("No distinct functional groups identified in the source code analysis.")
-
-    #     self.h2("3.4 Reporting & Extraction Process")
-    #     reports = []
-    #     for jcl in self.jcl_files:
-    #         for ds in jcl.technical_analysis.get('io_datasets', []):
-    #             if isinstance(ds, dict) and ('SYSOUT' in str(ds) or '.RPT' in ds.get('dataset', '')):
-    #                 reports.append([jcl.filename, str(ds.get('dataset', ''))])
-        
-    #     if reports:
-    #         self.para("The following jobs perform extraction and reporting:")
-    #         self.table(["Job", "Output"], reports[:15], [80*mm, 100*mm])
-    #     else:
-    #         self.para("No specific reporting processes identified.")
-
-    # def _render_detailed_logic(self):
-    #     self.h1("4. Detailed Functional Logic")
-        
-    #     self.h2("4.1 Business Rules & Validations")
-    #     rule_count = 0
-    #     sorted_files = sorted(self.code_files, key=lambda x: (x.file_type, x.filename))
-
-    #     for prog in sorted_files:
-    #         rules = prog.business_overview.get('scope', [])
-    #         if not rules:
-    #             rules = prog.technical_analysis.get('functional_capabilities', [])
-    #         if not rules:
-    #             purpose = prog.business_overview.get('purpose', '')
-    #             if purpose and len(purpose) > 20:
-    #                 rules = [s.strip() for s in purpose.split('.') if len(s.strip()) > 10]
-    #         clean_rules = []
-    #         for r in rules:
-    #             r_str = str(r)
-    #             if any(x in r_str.upper() for x in ['CALL ', 'PERFORM ', 'EXEC SQL', 'OPEN FILE', 'CLOSE FILE']):
-    #                 continue
-    #             clean_rules.append(r_str)
-    #         if clean_rules:
-    #             if rule_count < 30: 
-    #                 self.h3(f"Module: {prog.filename}")
-                    
-    #                 if not prog.business_overview.get('scope') and not prog.technical_analysis.get('functional_capabilities'):
-    #                     self.para(f"<i>Summary: {clean_rules[0]}</i>")
-    #                     if len(clean_rules) > 1:
-    #                         self.bullet_list(clean_rules[1:])
-    #                 else:
-    #                     self.bullet_list(clean_rules)
-                    
-    #                 rule_count += 1
-
-    #     if rule_count == 0:
-    #         self.para("No distinct business rules could be isolated from the codebase. Refer to Technical Specification for logic details.")
-
-    #     self.h2("4.2 Data Management Functions")
-    #     inserts, updates, deletes = [], [], []
-    #     for prog in self.code_files:
-    #         ops = (str(prog.technical_analysis.get('key_operations')) + str(prog.technical_analysis.get('data_interactions'))).upper()
-    #         if 'INSERT' in ops: inserts.append(prog.filename)
-    #         if 'UPDATE' in ops or 'REWRITE' in ops: updates.append(prog.filename)
-    #         if 'DELETE' in ops: deletes.append(prog.filename)
-
-    #     self.h3("4.2.1 Create/Insert Logic")
-    #     self.para("Programs adding new system records:")
-    #     self.bullet_list(inserts)
-
-    #     self.h3("4.2.2 Update/Maintain Logic")
-    #     self.para("Programs maintaining existing records:")
-    #     self.bullet_list(updates)
-
-    #     self.h3("4.2.3 Logical Deletion")
-    #     self.para("Programs handling record removal or deactivation:")
-    #     self.bullet_list(deletes)
-
-    #     self.h2("4.3 Transformations")
-    #     transformations = []
-    #     keywords = ['CONVERT', 'TRANSFORM', 'FORMAT', 'CALCULATE', 'MAP', 'NORMALIZE', 'REFORMAT', 'COMPUTE']
-        
-    #     for p in self.code_files:
-    #         sources = p.business_overview.get('scope', []) + \
-    #                   p.technical_analysis.get('functional_capabilities', [])
-            
-    #         for item in sources:
-    #             item_str = str(item)
-    #             if any(k in item_str.upper() for k in keywords) and len(item_str) > 10:
-    #                 transformations.append(f"{p.filename}: {item_str}")
-
-    #     transformations = sorted(list(set(transformations)))
-
-    #     if transformations:
-    #         self.para("The following data transformations and calculations were identified in the codebase:")
-    #         self.bullet_list(transformations)
-    #     else:
-    #         self.para("Standard data movement (MOVE) and arithmetic (COMPUTE) handles most transformations. No complex reformatting logic was explicitly highlighted in the analysis.")
-
     def _render_doc_control(self):
         self.h1("1. Document Control")
         self.h2("1.1 Version Control")
@@ -1909,64 +1494,103 @@ class FunctionalSpecBuilder(BaseBuilder):
         else:
             self.para("No specific functional groups identified.")
 
-        self.h2("3.3 Batch Execution Flow (Data Lineage)")
-        self.para("The following narratives describe how data moves between batch jobs via shared datasets.")
-        import re
-        def normalize_dsn(dsn):
-            return re.sub(r'\(.*?\)', '', str(dsn)).strip().upper()
+        # self.h2("3.3 Batch Execution Flow (Data Lineage)")
+        # self.para("The following narratives describe how data moves between batch jobs via shared datasets.")
+        # import re
+        # def normalize_dsn(dsn):
+        #     return re.sub(r'\(.*?\)', '', str(dsn)).strip().upper()
 
-        producer_map = {}
-        for jcl in self.jcl_files:
-            steps = jcl.technical_analysis.get('steps', [])
-            progs = [s.get('program', '') for s in steps if s.get('program')]
-            prog_str = ", ".join([p for p in progs if p not in ['IEFBR14', 'IEBGENER']][:2]) # Top 2 programs
-            if not prog_str: prog_str = "System Utility"
+        # producer_map = {}
+        # for jcl in self.jcl_files:
+        #     steps = jcl.technical_analysis.get('steps', [])
+        #     progs = [s.get('program', '') for s in steps if s.get('program')]
+        #     prog_str = ", ".join([p for p in progs if p not in ['IEFBR14', 'IEBGENER']][:2]) # Top 2 programs
+        #     if not prog_str: prog_str = "System Utility"
 
-            for ds in jcl.technical_analysis.get('io_datasets', []):
-                if not isinstance(ds, dict): continue
-                usage = str(ds.get('usage', '')).upper()
-                name = normalize_dsn(str(ds.get('dataset', '')))
+        #     for ds in jcl.technical_analysis.get('io_datasets', []):
+        #         if not isinstance(ds, dict): continue
+        #         usage = str(ds.get('usage', '')).upper()
+        #         name = normalize_dsn(str(ds.get('dataset', '')))
 
-                if 'TEMP' in name or 'SYSOUT' in name: continue
-                if 'NEW' in usage or 'WRITE' in usage or 'OUTPUT' in usage:
-                    if name not in producer_map:
-                        producer_map[name] = {"job": jcl.filename, "progs": prog_str}
-        chains_found = False
+        #         if 'TEMP' in name or 'SYSOUT' in name: continue
+        #         if 'NEW' in usage or 'WRITE' in usage or 'OUTPUT' in usage:
+        #             if name not in producer_map:
+        #                 producer_map[name] = {"job": jcl.filename, "progs": prog_str}
+        # chains_found = False
 
-        sorted_jcls = sorted(self.jcl_files, key=lambda x: x.filename)
+        # sorted_jcls = sorted(self.jcl_files, key=lambda x: x.filename)
 
-        for jcl in sorted_jcls:
-            job_dependencies = []
+        # for jcl in sorted_jcls:
+        #     job_dependencies = []
             
-            for ds in jcl.technical_analysis.get('io_datasets', []):
-                if not isinstance(ds, dict): continue
-                usage = str(ds.get('usage', '')).upper()
-                name = normalize_dsn(str(ds.get('dataset', '')))
+        #     for ds in jcl.technical_analysis.get('io_datasets', []):
+        #         if not isinstance(ds, dict): continue
+        #         usage = str(ds.get('usage', '')).upper()
+        #         name = normalize_dsn(str(ds.get('dataset', '')))
 
-                if 'OLD' in usage or 'READ' in usage or 'INPUT' in usage:
-                    producer = producer_map.get(name)
-                    if producer and producer['job'] != jcl.filename:
-                        job_dependencies.append({
-                            "pred_job": producer['job'],
-                            "pred_logic": producer['progs'],
-                            "file": name
-                        })
+        #         if 'OLD' in usage or 'READ' in usage or 'INPUT' in usage:
+        #             producer = producer_map.get(name)
+        #             if producer and producer['job'] != jcl.filename:
+        #                 job_dependencies.append({
+        #                     "pred_job": producer['job'],
+        #                     "pred_logic": producer['progs'],
+        #                     "file": name
+        #                 })
 
-            if job_dependencies:
-                chains_found = True
-                self.h4(f"Flow: Inputs for {jcl.filename}")
-                self.para(f"Job <b>{jcl.filename}</b> relies on data produced by the following upstream processes:")
+        #     if job_dependencies:
+        #         chains_found = True
+        #         self.h4(f"Flow: Inputs for {jcl.filename}")
+        #         self.para(f"Job <b>{jcl.filename}</b> relies on data produced by the following upstream processes:")
                 
-                for dep in job_dependencies:
-                    text = (
-                        f"From <b>{dep['pred_job']}</b> (executing {dep['pred_logic']}): "
-                        f"Receives dataset {dep['file']}."
-                    )
-                    self.bullet(text)
-                self.elements.append(Spacer(1, 4*mm))
+        #         for dep in job_dependencies:
+        #             text = (
+        #                 f"From <b>{dep['pred_job']}</b> (executing {dep['pred_logic']}): "
+        #                 f"Receives dataset {dep['file']}."
+        #             )
+        #             self.bullet(text)
+        #         self.elements.append(Spacer(1, 4*mm))
 
-        if not chains_found:
-            self.para("No direct file-based job chains detected. Jobs may operate as independent silos.")
+        # if not chains_found:
+        #     self.para("No direct file-based job chains detected. Jobs may operate as independent silos.")
+
+        self.h2("3.2 Batch Execution Flow (Data Lineage)")
+        self.para("The following narratives describe the end-to-end processing sequence, including external data entrances and internal job-to-job handoffs.")
+
+        found_any = False
+
+        for jcl in sorted(self.jcl_files, key=lambda x: x.filename):
+            flow = jcl.technical_analysis.get('flow_context', {})
+            
+            # 1. Document External Entrances (The "Monthly Master" fix)
+            ext_in = flow.get('external_inputs', [])
+            if ext_in:
+                found_any = True
+                self.h4(f"External Input: {jcl.filename}")
+                self.para(f"Job <b>{jcl.filename}</b> initiates processing using the following external sources:")
+                for item in ext_in:
+                    self.bullet(f"<b>Input Source:</b> {item}")
+                self.elements.append(Spacer(1, 3*mm))
+
+            # 2. Document Internal Handoffs
+            preds = flow.get('predecessors', [])
+            if preds:
+                found_any = True
+                self.h4(f"Process Chain: {jcl.filename}")
+                self.para(f"Job <b>{jcl.filename}</b> relies on successful completion of upstream processes:")
+                
+                for pred in preds:
+                    # Look for the purpose of the predecessor job in our summaries list
+                    pred_purpose = "Upstream Data Provider"
+                    for s in self.jcl_files:
+                        if s.filename == pred:
+                            pred_purpose = s.business_overview.get('purpose', pred_purpose)
+                            break
+                    
+                    self.bullet(f"<b>Predecessor: {pred}</b> - {pred_purpose}")
+                self.elements.append(Spacer(1, 3*mm))
+
+        if not found_any:
+            self.para("No explicit job-to-job execution chains or external data entrances were identified.")
 
     def _render_detailed_logic(self):
         self.h1("4. Detailed Functional Logic")
@@ -2086,50 +1710,133 @@ class FunctionalSpecBuilder(BaseBuilder):
 
         
         self.h2("6.3 Backup & Recovery Procedures")
-        backups = []
-        for s in self.summaries:
-            text = (str(s.technical_analysis) + str(s.business_overview)).upper()
-            if any(x in text for x in ['BACKUP', 'ADRDSSU', 'REPRO', 'COPY']):
-                backups.append(s.filename)
+        self.para("The following jobs perform specific data protection functions based on utility usage (ADRDSSU/FDR) and output dataset naming.")
+
+        backup_jobs = []
+        backup_utils = ['ADRDSSU', 'FDR', 'DFDSS', 'IDCAMS'] # Strong indicators
         
-        if backups:
-            self.para("The following modules handle backup and recovery:")
-            for b in list(set(backups))[:20]: self.bullet(b)
-        else:
-            self.para("Backup procedures managed via system-level storage groups.")
-
-
-        self.h2("6.4 Archiving Logic")
-        gdg_jobs = [j.filename for j in self.jcl_files if '(+' in str(j.technical_analysis) or '(-' in str(j.technical_analysis)]
-        if gdg_jobs:
-            self.para("The system uses Generation Data Groups (GDG) for automated data retention:")
-            self.bullet_list(gdg_jobs)
-
-        self.h2("6.5 Error Handling Mechanisms") 
-        error_routines = []
-        keywords = ['ABEND', 'EXCEPTION', 'RETURN-CODE', 'STATUS CODE', 'INVALID KEY', 'ON ERROR', 'ROLLBACK']
-        
-        for prog in self.code_files:
-            notes = prog.technical_analysis.get('technical_notes', [])
-            caps = prog.technical_analysis.get('functional_capabilities', [])
-            
-            for note in notes + caps:
-                note_str = str(note)
-                if any(k in note_str.upper() for k in keywords):
-                    if len(note_str) > 10:
-                        error_routines.append(f"{prog.filename}: {note_str}")
-
         for jcl in self.jcl_files:
-            notes = str(jcl.technical_analysis.get('schedule_notes', ''))
-            if 'COND' in notes.upper() or 'RESTART' in notes.upper():
-                error_routines.append(f"{jcl.filename}: Implements batch condition codes (COND) for step control.")
+            is_backup = False
+            reason = ""
 
-        if error_routines:
-            self.para("Specific error handling strategies identified in source code and JCL:")
-            unique_routines = sorted(list(set(error_routines)))
-            self.bullet_list(unique_routines)
+            # Check 1: Utility Usage
+            steps = jcl.technical_analysis.get('steps', [])
+            for step in steps:
+                pgm = str(step.get('program', '')).upper()
+                if pgm in backup_utils:
+                    is_backup = True
+                    reason = f"Executes {pgm}"
+                    break
+            
+            # Check 2: Output Naming Convention (if not already found)
+            if not is_backup:
+                datasets = jcl.technical_analysis.get('io_datasets', [])
+                for ds in datasets:
+                    if isinstance(ds, dict):
+                        name = str(ds.get('dataset', '')).upper()
+                        usage = str(ds.get('usage', '')).upper()
+                        # If creating a file with BACKUP keywords
+                        if ('NEW' in usage or 'OUTPUT' in usage) and \
+                           any(x in name for x in ['.BKUP', '.BACKUP', '.SAFE', '.COPY', '.DUMP']):
+                            is_backup = True
+                            reason = f"Creates backup file: {name}"
+                            break
+
+            if is_backup:
+                backup_jobs.append([jcl.filename, reason])
+
+        if backup_jobs:
+            self.table(["Backup Job", "Mechanism"], backup_jobs, [80*mm, 90*mm])
         else:
-            self.para("Standard return code processing (RC checking) is assumed. No explicit custom error routines (ABEND/ROLLBACK) detected in module summaries.")
+            self.para("No application-level backup jobs detected. Data protection is likely managed via system-level storage group snapshots (SMS) or external scheduling.")
+
+        # --- 6.4 Archiving Logic (FIXED) ---
+        self.h2("6.4 Archiving Logic")
+        self.para("Data retention is managed via Generation Data Groups (GDG) and migration to history datasets.")
+        
+        archiving_evidence = []
+        
+        for jcl in self.jcl_files:
+            datasets = jcl.technical_analysis.get('io_datasets', [])
+            for ds in datasets:
+                if isinstance(ds, dict):
+                    name = str(ds.get('dataset', '')).upper()
+                    usage = str(ds.get('usage', '')).upper()
+                    
+                    # Logic 1: GDG Creation (+1)
+                    if '(+' in name and ('NEW' in usage or 'OUTPUT' in usage):
+                        base_name = name.split('(')[0]
+                        archiving_evidence.append([jcl.filename, f"Creates GDG Version: {base_name}"])
+                    
+                    # Logic 2: Writing to History files
+                    if ('HIST' in name or 'ARC' in name) and ('NEW' in usage or 'MOD' in usage):
+                         archiving_evidence.append([jcl.filename, f"Appends to History: {name}"])
+
+        if archiving_evidence:
+            # Deduplicate
+            unique_arch = [list(x) for x in set(tuple(x) for x in archiving_evidence)]
+            unique_arch.sort(key=lambda x: x[0])
+            self.table(["Job Name", "Archiving Action"], unique_arch, [80*mm, 90*mm])
+        else:
+            self.para("No explicit archival logic (GDG generation or History file updates) detected in JCL.")
+
+        self.h1("6.5 Error Handling Mechanisms")
+        self.para("This section describes the system's functional response to processing errors, data exceptions, and technical failures, organized by module.")
+
+        keywords = {
+            'ABEND': 'Terminal Failure (Job stops immediately)',
+            'ROLLBACK': 'Data Reversal (Database changes are undone)',
+            'INVALID KEY': 'Lookup Failure (Missing record handling)',
+            'REJECT': 'Validation Failure (Record bypassed and logged)',
+            'SQLCODE': 'Database Exception',
+            'ERROR-LOG': 'Audit Logging',
+            'RETURN-CODE': 'Batch Completion Signaling'
+        }
+
+        found_logic = False
+        # Filter for programs that actually have error logic extracted
+        for prog in self.code_files:
+            tech_notes = prog.technical_analysis.get('technical_notes', [])
+            capabilities = prog.technical_analysis.get('functional_capabilities', [])
+            all_logic = tech_notes + capabilities
+
+            module_error_responses = []
+            for item in all_logic:
+                item_str = str(item)
+                if any(k in item_str.upper() for k in keywords.keys()):
+                    if len(item_str) > 10: # Avoid one-word garbage
+                        module_error_responses.append(item_str)
+
+            if module_error_responses:
+                found_logic = True
+                self.h3(f"Module: {prog.filename}")
+                
+                # Determine a "Strategy Type" based on the keywords found
+                strategy = "Standard Validation"
+                if 'ABEND' in str(module_error_responses).upper(): strategy = "Critical Stop / Abend"
+                elif 'ROLLBACK' in str(module_error_responses).upper(): strategy = "Transactional Integrity (Rollback)"
+                elif 'REJECT' in str(module_error_responses).upper(): strategy = "Data Quality Rejection"
+                
+                self.para(f"<b>Error Strategy:</b> {strategy}")
+                
+                # List the specific functional behaviors
+                self.bullet_list(module_error_responses)
+                # self.elements.append(Spacer(1, 2*mm))
+
+        jcl_errors = []
+        for jcl in self.jcl_files:
+            notes = str(jcl.technical_analysis.get('schedule_notes', '')).upper()
+            if 'COND' in notes or 'RESTART' in notes:
+                jcl_errors.append(f"<b>{jcl.filename}</b>: Manages step-level dependencies. If a previous step fails, subsequent logic is bypassed to prevent data corruption.")
+
+        if jcl_errors:
+            self.h3("Batch Orchestration Error Control")
+            self.para("At the JCL level, the following jobs utilize Condition Codes (COND) to control functional flow during partial failures:")
+            for jcl_err in jcl_errors:
+                self.bullet(jcl_err)
+
+        if not found_logic and not jcl_errors:
+            self.para("The system utilizes standard mainframe return code (RC) processing. Modules return RC=00 for success and RC > 04 for failures, which are captured in the system's standard job output (SYSOUT).")
 
         
     def _render_appendices(self):
