@@ -161,6 +161,7 @@ EndGlobal
             (core_path / "Services").mkdir(exist_ok=True)
             (core_path / "Interfaces").mkdir(exist_ok=True)
             (core_path / "Enums").mkdir(exist_ok=True)
+            (core_path / "Configuration").mkdir(exist_ok=True)
             
             # Create Infrastructure.csproj
             infra_csproj = '''<Project Sdk="Microsoft.NET.Sdk">
@@ -285,10 +286,16 @@ return exitCode;
             tests_path = output_dir / "tests"
             tests_path.mkdir(parents=True, exist_ok=True)
             (tests_path / "Tests.csproj").write_text(tests_csproj)
+
+            # Create Test subdirectories
+            (tests_path / "Core" / "Services").mkdir(parents=True, exist_ok=True)
+            (tests_path / "Infrastructure" / "Repositories").mkdir(parents=True, exist_ok=True)
+            (tests_path / "Worker" / "Jobs").mkdir(parents=True, exist_ok=True)
             
-            # Create scripts/jobs directory
+            # Create scripts directories
             scripts_path = output_dir / "scripts" / "jobs"
             scripts_path.mkdir(parents=True, exist_ok=True)
+            (output_dir / "scripts" / "common").mkdir(parents=True, exist_ok=True)
             
             # Create data directories
             (output_dir / "data" / "input").mkdir(parents=True, exist_ok=True)
@@ -343,8 +350,13 @@ You can now write code files using write_code_file()."""
                 return (f"Error: Extension '{ext}' is not allowed. "
                         f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}")
             
-            # Create parent directories
-            target.parent.mkdir(parents=True, exist_ok=True)
+            # Block arbitrary markdown files (prevent pollution)
+            if ext == ".md" and target.name not in ("README.md", "setup.md"):
+                return "Error: Only README.md and setup.md are allowed. No other markdown files."
+            
+            # Enforce directory structure (Agent cannot create new folders)
+            if not target.parent.exists():
+                return f"Error: Directory '{target.parent.name}' does not exist. You must use the existing folder structure."
             
             # Write file
             target.write_text(content, encoding="utf-8")
@@ -485,9 +497,8 @@ You can now write code files using write_code_file()."""
     return [
         initialize_solution,
         write_code_file,
-        create_directory,
+        # create_directory, # Disabled to enforce structure
         list_generated_files,
         remove_file,
-        remove_directory,
         list_batch_components,
     ]

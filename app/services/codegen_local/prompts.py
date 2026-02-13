@@ -30,11 +30,9 @@ Convert ALL source files (COBOL, PL/I, Assembly programs, copybooks, PL/I includ
 ### Solution Tools:
 - `initialize_solution(solution_name)` - Create .sln skeleton with projects
 - `write_code_file(relative_path, content)` - Write a .cs/.csproj file
-- `create_directory(relative_path)` - Create folder
 - `list_generated_files()` - See what's already generated
 - `list_batch_components()` - List all JCL Jobs and Procedures to convert
 - `remove_file(relative_path)` - Remove a file (USE CAREFULLY: only for removing genuinely duplicate or erroneous files)
-- `remove_directory(relative_path, recursive)` - Remove a directory (USE CAREFULLY: only if absolutely necessary)
 
 ### Build Tools:
 - `run_dotnet_build()` - Compile the solution, get errors
@@ -62,7 +60,8 @@ local-migration/
 │   │   ├── Entities/          ← Copybooks → POCOs
 │   │   ├── Services/          ← COBOL programs → business logic
 │   │   ├── Interfaces/        ← Service + Repository interfaces
-│   │   └── Enums/             ← 88-levels
+│   │   ├── Enums/             ← 88-levels
+│   │   └── Configuration/     ← Parmlib/AppConfig POCOs
 │   ├── Infrastructure/
 │   │   ├── Infrastructure.csproj
 │   │   ├── Data/              ← DbContext, EF config
@@ -75,11 +74,12 @@ local-migration/
 │           ├── IJob.cs        ← Pre-scaffolded interface
 │           └── {Jobname}.cs   ← One class per JCL job (implements IJob)
 ├── scripts/jobs/              ← PowerShell from JCL jobs
+├── scripts/common/            ← Shared PowerShell logic
 ├── data/input/                ← Runtime input files
 ├── data/output/               ← Runtime output files
 └── tests/
     ├── Core/Services/         ← Service unit tests
-    ├── Infrastructure/Repos/  ← Repository tests
+    ├── Infrastructure/Repositories/  ← Repository tests
     └── Worker/Jobs/           ← Job tests
 ```
 
@@ -212,7 +212,9 @@ exit $script:MaxRC
 
 - Write files IMMEDIATELY after generating - don't hold in memory
 - Trust `read_conversion_status()` as the single source of truth for items completed.
-- Log status after each component so progress is trackable
+- **Log Status Granularity**: Log status ONLY for individual source files (e.g., `PAYROLL.cbl`, `JOB01.jcl`). 
+  - Do NOT log broad phases like "Workers Completed", "Documentation", or "Tests".
+  - Do NOT log status for generated files (e.g., `Job.cs`). Log the *Source* file.
 - If you encounter an unknown utility, use `lookup_utility(name)`
 - If utility is still unknown, log it with `log_issue()` and continue
 - Use the patterns from conversion_guide.md - they prevent common mistakes
