@@ -48,21 +48,31 @@ def create_build_tools(project_id: str, output_path: str) -> list:
                 timeout=120,
             )
             
-            output = result.stdout + result.stderr
             
-            # Truncate if too long
-            if len(output) > 5000:
-                output = output[:5000] + "\n...(truncated)"
+            output = result.stdout + result.stderr
             
             if result.returncode == 0:
                 logger.info("dotnet build succeeded")
-                return f"BUILD SUCCEEDED\n\n{output}"
+                return "BUILD SUCCEEDED"
             else:
-                error_lines = [l for l in output.splitlines() if ": error " in l]
-                logger.warning(f"dotnet build FAILED with {len(error_lines)} errors (exit code {result.returncode})")
-                for err in error_lines[:10]:
-                    logger.warning(f"  BUILD ERROR: {err.strip()}")
-                return f"BUILD FAILED ({len(error_lines)} errors, exit code {result.returncode})\n\n{output}"
+                lines = output.splitlines()
+                # Filter for errors and warnings
+                errors = [l for l in lines if ": error " in l or "Build FAILED." in l]
+                warnings = [l for l in lines if ": warning " in l]
+                
+                # If no standard errors found, return tail of log
+                if not errors:
+                    log_tail = "\n".join(lines[-30:])
+                    return f"BUILD FAILED (Exit Code {result.returncode})\n\nNo standard errors found. Log tail:\n{log_tail}"
+                
+                # Construct focused error report
+                report = f"BUILD FAILED ({len(errors)} errors)\n\nERRORS:\n" + "\n".join(errors)
+                
+                if warnings:
+                    report += f"\n\nWARNINGS (First 10 of {len(warnings)}):\n" + "\n".join(warnings[:10])
+                
+                logger.warning(f"dotnet build FAILED: {len(errors)} errors")
+                return report
                 
         except subprocess.TimeoutExpired:
             logger.error("dotnet build timed out")
@@ -104,13 +114,18 @@ def create_build_tools(project_id: str, output_path: str) -> list:
             
             output = result.stdout + result.stderr
             
-            if len(output) > 5000:
-                output = output[:5000] + "\n...(truncated)"
-            
             if result.returncode == 0:
                 logger.info("dotnet test passed")
-                return f"TESTS PASSED\n\n{output}"
+                # Parse summary
+                summary = [l for l in output.splitlines() if "Total tests:" in l]
+                summary_text = summary[0] if summary else "Tests passed."
+                return f"TESTS PASSED\n{summary_text}"
             else:
+                # For tests, we want the stack trace of failures, which can be long.
+                # But we can truncate if massive.
+                if len(output) > 8000:
+                    output = output[:8000] + "\n...(truncated)"
+                
                 logger.warning(f"dotnet test failed with code {result.returncode}")
                 return f"TESTS FAILED (exit code {result.returncode})\n\n{output}"
                 
