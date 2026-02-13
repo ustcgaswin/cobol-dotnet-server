@@ -158,10 +158,12 @@ You MUST call these tools IN ORDER before writing ANY code:
       - **Job**: Write `tests/Worker.Tests/Jobs/JobnameTests.cs` for each JCL job class.
    h. Log status with `log_component_status()`
 3. **For Each JCL Job**: Create `src/Worker/Jobs/{Jobname}.cs` implementing `IJob`. Register it in `Program.cs` with `AddKeyedTransient<IJob, Jobname>("Jobname")`. Create the matching `scripts/jobs/run-{jobname}.ps1`.
-4. **Build**: Call `run_dotnet_build()` to check for errors
-5. **Fix Errors**: If build fails, read errors and fix the code
-6. **Test**: Call `run_dotnet_test()` when build succeeds
-7. **Verify Coverage**: Review the functionality catalog and ensure all functionalities (F001, F002, etc.) have been converted. Log any missing functionalities.
+4. **Verify Coverage**: Review the functionality catalog and ensure all functionalities (F001, F002, etc.) have been converted. Log any missing functionalities.
+5. **Build & Fix (AFTER all code is written)**: Once ALL components, tests, and scripts are generated:
+   a. Call `run_dotnet_build()` to compile the full solution.
+   b. If build fails, read the errors, fix the code, and build again. Iterate until build succeeds.
+   c. Call `run_dotnet_test()` once build passes. Fix any failing tests and re-run.
+   d. Do NOT call build/test tools during step 2 or 3. Write all code first, then build once.
 
 ## Job Orchestration (CRITICAL)
 
@@ -292,9 +294,9 @@ Write clean code that passes these analyzers.
 - Always log errors with `log_issue()` so they can be reviewed
 
 ## Efficiency & Tool Usage
-- **Batch Your Builds**: Do NOT run `dotnet build` or `dotnet test` after every single file change. This is slow and wasteful.
-- **Implement First**: Implement a complete component (e.g. Entity + Repo + Interface) before running a build.
-- **Test When Needed**: Run tests only when you need to verify specific logic or debug a failure.
+- **Build ONLY After All Code Is Written**: Do NOT run `run_dotnet_build()` or `run_dotnet_test()` until you have finished writing ALL components, tests, and scripts. Write everything first, then build once.
+- **Iterative Fix Cycle**: If build fails, fix errors and rebuild. If tests fail, fix and retest. But do NOT build between individual file writes — that wastes time and tokens.
+- **One Build-Fix Cycle**: Aim to build once, fix all errors, then test once, fix all failures. Do not interleave building with code generation.
 
 ## Verification Compliance (CRITICAL)
 
@@ -331,7 +333,8 @@ When you believe you are done, the system runs a Verification step.
 2.  **Worker Classes**: Does EVERY `.ps1` script call a valid C# Job class in `src/Worker/Jobs`?
 3.  **Test Coverage**: Does EVERY logic file in `src/Core` and `src/Worker` have a test file in `tests/`?
 4.  **Functionality Tags**: Did you tag implemented functionalities with `// Implements: Fxxx`?
-5.  **Build**: Did you run `dotnet build` successfully?
+5.  **Build**: Did you run `run_dotnet_build()` successfully AFTER all code was written?
+6.  **Tests**: Did you run `run_dotnet_test()` and all tests pass?
 
 ## CRITICAL: COMPLETION CRITERIA
 

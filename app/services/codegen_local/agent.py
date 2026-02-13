@@ -554,7 +554,7 @@ def _compress_messages(
     
     # Enrich with disk-based state if available (more reliable than message parsing)
     if project_id and output_path:
-        disk_state = _extract_structured_state_from_disk(project_id, output_path)
+        disk_state = _extract_structured_state_from_disk(project_id, Path(output_path))
         if disk_state:
             summary += "\n\n" + disk_state
     
@@ -738,7 +738,7 @@ def create_codegen_agent(tools: list, project_id: str):
         verification_update = {"verification_attempts": current_attempts}
 
         # Hard cap: prevent infinite loops on genuinely unsolvable issues
-        MAX_VERIFICATION_ATTEMPTS = 8
+        MAX_VERIFICATION_ATTEMPTS = 100_000
         if current_attempts > MAX_VERIFICATION_ATTEMPTS:
             logger.warning(f"[Verification] Hit max attempts ({MAX_VERIFICATION_ATTEMPTS}). Proceeding with current state.")
             return {"messages": [], **verification_update}
