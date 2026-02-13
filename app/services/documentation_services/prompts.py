@@ -13,98 +13,173 @@ CRITICAL OUTPUT INSTRUCTIONS:
 6. Ensure all arrays/lists are populated if data exists, otherwise empty list [].
 """
 
+# CUMULATIVE_MERGE_INSTRUCTION = """
+# This is a chunked analysis. 
+# 1. Review 'previous_summary' (JSON).
+# 2. Analyze 'chunk_code'.
+# 3. MERGE the new findings into the JSON structure. 
+#    - Add new functionalities found.
+#    - Update file/table operations.
+#    - Do NOT overwrite existing valid data; extend lists.
+# """
+
+# EXECUTIVE_SUMMARY_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+
+# CONTEXT:
+# You are documenting a Mainframe System.
+# Below are the System Metrics, descriptions of critical modules, and a harvest of raw business rules found in the code.
+
+# SYSTEM METRICS:
+# {metrics}
+
+# CRITICAL MODULES:
+# {top_modules}
+
+# TASK:
+# Generate the "Introduction" and "System Architecture" content.
+# Crucially, you must synthesize the "Raw Business Rules" into high-level Processing Boundaries (e.g., Data retention limits, fiscal year logic, purging criteria).
+
+# REQUIRED JSON STRUCTURE:
+# {{
+#     "business_purpose": "2-3 sentences explaining what this system achieves.",
+    
+#     "business_scope": [
+#         "Bullet point 1",
+#         "Bullet point 2"
+#     ],
+
+#     "system_processing_boundaries": [
+#         "Constraint 1 (e.g., 'Data history is retained for 72 months for active accounts')",
+#         "Constraint 2 (e.g., 'Transactions are batched by Region ID')",
+#         "Constraint 3 (e.g., 'Loading process validates header dates against control file')"
+#     ],
+    
+#     "system_landscape": "Technical summary sentence.",
+    
+#     "glossary": [
+#         {{ "term": "Acronym", "definition": "Definition" }}
+#     ],
+
+#     "functional_flow_diagram": {{
+#         "description": "Flow description.",
+#         "mermaid_code": "sequenceDiagram...",
+#         "steps_table": [
+#             {{ "actor": "Actor", "action": "Action", "outcome": "Outcome" }}
+#         ]
+#     }},
+
+#     "schedule_frequency": {{ "frequency": "...", "start_time": "..." }},
+#     "data_overview": {{ "inputs": [], "outputs": [] }},
+#     "business_risks": [],
+#     "external_interfaces": [],
+#     "ownership": {{ "business_owner": "...", "it_owner": "..." }}
+# }}
+# """
+
+# COBOL_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+# {CUMULATIVE_MERGE_INSTRUCTION}
+
+# CURRENT CODE:
+# {chunk}
+
+# TASK:
+# Extract the BUSINESS RULES. If you see an IF statement, translate it to a functional requirement. 
+# (e.g., IF BALANCE < 0 translates to 'System prevents processing for overdrawn accounts').
+
+# REQUIRED JSON STRUCTURE:
+# {{
+#     "filename": "{filename}",
+#     "type": "COBOL",
+#     "business_overview": {{
+#         "title": "Business Process Name",
+#         "purpose": "DETAILED 3-4 sentence business explanation.",
+#         "functional_category": "Select: Transaction Processing, Reporting, Data Maintenance, or Utility",
+#         "business_rules": [
+#             "Rule 1: [Detailed rule extracted from IF/EVALUATE logic]",
+#             "Rule 2: [Detailed rule extracted from logic]"
+#         ],
+#         "key_data_entities": ["Specific entities from the DATA DIVISION"]
+#     }},
+#     "technical_analysis": {{
+#         "data_interactions": [
+#             {{ "target": "Table/File", "operation": "READ/WRITE/UPDATE" }}
+#         ],
+#         "key_operations": ["Logical steps taken"],
+#         "technical_notes": ["Error codes, specific IBM utilities used"]
+#     }}
+# }}
+# """
+
 CUMULATIVE_MERGE_INSTRUCTION = """
 This is a chunked analysis. 
 1. Review 'previous_summary' (JSON).
 2. Analyze 'chunk_code'.
-3. MERGE the new findings into the JSON structure. 
-   - Add new functionalities found.
-   - Update file/table operations.
-   - Do NOT overwrite existing valid data; extend lists.
+3. MERGE findings. 
+   - Focus on BUSINESS LOGIC (Validations, Calculations, Decisions).
+   - Ignore boilerplate (OPEN/CLOSE, Variable definitions).
 """
 
 EXECUTIVE_SUMMARY_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
 CONTEXT:
-You are documenting a Mainframe System.
-Below are the System Metrics and the descriptions of the most critical modules (God Classes).
+You are a Lead Business Analyst documenting a Legacy System for non-technical stakeholders.
+Below are the System Metrics and descriptions of core modules.
 
 SYSTEM METRICS:
 {metrics}
 
-CRITICAL MODULES:
+CORE MODULE SUMMARIES:
 {top_modules}
 
 TASK:
-Generate the content for the "Introduction" and "System Architecture" sections of the Master Documentation.
-Infer the business context based on the module names (e.g., 'PAY*' -> Payroll) and descriptions.
+Write a comprehensive Functional System Overview. 
+DO NOT mention specific file names, JCL steps, or database column types.
+Focus on the Business Value, User Process, and Data Lifecycle.
 
 REQUIRED JSON STRUCTURE:
 {{
-    "business_purpose": "2-3 sentences explaining what this system achieves (e.g., 'Daily Merchant Settlement').",
+    "business_purpose": "2 sentences. High-level goal (e.g., 'Manages end-of-day reconciliation...').",
     
-    "business_scope": [
-        "Bullet point 1 (e.g., 'Processes daily batches')",
-        "Bullet point 2 (e.g., 'Generates General Ledger postings')"
-    ],
+    "executive_narrative": "3-4 detailed paragraphs describing the system's role in the organization. Explain what data comes in, what business rules are applied (in general terms), and what reports/outputs are generated. Write this like a magazine article about the software.",
+
+    "technical_summary": "A detailed narrative (3-4 paragraphs) describing the technical architecture. Focus on how JCL orchestrates the COBOL/PLI modules, how data flows through files (VSAM/GDG) and tables (DB2), and the overall execution pattern (Batch vs. Online).",
     
-    "system_landscape": "A technical summary sentence. Example: 'The system operates within a z/OS environment utilizing DB2 for persistence, CICS for online transactions, and JES2 for batch orchestration.' (Derive this from the SYSTEM METRICS technologies).",
-    
-    "glossary": [
-        {{ "term": "Acronym found (e.g., CATO)", "definition": "Inferred definition or 'System-specific term'" }},
-        {{ "term": "GVAP", "definition": "Inferred definition" }}
+    "key_business_processes": [
+        {{
+            "process_name": "Name (e.g., Transaction Ingestion)",
+            "description": "Paragraph describing this flow from a business perspective."
+        }},
+        {{
+            "process_name": "Name (e.g., Monthly Reporting)",
+            "description": "Paragraph describing this flow."
+        }}
     ],
 
     "functional_flow_diagram": {{
-        "description": "A paragraph describing the end-to-end data lifecycle.",
-        "mermaid_code": "Generate a MermaidJS Sequence Diagram string. Start with 'sequenceDiagram'. Define participants like 'External System', 'Batch Job', 'Database', 'Reporting'. Show the flow of data.",
+        "description": "Brief description of the flow.",
+        "mermaid_code": "sequenceDiagram\\n    participant User/External\\n    participant System\\n    participant Database\\n    participant Reports\\n    User/External->>System: Sends Input Data\\n    System->>Database: Validates & Updates Records\\n    System->>Reports: Generates Audit Logs\\n    Reports-->>User/External: Delivers Final Output",
         "steps_table": [
-            {{ "actor": "e.g. Upstream Feed", "action": "Sends file", "outcome": "Data Ingested" }},
-            {{ "actor": "Batch Job", "action": "Validates & Processes", "outcome": "DB2 Updated" }},
-            {{ "actor": "Reporting", "action": "Generates Output", "outcome": "Report Distrubuted" }}
+            {{ "actor": "External Source", "action": "Submits Data", "outcome": "Processing Starts" }}
         ]
     }},
 
-    "process_flow_steps": [
-        "Step 1 (e.g., 'Ingest ISO8583')",
-        "Step 2 (e.g., 'Calculate Fees')"
-    ],
-    
-    "schedule_frequency": {{
-        "frequency": "e.g., Daily (Weekdays) or Real-time",
-        "start_time": "Inferred start time or 'Event Driven'",
-        "sla_window": "Inferred or 'Standard Batch Window'"
-    }},
-    
-    "data_overview": {{
-        "inputs": ["List of input data types inferred from file names"],
-        "outputs": ["List of output artifacts/reports"]
-    }},
-    
-    "business_risks": [
-        "Risk 1 (e.g., 'Delays impact settlement')",
-        "Risk 2"
-    ],
-    
-    "external_interfaces": [
-        {{ "interface": "Name", "direction": "Inbound/Outbound", "description": "Short desc" }}
-    ],
-    
-    "ownership": {{
-        "business_owner": "Inferred Department (e.g., Finance Ops)",
-        "it_owner": "Inferred Team (e.g., Mainframe Batch Support)"
-    }}
+    "glossary": [
+        {{ "term": "Acronym", "definition": "Business Definition" }}
+    ]
 }}
 """
 
 COBOL_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 {CUMULATIVE_MERGE_INSTRUCTION}
 
-PREVIOUS SUMMARY JSON:
-{previous_summary}
-
 CURRENT CODE CHUNK:
 {chunk}
+
+TASK:
+1.**Business Analyst View**. Read the code and explain the **Business Logic** in plain English.
+Translate "IF AMT > 0" to "Ensures transaction amount is positive."
+Translate "EXEC SQL UPDATE" to "Updates the customer ledger."
+2. **Systems Programmer View:** Extract the low-level **Execution Flow** (PERFORM chains, Loops, SQL Cursors) for the Technical Analysis.
 
 REQUIRED JSON STRUCTURE:
 {{
@@ -112,37 +187,170 @@ REQUIRED JSON STRUCTURE:
     "type": "COBOL",
     
     "business_overview": {{
-        "title": "Business Process Name (Inferred)",
-        "purpose": "2-3 sentences explaining the business goal.",
-        "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
+        "title": "Business Process Name",
+        "purpose": "1 sentence goal.",
+        "functional_category": "Transaction Processing / Reporting / Data Maintenance",
+        
+        "functional_description": "A detailed paragraph (3-5 sentences) explaining what this module does in business terms. Do NOT mention variable names or 'GO TO'. Explain the RULES.",
+        
         "scope": [
-            "Business rules handled (e.g. 'Calculates Interest')",
-            "Data boundaries (e.g. 'Active Accounts only')"
+            "Rule 1: (e.g. Accounts must be active)",
+            "Rule 2: (e.g. Tax calculated at 5%)"
         ],
         "key_data_entities": [
-            "Entities touched (e.g. 'Customer', 'Ledger')"
+            "Customer", "Account"
         ]
     }},
 
     "technical_analysis": {{
-        "functional_capabilities": [
-            "Specific logic point 1",
-            "Specific logic point 2"
-        ],
-        "key_operations": [
-            "File I/O details",
-            "Subroutine calls"
-        ],
+        "functional_capabilities": ["Technical logic points"],
+        "key_operations": ["File I/O"],
         "data_interactions": [
             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
-        "technical_notes": [
-            "Error handling specifics",
-            "Performance notes"
-        ]
+        
+        "execution_flow": [
+            "1. Initialization (Open Files)",
+            "2. Main Processing Loop (Perform 2000-PROCESS)",
+            "3. Database Update (EXEC SQL)",
+            "4. Termination (Close Files)"
+        ],
+        
+        "technical_notes": ["Error handling", "Performance notes"]
     }}
 }}
 """
+
+# PLI_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+# {CUMULATIVE_MERGE_INSTRUCTION}
+
+# PREVIOUS SUMMARY JSON:
+# {previous_summary}
+
+# CURRENT CODE CHUNK:
+# {chunk}
+
+# REQUIRED JSON STRUCTURE:
+# {{
+#     "filename": "From metadata",
+#     "type": "PLI",
+
+#     "business_overview": {{
+#         "title": "Process Name",
+#         "purpose": "Business goal description.",
+#         "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
+#         "scope": ["Business logic scope"],
+#         "key_data_entities": ["Entities processed"]
+#     }},
+
+#     "technical_analysis": {{
+#         "functional_capabilities": ["Specific procedure logic"],
+#         "key_operations": ["I/O and Calls"],
+#         "data_interactions": [
+#             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+#         ],
+#         "technical_notes": ["Memory/Pointer notes"]
+#     }}
+# }}
+# """
+
+# ASSEMBLY_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+# {CUMULATIVE_MERGE_INSTRUCTION}
+
+# PREVIOUS SUMMARY JSON:
+# {previous_summary}
+
+# CURRENT CODE CHUNK:
+# {chunk}
+
+# REQUIRED JSON STRUCTURE:
+# {{
+#     "filename": "From metadata",
+#     "type": "ASSEMBLY",
+
+#     "business_overview": {{
+#         "title": "System Module Name",
+#         "purpose": "What low-level function does this perform? (e.g. 'Date conversion routine', 'I/O Driver').",
+#         "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
+#         "scope": [
+#             "Functions provided",
+#             "System interactions"
+#         ],
+#         "key_data_entities": [
+#             "Data areas or Control blocks accessed"
+#         ]
+#     }},
+
+#     "technical_analysis": {{
+#         "register_usage": [
+#             "R12: Base Register",
+#             "R15: Return Code"
+#         ],
+#         "functional_capabilities": [
+#             "Specific logic flow",
+#             "Bit manipulation or arithmetic"
+#         ],
+#         "key_operations": [
+#             "Macros used (GETMAIN, WTOR, LINK)",
+#             "System services accessed"
+#         ],
+#         "data_interactions": [
+#             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+#         ],
+#         "technical_notes": [
+#             "Reentrancy considerations",
+#             "Addressing modes (AMODE/RMODE)"
+#         ]
+#     }}
+# }}
+# """
+
+# REXX_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
+# {CUMULATIVE_MERGE_INSTRUCTION}
+
+# PREVIOUS SUMMARY JSON:
+# {previous_summary}
+
+# CURRENT CODE CHUNK:
+# {chunk}
+
+# REQUIRED JSON STRUCTURE:
+# {{
+#     "filename": "From metadata",
+#     "type": "REXX",
+
+#     "business_overview": {{
+#         "title": "Automation Process",
+#         "purpose": "What manual task does this script automate? (e.g. 'Daily Report Bursting').",
+#         "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
+#         "scope": [
+#             "Tasks performed",
+#             "Systems interacted with (TSO, ISPF, DB2)"
+#         ],
+#         "key_data_entities": [
+#             "Files moved/renamed",
+#             "Jobs submitted"
+#         ]
+#     }},
+
+#     "technical_analysis": {{
+#         "automation_tasks": [
+#             "Specific automation steps"
+#         ],
+#         "external_utilities": [
+#             "TSO Commands (ALLOC, FREE)",
+#             "ISPF Services (FTOPEN, FTCLOSE)"
+#         ],
+#         "data_interactions": [
+#             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+#         ],
+#         "technical_notes": [
+#             "Parsing logic",
+#             "Error trapping (SIGNAL ON ERROR)"
+#         ]
+#     }}
+# }}
+# """
 
 PLI_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 {CUMULATIVE_MERGE_INSTRUCTION}
@@ -153,15 +361,21 @@ PREVIOUS SUMMARY JSON:
 CURRENT CODE CHUNK:
 {chunk}
 
+TASK:
+Act as a Business Analyst. Explain the PL/I logic in plain English. Also extract control flow for the technical analysis.
+
 REQUIRED JSON STRUCTURE:
 {{
-    "filename": "From metadata",
+    "filename": "{filename}",
     "type": "PLI",
 
     "business_overview": {{
         "title": "Process Name",
         "purpose": "Business goal description.",
         "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
+        
+        "functional_description": "A detailed paragraph (3-5 sentences) explaining what this module does in business terms. Describe the core logic and decisions made.",
+        
         "scope": ["Business logic scope"],
         "key_data_entities": ["Entities processed"]
     }},
@@ -170,7 +384,12 @@ REQUIRED JSON STRUCTURE:
         "functional_capabilities": ["Specific procedure logic"],
         "key_operations": ["I/O and Calls"],
         "data_interactions": [
-            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+            {{ "target": "Table/File", "operation": "Access Type" }}
+        ],
+        "execution_flow": [
+            "1. Proc Entry",
+            "2. Logic Step A",
+            "3. Logic Step B"
         ],
         "technical_notes": ["Memory/Pointer notes"]
     }}
@@ -186,44 +405,39 @@ PREVIOUS SUMMARY JSON:
 CURRENT CODE CHUNK:
 {chunk}
 
+TASK:
+Identify the high-level business or system function this Assembly code serves. Also extract the register/macro logic for technical analysis.
+
 REQUIRED JSON STRUCTURE:
 {{
-    "filename": "From metadata",
+    "filename": "{filename}",
     "type": "ASSEMBLY",
 
     "business_overview": {{
         "title": "System Module Name",
-        "purpose": "What low-level function does this perform? (e.g. 'Date conversion routine', 'I/O Driver').",
+        "purpose": "What low-level function does this perform? (e.g. 'Date conversion routine').",
         "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
-        "scope": [
-            "Functions provided",
-            "System interactions"
-        ],
-        "key_data_entities": [
-            "Data areas or Control blocks accessed"
-        ]
+        
+        "functional_description": "A detailed paragraph explaining the role of this module in the system. Even though this is low-level, explain the result it produces for the business.",
+        
+        "scope": ["Functions provided"],
+        "key_data_entities": ["Data areas or Control blocks accessed"]
     }},
 
     "technical_analysis": {{
-        "register_usage": [
-            "R12: Base Register",
-            "R15: Return Code"
-        ],
-        "functional_capabilities": [
-            "Specific logic flow",
-            "Bit manipulation or arithmetic"
-        ],
-        "key_operations": [
-            "Macros used (GETMAIN, WTOR, LINK)",
-            "System services accessed"
-        ],
+        "register_usage": ["R12: Base Register", "R15: Return Code"],
+        "functional_capabilities": ["Specific logic flow"],
+        "key_operations": ["Macros used (GETMAIN, WTOR, LINK)"],
         "data_interactions": [
             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
-        "technical_notes": [
-            "Reentrancy considerations",
-            "Addressing modes (AMODE/RMODE)"
-        ]
+        "execution_flow": [
+            "1. Save Registers (SAVE)",
+            "2. Establish Addressability",
+            "3. Perform Logic",
+            "4. Restore Registers & Return"
+        ],
+        "technical_notes": ["Addressing modes (AMODE/RMODE)"]
     }}
 }}
 """
@@ -237,40 +451,38 @@ PREVIOUS SUMMARY JSON:
 CURRENT CODE CHUNK:
 {chunk}
 
+TASK:
+Explain the automation logic and the business process it supports. Also extract the command flow for the technical analysis
+
 REQUIRED JSON STRUCTURE:
 {{
-    "filename": "From metadata",
+    "filename": "{filename}",
     "type": "REXX",
 
     "business_overview": {{
         "title": "Automation Process",
-        "purpose": "What manual task does this script automate? (e.g. 'Daily Report Bursting').",
+        "purpose": "What manual task does this script automate?",
         "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
-        "scope": [
-            "Tasks performed",
-            "Systems interacted with (TSO, ISPF, DB2)"
-        ],
-        "key_data_entities": [
-            "Files moved/renamed",
-            "Jobs submitted"
-        ]
+        
+        "functional_description": "A detailed paragraph explaining the workflow this REXX script executes and its role in orchestration.",
+        
+        "scope": ["Tasks performed", "Systems interacted with"],
+        "key_data_entities": ["Files moved/renamed", "Jobs submitted"]
     }},
 
     "technical_analysis": {{
-        "automation_tasks": [
-            "Specific automation steps"
-        ],
-        "external_utilities": [
-            "TSO Commands (ALLOC, FREE)",
-            "ISPF Services (FTOPEN, FTCLOSE)"
-        ],
+        "automation_tasks": ["Specific automation steps"],
+        "external_utilities": ["TSO Commands (ALLOC, FREE)"],
         "data_interactions": [
             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
-        "technical_notes": [
-            "Parsing logic",
-            "Error trapping (SIGNAL ON ERROR)"
-        ]
+        "execution_flow": [
+            "1. Parse Arguments",
+            "2. Allocate Datasets",
+            "3. Call External Program",
+            "4. Free Datasets"
+        ],
+        "technical_notes": ["Error trapping (SIGNAL ON ERROR)"]
     }}
 }}
 """

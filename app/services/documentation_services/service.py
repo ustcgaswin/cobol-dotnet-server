@@ -403,10 +403,14 @@ class DocumentationService:
         except Exception as e:
             logger.error(f"Failed to update project status: {e}")        
     
-    async def _generate_system_summary(self, metrics: SystemMetrics, top_modules_summaries: List[FileSummary]) -> Dict:
+    async def _generate_system_summary(
+        self, 
+        metrics: SystemMetrics, 
+        top_modules_summaries: List[FileSummary],
+        harvested_data: Dict[str, Any] = None # <--- Added this argument
+    ) -> Dict:
         """
-        Calls the LLM *ONCE* to generate the Executive Summary / System Overview.
-        This populates the Introduction, Glossary, and Swim Lane Diagram.
+        Calls the LLM to generate the Executive Summary using metrics and harvested data.
         """
         try:
             # Prepare context for LLM
@@ -415,24 +419,37 @@ class DocumentationService:
                 for m in top_modules_summaries
             ])
             
+            # Add harvested insights to the context
+            harvested_context = ""
+            if harvested_data:
+                harvested_context = (
+                    f"\n\nADDITIONAL DISCOVERED DATA:\n"
+                    f"- Total Reports Found: {harvested_data.get('total_reports')}\n"
+                    f"- Total Interfaces Found: {harvested_data.get('total_interfaces')}\n"
+                    f"- Sample Business Rules: {json.dumps(harvested_data.get('business_rules_sample', []))}\n"
+                    f"- Known Acronyms: {json.dumps(harvested_data.get('acronyms', []))}"
+                )
+
             # Import Prompt
             from app.services.documentation_services.prompts import EXECUTIVE_SUMMARY_PROMPT
             
             prompt = EXECUTIVE_SUMMARY_PROMPT.format(
-                JSON_FORMAT_INSTRUCTION="", # Already in string
+                JSON_FORMAT_INSTRUCTION="", 
                 metrics=metrics.model_dump_json(),
-                top_modules=module_context
+                top_modules=module_context + harvested_context # Append harvested info
             )
             
-            # Call LLM (using a simple invoke, not the agent graph)
+            # Call LLM
             llm = get_llm()
             from langchain_core.messages import HumanMessage
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             
             # Parse JSON
-            import json
             clean_json = response.content.replace("```json", "").replace("```", "").strip()
-            return json.loads(clean_json)
+            try:
+                return json.loads(clean_json)
+            except json.JSONDecodeError:
+                logger.warning("JSON truncated or invalid")
             
         except Exception as e:
             logger.error(f"Failed to generate system summary: {e}")
@@ -515,7 +532,7 @@ class DocumentationService:
             tasks = []
             results = [] # To store the state results
             
-            sem = asyncio.Semaphore(15)
+            sem = asyncio.Semaphore(5)
 
             async def _bounded_process(file_record):
                 async with sem:
@@ -530,7 +547,7 @@ class DocumentationService:
             all_summaries = []
             for state in completed_states:
                 if not state: continue
-                # Merge functional/technical json (they are identical now)
+                # Merge functional/technical json
                 raw_json = state.get("technical_json") or state.get("functional_json")
                 if raw_json:
                     try:
@@ -539,14 +556,79 @@ class DocumentationService:
                     except Exception as e:
                         logger.warning(f"Failed to parse summary for {state.get('target_file')}: {e}")
 
-            # 8. Calculate Metrics
+            # --- FIX 1: Calculate Metrics (This defines 'metrics') ---
             type_counts = {}
             for s in all_summaries:
-                type_counts[s.file_type] = type_counts.get(s.file_type, 0) + 1
+                t = s.file_type.upper()
+                type_counts[t] = type_counts.get(t, 0) + 1
+            
+            # Now 'metrics' is defined and ready to use
             metrics = analyzer.get_metrics(len(all_summaries), type_counts)
 
-            # Call the LLM to get the combined system overview
-            system_overview_json = await self._generate_system_summary(metrics, all_summaries)
+            # --- Data Harvesting ---
+            all_business_rules = []
+            all_acronyms = []
+            all_reports = []
+            all_interfaces = []
+            
+            for s in all_summaries:
+                # Harvest Rules
+                rules = s.business_overview.get('scope', [])
+                if rules: all_business_rules.extend(rules)
+                
+                # Harvest Acronyms
+                glossary_items = s.business_overview.get('glossary', [])
+                if glossary_items: all_acronyms.extend(glossary_items)
+                
+                # Harvest Reports & Interfaces from JCL
+                if s.file_type == 'JCL':
+                    io = s.technical_analysis.get('io_datasets', [])
+                    for ds in io:
+                        if isinstance(ds, dict):
+                            name = str(ds.get('dataset', '')).upper()
+                            usage = str(ds.get('usage', '')).upper()
+                            if 'SYSOUT' in name or '.RPT' in name or '.LIST' in name:
+                                all_reports.append({"job": s.filename, "report": name})
+                            if 'OLD' in usage or 'NEW' in usage:
+                                if 'TEMP' not in name:
+                                    all_interfaces.append({"job": s.filename, "dsn": name, "type": usage})
+
+            # Deduplicate Harvested Data
+            # Convert dictionary items back to list of dicts for the LLM
+            unique_acronyms_dict = {g['term']: g['definition'] for g in all_acronyms if isinstance(g, dict)}
+            unique_acronyms_list = [{"term": k, "definition": v} for k, v in unique_acronyms_dict.items()]
+            
+            unique_rules = list(set(all_business_rules))
+            
+            # --- Representative Sampling ---
+            categories = ['Transaction Processing', 'Reporting', 'Data Maintenance', 'Utility']
+            representative_summaries = []
+            for cat in categories:
+                cat_progs = [s for s in all_summaries if s.business_overview.get('functional_category') == cat]
+                representative_summaries.extend(cat_progs[:5])
+
+            # 8. Generate System Overview
+            # FIX 2: Pass 'unique_rules' into harvested_data so it's used
+            system_overview_json = await self._generate_system_summary(
+                metrics, 
+                representative_summaries,
+                harvested_data={
+                    "acronyms": unique_acronyms_list[:30],
+                    "business_rules_sample": unique_rules[:50],
+                    "total_reports": len(all_reports),
+                    "total_interfaces": len(all_interfaces)
+                }
+            )
+
+            # SAFETY CHECK: Ensure system_overview_json is a dict and not None
+            if not isinstance(system_overview_json, dict):
+                logger.error("System summary returned non-dictionary. Using empty defaults.")
+                system_overview_json = {}
+            
+            # Inject harvested lists into the summary for the Renderer to use directly
+            system_overview_json["harvested_reports"] = all_reports
+            system_overview_json["harvested_interfaces"] = all_interfaces
+            system_overview_json["harvested_acronyms"] = unique_acronyms_list
 
             # 9. Generate Graph Image (Needed for PDF)
             output_dir = self.artifacts_path / str(project_id)
@@ -560,27 +642,63 @@ class DocumentationService:
             if analyzer.generate_mermaid_png(str(arch_path)):
                 image_paths['architecture'] = str(arch_path)
                 success = str(arch_path)
+            
+            if success:
+                logger.info(f"Successfully generated graph image at {success}")
+                success = None
+            else:
+                logger.warning("Failed to generate arch graph image via Mermaid API")
 
             # B. System Context Diagram (1.4)
             ctx_path = output_dir / "context.png"
             ctx_mermaid = analyzer.generate_context_diagram()
             if analyzer.render_mermaid_code_to_png(ctx_mermaid, str(ctx_path)):
                 image_paths['context'] = str(ctx_path)
-                success = str(arch_path)
+                success = str(ctx_path)
+            
+            if success:
+                logger.info(f"Successfully generated graph image at {success}")
+                success = None
+            else:
+                logger.warning("Failed to generate context graph image via Mermaid API")
+            
+            #C process flow diagram
+            process_flow_path = output_dir / "process_flow.png"
+            # Logic: Ask analyzer to generate a JCL-only flow (Job A -> Job B)
+            process_mermaid = analyzer.generate_process_flow_diagram()
+
+            if analyzer.render_mermaid_code_to_png(process_mermaid, str(process_flow_path)):
+                image_paths['process_flow'] = str(process_flow_path)
+                success = str(process_flow_path)
+            
+            if success:
+                logger.info(f"Successfully generated graph image at {success}")
+                success = None 
+            else:
+                logger.warning("Failed to generate process graph image via Mermaid API")
 
             # C. Functional Sequence Diagram (Functional 3.1)
             # Extracted from the LLM response in system_overview_json
             func_mermaid = system_overview_json.get('functional_flow_diagram', {}).get('mermaid_code')
             if func_mermaid:
+                clean_mermaid = func_mermaid.replace("```mermaid", "").replace("```", "").strip()
+                if "sequenceDiagram" in clean_mermaid:
+
+                    start_index = clean_mermaid.find("sequenceDiagram")
+                    clean_mermaid = clean_mermaid[start_index:]
+                else:
+                    # Fallback if missing header
+                    clean_mermaid = "sequenceDiagram\n" + clean_mermaid
+
                 func_path = output_dir / "functional_flow.png"
-                if analyzer.render_mermaid_code_to_png(func_mermaid, str(func_path)):
+                if analyzer.render_mermaid_code_to_png(clean_mermaid, str(func_path)):
                     image_paths['functional'] = str(func_path)
-                    success = str(arch_path)
+                    success = str(func_path)
 
             if success:
                 logger.info(f"Successfully generated graph image at {success}")
             else:
-                logger.warning("Failed to generate graph image via Mermaid API")
+                logger.warning("Failed to generate functional graph image via Mermaid API")
 
             # 10. Build Real PDFs with the Images dict
             if mode in ["ALL", "TECHNICAL"]:

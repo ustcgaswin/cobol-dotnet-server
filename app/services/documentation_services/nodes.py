@@ -219,7 +219,7 @@ class DocAgentNodes:
         file_type = state["file_type"]
         messages = state.get("messages", [])
         
-        research_count = state.get("research_iterations", 0)
+        research_count = state.get("iterations", 0)
         MAX_RESEARCH_ITERATIONS = 5
         
         # 1. INITIALIZATION
@@ -238,7 +238,7 @@ class DocAgentNodes:
             
             return {
                 "mermaid_graph": mermaid,
-                "research_iterations": 1,
+                "iterations": 1,
                 "messages": initial_messages + [response]
             }
 
@@ -248,7 +248,7 @@ class DocAgentNodes:
         if research_count >= MAX_RESEARCH_ITERATIONS:
             return {
                 "messages": [HumanMessage(content="Research turn limit reached. Proceeding to write docs.")],
-                "research_iterations": research_count,
+                "iterations": research_count,
                 "research_complete": True
             }
         
@@ -256,7 +256,7 @@ class DocAgentNodes:
         
         return {
             "messages": [response],
-            "research_iterations": research_count
+            "iterations": research_count
         }
     
     def _extract_code_snippets(self, messages):
@@ -294,7 +294,9 @@ class DocAgentNodes:
             CUMULATIVE_MERGE_INSTRUCTION=CUMULATIVE_MERGE_INSTRUCTION,
             chunk=evidence, 
             content=evidence, 
-            previous_summary="{}" # We are doing single-shot agentic research now
+            previous_summary="{}",
+            filename=state["target_file"],
+            file_type=state["file_type"]
         )
         
         res = await self.llm.ainvoke([HumanMessage(content=prompt)])
@@ -325,6 +327,9 @@ class DocAgentNodes:
             end = clean.rfind('}')
             if start != -1 and end != -1:
                 clean = clean[start:end+1]
+
+            import re
+            clean = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', clean)
             return json.loads(clean)
         except Exception as e:
             logger.error(f"JSON parse error: {e}")
