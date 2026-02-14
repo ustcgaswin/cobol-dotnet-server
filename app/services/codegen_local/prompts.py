@@ -129,54 +129,65 @@ You MUST call these tools IN ORDER before writing ANY code:
 2. `read_process_flow()` — Understand the overall system architecture, jobs, programs, and scheduling
 3. `read_functionality_catalog()` — Get the checklist of business functionalities to implement
 4. Read `dependency_graph.md` via `read_artifact("dependency_graph.md")` — Understand conversion order
-5. ONLY THEN call `initialize_solution()` to create the project skeleton
 
-## Workflow
+**Note:** The solution scaffold (.sln, .csproj files, IJob.cs, Worker Job stubs, PS1 script skeletons,
+Program.cs with job registrations) has already been pre-created for you. Do NOT call `initialize_solution()`.
+You can immediately start writing code with `write_code_file()`.
 
-1. **Convert in Order**:
-   - First: Copybooks (no dependencies)
-   - Then: COBOL programs (use converted copybooks)
-   - Then: JCL jobs (create Worker job classes + PowerShell scripts)
-2. **For Each Component**:
-   a. Read source file (use `view_source_file`) — **YOU MUST READ THE ENTIRE FILE** before writing any code.
-      For large files (>200 lines), call view_source_file multiple times to read ALL sections.
-   b. Read its Phase A summary (from file_summaries.md)
-   c. Get relevant patterns from conversion_guide
-   d. Generate C# code following style_guide
-   e. **GENERATE REPOSITORY**: If the program performs file or DB I/O, generate a Repository Interface (in `Core/Interfaces/Repositories`) and Implementation (in `Infrastructure/Repositories`). Inject this into the Service constructor.
-   f. **SOURCE PROVENANCE (Best Practice)**: Add `// Source: FILENAME.ext` at the top of every Service and Job class.
-      This references the mainframe source file you converted from and enables traceability auditing. Example:
-      ```csharp
-      // Source: FSMAIN.cbl
-      // Implements: F003
-      public class FsmainService : IFsmainService { ... }
-      ```
-   g. Write file with `write_code_file()`
-   h. **GENERATE TESTS (CRITICAL)**:
-      - **Service**: Write `tests/Core.Tests/Services/YServiceTests.cs` mocking repositories.
-      - **Repository**: Write `tests/Infrastructure.Tests/Repositories/YRepositoryTests.cs` (if repo exists).
-      - **Job**: Write `tests/Worker.Tests/Jobs/JobnameTests.cs` for each JCL job class.
-   h. Log status with `log_component_status()`
-3. **For Each JCL Job**: Create `src/Worker/Jobs/{Jobname}.cs` implementing `IJob`. Register it in `Program.cs` with `AddKeyedTransient<IJob, Jobname>("Jobname")`. Create the matching `scripts/jobs/run-{jobname}.ps1`.
-4. **Verify Coverage**: Review the functionality catalog and ensure all functionalities (F001, F002, etc.) have been converted. Log any missing functionalities.
-5. **Build & Fix (AFTER all code is written)**: Once ALL components, tests, and scripts are generated:
-   a. Call `run_dotnet_build()` to compile the full solution.
-   b. If build fails, read the errors, fix the code, and build again. Iterate until build succeeds.
-   c. Call `run_dotnet_test()` once build passes. Fix any failing tests and re-run.
-   d. Do NOT call build/test tools during step 2 or 3. Write all code first, then build once.
+## Workflow (Follow this order exactly)
+
+### Phase 1 — Copybooks & Includes → Core/Entities (no dependencies)
+For each copybook, DCLGEN, PL/I include:
+  a. Read the entire source file (`view_source_file`)
+  b. Generate POCO in `src/Core/Entities/`
+  c. Log status with `log_component_status()`
+
+### Phase 2 — Programs → Core/Services + Infrastructure/Repos
+For each COBOL, PL/I, Assembly program:
+  a. Read the **entire** source file — for large files (>200 lines), call `view_source_file` multiple times
+  b. Read its Phase A summary (from file_summaries.md)
+  c. Get relevant patterns from `read_conversion_guide()`
+  d. Generate C# Service + Interface following `read_style_guide()`
+  e. **Repository**: If the program does file or DB I/O → generate Interface (`Core/Interfaces/Repositories/`) + Implementation (`Infrastructure/Repositories/`)
+  f. **Source Provenance**: Add `// Source: FILENAME.ext` at the top of every Service file
+  g. Write with `write_code_file()`
+  h. **Tests**: Write `tests/Core.Tests/Services/YServiceTests.cs` (mock repos), and `tests/Infrastructure.Tests/Repositories/YRepositoryTests.cs` if repo exists
+  i. Log status
+
+### Phase 3 — JCL → Worker Jobs + PS1 Scripts (stubs pre-scaffolded)
+**Important:** Worker Job stubs and PS1 script skeletons already exist in the scaffold. You must **overwrite** them with real implementations.
+
+For each JCL job:
+  a. Read the **entire** JCL source file
+  b. Read `read_job_chains()` and `read_process_flow()` for orchestration context
+  c. **Overwrite** `src/Worker/Jobs/{Jobname}.cs` with real step logic (the stub has `NotImplementedException`)
+  d. **Overwrite** `scripts/jobs/run-{jobname}.ps1` with real step sections
+  e. Update `src/Worker/Program.cs` — add any service/repository DI registrations needed by the jobs
+  f. **Tests**: Write `tests/Worker.Tests/Jobs/JobnameTests.cs`
+  g. Log status
+
+### Phase 4 — Verify Coverage
+  - Review the functionality catalog and ensure all F-IDs have been implemented
+  - `list_generated_files()` to verify nothing is missing
+
+### Phase 5 — Build & Fix (AFTER all code is written)
+  a. Call `run_dotnet_build()` to compile the full solution
+  b. If build fails, read errors, fix code, rebuild. Iterate until success
+  c. Call `run_dotnet_test()` once build passes. Fix failing tests, retest
+  d. Do NOT call build/test during Phases 1-3. Write all code first, then build once
 
 ## Job Orchestration (CRITICAL)
 
 You MUST read `read_job_chains()` and `read_process_flow()` before generating any Worker classes or PowerShell scripts.
 
-### Worker Job Classes
-- **One file per JCL JOB**: `src/Worker/Jobs/{Jobname}.cs` implementing `IJob`
+### Worker Job Classes (stubs pre-scaffolded)
+- **One file per JCL JOB**: `src/Worker/Jobs/{Jobname}.cs` implementing `IJob` — **stubs already exist, overwrite with real logic**
 - Each job class receives its Core Services via dependency injection
 - Each job class has internal logic to handle its steps (reading args like `--step`, `--input`, `--output`)
-- Register each job in `Program.cs`: `builder.Services.AddKeyedTransient<IJob, Jobname>("Jobname")`
+- Job registrations are already in `Program.cs` — you only need to add service/repo DI registrations
 
-### PowerShell Scripts (.ps1)
-Each JCL JOB produces one script in `scripts/jobs/run-{jobname}.ps1`.
+### PowerShell Scripts (.ps1) (skeletons pre-scaffolded)
+Each JCL JOB has a skeleton at `scripts/jobs/run-{jobname}.ps1`. **Overwrite** them with real step sections.
 
 **Required structure:**
 ```powershell

@@ -18,6 +18,7 @@ from app.db.repositories.project import ProjectRepository
 from app.services.codegen_local.agent import create_codegen_agent
 from app.services.codegen_local.tools.knowledge_tools import create_knowledge_tools
 from app.services.codegen_local.tools.solution_tools import create_solution_tools
+from app.services.codegen_local.tools.scaffold import scaffold_solution
 from app.services.codegen_local.tools.build_tools import create_build_tools
 from app.services.codegen_local.tools.status_tools import create_status_tools
 from app.services.codegen_local.tools.source_file_tools import create_source_file_tools
@@ -446,7 +447,11 @@ class CodegenLocalService:
             source_path = Path(settings.PROJECT_STORAGE_PATH).resolve() / project_id_str
             
             logger.info(f"Output path: {output_path}")
-            
+
+            # Pre-create the .NET solution scaffold (deterministic, no LLM)
+            scaffold_result = scaffold_solution(output_path, source_path, project_name)
+            logger.info(f"Solution scaffold: {scaffold_result[:200]}")
+
             # Create all tools with project_id binding
             artifact_tools = create_artifact_tools(project_id_str)
             knowledge_tools = create_knowledge_tools()
@@ -498,7 +503,8 @@ class CodegenLocalService:
             # Run agent with project name, system overview, and manifest in the message
             initial_message = HumanMessage(
                 content=f"Convert mainframe project '{project_name}' to .NET 8. "
-                        f"Use '{project_name}' as the solution name when calling initialize_solution(). "
+                        f"The solution scaffold ('{project_name}.sln', .csproj files, Worker Job stubs, PS1 skeletons) "
+                        "has already been created for you. Do NOT call initialize_solution() — it is already done. "
                         "Follow the MANDATORY FIRST ACTIONS in your system prompt before writing any code."
                         f"{system_overview_content}"
                         f"{manifest}"
