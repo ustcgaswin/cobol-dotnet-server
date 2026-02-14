@@ -221,66 +221,32 @@ exit $script:MaxRC
 - This ensures the code explains *what* requirement it meets (Readable) and *which* ID it maps to (Auditable).
 
 ## Code Style & Pattern Requirements
-- Use .NET 8, File-scoped namespaces, top-level statements.
-- **Dependency Injection**: All repositories/services must be injected.
-- **EF Core**: Use `IEntityTypeConfiguration` for mappings.
-- **Error Handling**: Try-Catch blocks with `ILogger`.
-- **Tests**: Generate xUnit tests for ALL Services, Repositories, and Job Steps. Tests must cover the specific functionalities implemented.
 
-## Security, Scalability & Best Practices (CRITICAL)
-
-The generated .NET solution MUST follow these production-grade standards:
-
-### Security
-- **NEVER use raw SQL strings** — always use parameterized queries or EF Core LINQ. `string.Format` with SQL is a security vulnerability.
-- **Validate all inputs** — check for null, empty, and boundary values at service entry points.
-- **Use `decimal` for all financial/monetary values** — never `float` or `double`.
-- **Don't expose internal exceptions** — catch, log with ILogger, wrap in domain-specific exceptions.
-- **File paths**: Always use `Path.Combine()` — never string concatenation for paths.
-
-### Scalability
-- **Async/await throughout**: All I/O methods (file, DB, network) should be async. Use `Task<T>` returns.
-- **IAsyncEnumerable** for large dataset processing instead of loading everything into memory.
-- **Streaming file reads**: Use `StreamReader` with line-by-line processing for large files — do not `File.ReadAllText()` for batch data files.
-- **Cancellation tokens**: All async methods should accept `CancellationToken` parameter.
-
-### Code Quality
-- **Single Responsibility**: One service per COBOL program. Do not merge multiple programs into one service.
-- **Interface Segregation**: Every service has a matching interface. Interfaces go in `Core/Interfaces/`.
-- **Repository Pattern**: All data access (file I/O, DB) goes through repository interfaces — services never touch files or DbContext directly.
-- **Immutable entities where possible**: Use `init` setters or records for POCOs from copybooks.
-- **No static mutable state**: COBOL WORKING-STORAGE becomes instance fields, never static fields.
-- **Structured logging**: Use `_logger.LogInformation("Processing {RecordId}", recordId)` — not string interpolation in log messages.
-
-### .NET Analyzers Are Enabled
-The solution has `EnforceCodeStyleInBuild` and `AnalysisLevel=latest-recommended` enabled.
-The build WILL emit warnings for:
-- Null reference issues (nullable reference types)
-- SQL injection risks (CA2100)
-- Dispose pattern violations (CA2000)
-- Async best practices (CA1849)
-
-Write clean code that passes these analyzers.
+| Requirement | Standard |
+|---|---|
+| Framework | .NET 8, file-scoped namespaces, top-level statements |
+| DI | All repos/services injected via constructor |
+| ORM | EF Core 8, `IEntityTypeConfiguration` for mappings |
+| Error handling | Try-Catch + `ILogger`, domain-specific exceptions |
+| Tests | xUnit + Moq + FluentAssertions for ALL Services, Repos, Jobs |
+| Financial values | `decimal` only (never `float`/`double`) |
+| SQL | Parameterized queries or EF LINQ only (no raw SQL strings) |
+| Async | All I/O methods async with `CancellationToken` |
+| Large data | `IAsyncEnumerable` / `StreamReader` line-by-line |
+| File paths | `Path.Combine()` only (no string concat) |
+| Logging | Structured: `_logger.LogInformation("Processing {Id}", id)` |
+| WORKING-STORAGE | Instance fields (never static mutable state) |
+| Copybook POCOs | `init` setters or records |
+| Interfaces | Every service/repo has a matching interface in `Core/Interfaces/` |
+| Analyzers | `EnforceCodeStyleInBuild` + `AnalysisLevel=latest-recommended` enabled |
 
 ## Important Guidelines
 
-- **OUTPUT CLEANLINESS (CRITICAL)**:
-  - **Direct Write Only**: Write files directly to their final destination (e.g., `src/Core/Services/XService.cs`).
-  - **Allowed Files**:
-    - **C# Code**: `.cs`, `.csproj`, `.sln`
-    - **PowerShell**: 
-      - `scripts/jobs/run-{jobname}.ps1` (ONLY job runners)
-      - `scripts/common/*.ps1` (Shared logic only)
-      - **ALL OTHER .ps1 files are FORBIDDEN.**
-    - **Documentation**: `README.md`, `setup.md`, `process_flow.md` (ONLY)
-  - **FORBIDDEN Files**: Do NOT create `Dockerfile`, `docker-compose.yml`, `deploy.ps1`, `deploy.sh`, `fix_tests.ps1`, `run_all.ps1` (unless in common), `plan.md`, `thoughts.md`, `output/`, or ANY other status/deployment/infrastructure/DevOps files.
-  - **One & Done**: Do not write a file to `output/` and then move it. Write it to `src/` immediately.
-
-- Write files IMMEDIATELY after generating - don't hold in memory
-- Trust `read_conversion_status()` as the single source of truth for items completed.
-- **Log Status Granularity**: Log status ONLY for individual source files (e.g., `PAYROLL.cbl`, `JOB01.jcl`). 
-  - Do NOT log broad phases like "Workers Completed", "Documentation", or "Tests".
-  - Do NOT log status for generated files (e.g., `Job.cs`). Log the *Source* file.
+- **Allowed output files**: `.cs`, `.csproj`, `.sln`, `.ps1` (scripts/jobs/ and scripts/common/ only), `README.md`, `setup.md`, `process_flow.md`, `.json`, `.config`, `.xml`, `.gitignore`, `.editorconfig`.
+- **FORBIDDEN files** (tool will reject): Dockerfile, docker-compose.*, deploy.*, config.yml, CI/CD manifests, ad-hoc .ps1 outside scripts/.
+- Write files IMMEDIATELY — do not hold in memory or write to `output/` first.
+- Trust `read_conversion_status()` as the single source of truth.
+- **Log Status Granularity**: Log status ONLY for individual source files (e.g., `PAYROLL.cbl`). Do NOT log broad phases or generated filenames.
 - If you encounter an unknown utility, use `lookup_utility(name)`
 - If utility is still unknown, log it with `log_issue()` and continue
 - Use the patterns from conversion_guide.md - they prevent common mistakes
@@ -351,38 +317,15 @@ Begin by checking existing status, then reading the dependency graph to plan you
 
 ## SYSTEM-ENFORCED GATES (Automated — you cannot bypass these)
 
-The verification system runs structural checks BEFORE you can finish. If any gate fails,
-you will be sent back with a detailed failure message. You cannot argue with these gates.
+Verification runs these checks. Failures are returned as a batch — fix ALL of them:
 
-**Gate 1 — Functionality Catalog Coverage**
-- Every F-ID in `functionality_catalog.md` must appear as `// Implements: F0XX` in at least one .cs file.
-- If missing, the failure message tells you WHICH F-ID is next and includes the source file summary.
-- Action: call `view_source_file()` on the listed source programs, implement the logic, and tag it.
+1. **F-ID Coverage** — Every F-ID in `functionality_catalog.md` must appear as `// Implements: F0XX` in a .cs file.
+2. **Stub Detection** — Files with `NotImplementedException`, empty `ExecuteAsync`, or <25 lines (Services) / <20 lines (Jobs) are rejected.
+3. **JCL Scripts + Job Mapping** — Every JCL source → `scripts/jobs/run-{job}.ps1` → `src/Worker/Jobs/{Job}.cs` (1:1).
+4. **Test Existence** — Every Service, Repository, and Job must have a corresponding test file.
+5. **Build** — Solution must compile. Errors shown inline.
+6. **Tests Pass** — All tests must pass and ≥1 test must execute. Failures shown inline.
 
-**Gate 2 — Placeholder / Stub Detection**
-- Files with `NotImplementedException`, empty `ExecuteAsync`, or suspiciously short logic are REJECTED.
-- Service files < 25 lines and Job files < 20 lines are flagged.
-- Action: read the original source with `view_source_file()` and implement REAL business logic.
-
-**Gate 3 — JCL Script + Job Mapping**
-- Every JCL source file must have a corresponding `scripts/jobs/run-{job}.ps1`.
-- Every `.ps1` must have a matching Worker class in `src/Worker/Jobs/`.
-- Action: ensure 1:1 mapping between JCL files, PowerShell scripts, and Worker classes.
-
-**Gate 4 — Test Existence**
-- Every Service in `src/Core/Services/` must have a test in `tests/Core.Tests/Services/`.
-- Every Repository in `src/Infrastructure/Repositories/` must have a test in `tests/Infrastructure.Tests/Repositories/`.
-- Every Job in `src/Worker/Jobs/` (except IJob.cs) must have a test in `tests/Worker.Tests/Jobs/`.
-- Action: write the missing test files.
-
-**Gate 5 — Build + Code Analysis**
-- The solution must compile. Code analyzers are enabled and will flag security issues,
-  null reference problems, and style violations as warnings. You MUST fix errors.
-
-**Gate 6 — Tests Pass**
-- All unit tests must pass and at least 1 test must execute.
-- Action: run `run_dotnet_test()`, read failures, and fix the code.
-
-These gates run automatically. Focus on writing complete, real implementations from the start.
+The `write_code_file()` tool also enforces: forbidden filenames, allowed extensions, source-read-before-write for Services/Jobs, and JCL stem validation for Worker Jobs.
 """
 

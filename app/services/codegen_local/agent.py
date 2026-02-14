@@ -63,6 +63,7 @@ class CodegenState(TypedDict):
     codegen_output_path: str # Path to generated code for verification
     codegen_source_path: str # Path to source code for verification checks
     verification_attempts: int # Track number of verification runs
+    verification_step_failures: dict  # Per-step failure counts for budgets
 
 
 def _prune_old_tool_outputs(messages: list[AnyMessage]) -> list[AnyMessage]:
@@ -602,8 +603,18 @@ def _compress_messages(
     # Take from cut_idx onwards
     recent = messages[cut_idx:]
     
-    # Create new compressed history
-    compressed = [HumanMessage(content=summary)] + list(recent)
+    # Preserve the first HumanMessage (contains source manifest + project context)
+    # so it survives every compression cycle.
+    first_human = None
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            first_human = msg
+            break
+
+    if first_human is not None and first_human not in recent:
+        compressed = [first_human, HumanMessage(content=summary)] + list(recent)
+    else:
+        compressed = [HumanMessage(content=summary)] + list(recent)
     
     logger.info(f"Compressed {len(messages)} messages to {len(compressed)} (cut at index {cut_idx})")
     return compressed
@@ -715,27 +726,40 @@ def create_codegen_agent(tools: list, project_id: str):
         """Verify that the generated solution is complete, correct, and high-quality.
 
         Runs structured verification steps with clear logging for each.
-        Uses FAIL-FAST strategy: Returns immediately on the first failure to prioritize fixes.
-        
+
+        Strategy:
+          - Steps 0-5 (structural): BATCH — accumulate ALL failures, return them
+            together so the agent can fix multiple issues in one pass.
+          - Steps 6-7 (build/test): PER-STEP BUDGET — each step gets up to
+            MAX_STEP_BUDGET failures before the system stops retrying that step.
+            Actual compiler/test error output is included inline so the agent
+            does not need to call build/test tools separately.
+
         Step order (cheapest/most impactful first):
-          0. F-ID Catalog Coverage (progress gate)
-          1. Placeholder/Stub Quality Scan
-          2. JCL → PowerShell scripts existence
-          3. 1:1 Job Mapping (.ps1 ↔ Worker Class)
-          4. Test Quality (existence + assertion quality)
-          5. Architecture Sanity (DI, interfaces)
-          6. dotnet build
-          7. dotnet test
+          0. Output directory exists
+          1. F-ID Catalog Coverage (progress gate)
+          2. Placeholder/Stub Quality Scan
+          3. JCL → PowerShell scripts existence
+          4. 1:1 Job Mapping (.ps1 ↔ Worker Class)
+          5. Test Existence
+          6. dotnet build  (budget: MAX_STEP_BUDGET)
+          7. dotnet test   (budget: MAX_STEP_BUDGET)
         """
         import subprocess
+
+        MAX_STEP_BUDGET = 20  # max failures per build/test step before giving up
 
         output_path_str = state.get("codegen_output_path", "")
         source_path_str = state.get("codegen_source_path", "")
         pid = state.get("project_id", "")
-        
+
         # Increment verification attempts
         current_attempts = state.get("verification_attempts", 0) + 1
-        verification_update = {"verification_attempts": current_attempts}
+        step_failures: dict = dict(state.get("verification_step_failures", {}))
+        verification_update = {
+            "verification_attempts": current_attempts,
+            "verification_step_failures": step_failures,
+        }
 
         # Hard cap: prevent infinite loops on genuinely unsolvable issues
         MAX_VERIFICATION_ATTEMPTS = 100_000
@@ -749,33 +773,53 @@ def create_codegen_agent(tools: list, project_id: str):
         logger.info(f"[Verification] Source: {source_path_str}")
         logger.info("[Verification] ═══════════════════════════════════════")
 
-        failures = []
+        # Collects failures across Steps 0-5 for batched return
+        batch_failures: list[str] = []
 
-        def return_failures(current_failures, *, step_name: str = ""):
-            logger.warning(f"[Verification] ═══ FAILED at {step_name} — {len(current_failures)} issue(s) found ═══")
-            for f in current_failures:
+        def _fmt_batch(all_failures: list[str]) -> dict:
+            """Return a single HumanMessage containing ALL batched failures."""
+            logger.warning(f"[Verification] ═══ BATCH FAILED — {len(all_failures)} issue(s) across Steps 0-5 ═══")
+            for f in all_failures:
+                logger.warning(f"[Verification]   • {f}")
+            return {
+                "messages": [
+                    HumanMessage(
+                        content=f"CRITICAL: Verification (Attempt {current_attempts}) found {len(all_failures)} issues:\n" +
+                                "\n".join([f"- {f}" for f in all_failures]) +
+                                "\n\nYou MUST fix ALL of these issues before you can finish. "
+                                "If a file is a placeholder, call view_source_file() on the original mainframe source and implement real logic. "
+                                "Do NOT write stubs."
+                    )
+                ],
+                **verification_update,
+            }
+
+        def _fmt_step(step_name: str, step_failures_list: list[str]) -> dict:
+            """Return a HumanMessage for a single build/test step failure."""
+            logger.warning(f"[Verification] ═══ FAILED at {step_name} — {len(step_failures_list)} issue(s) found ═══")
+            for f in step_failures_list:
                 logger.warning(f"[Verification]   • {f}")
             return {
                 "messages": [
                     HumanMessage(
                         content=f"CRITICAL: Verification (Attempt {current_attempts}) — {step_name} found issues:\n" +
-                                "\n".join([f"- {f}" for f in current_failures]) +
-                                "\n\nYou MUST fix these issues before you can finish. "
-                                "If a file is a placeholder, call view_source_file() on the original mainframe source and implement real logic. "
-                                "Do NOT write stubs."
+                                "\n".join([f"- {f}" for f in step_failures_list]) +
+                                "\n\nFix these issues. The actual error output is shown above — "
+                                "read it carefully and correct the code."
                     )
                 ],
-                **verification_update
+                **verification_update,
             }
 
         # === STEP 0: Output directory exists ===
         logger.info("[Verification Step 0] Checking output directory exists...")
         if not output_path_str:
-            return return_failures(["CRITICAL: No codegen_output_path in state. Cannot verify."], step_name="Step 0: Output Dir")
-            
+            # Fatal — can't continue without output dir
+            return _fmt_batch(["CRITICAL: No codegen_output_path in state. Cannot verify."])
+
         output_path = Path(output_path_str)
         if not output_path.exists():
-            return return_failures(["CRITICAL: Output directory does not exist. You cannot be done."], step_name="Step 0: Output Dir")
+            return _fmt_batch(["CRITICAL: Output directory does not exist. You cannot be done."])
         
         logger.info("[Verification Step 0] PASS — Output directory exists")
 
@@ -784,53 +828,48 @@ def create_codegen_agent(tools: list, project_id: str):
         # =================================================================
         logger.info("[Verification Step 1] Checking Functionality Catalog coverage...")
         catalog = _parse_functionality_catalog(pid)
-        
+
         if catalog:
             implemented, missing = _scan_fid_coverage(output_path, catalog)
             total = len(catalog)
             done = len(implemented)
             logger.info(f"[Verification Step 1] Coverage: {done}/{total} functionalities implemented")
-            
+
             if missing:
-                # Build rich failure message with context for next 1-2 F-IDs
                 fail_lines = [
-                    f"FUNCTIONALITY INCOMPLETE: {done} of {total} functionalities implemented. "
-                    f"You have {len(missing)} more to go."
+                    f"[Step 1 — Functionality Coverage] INCOMPLETE: {done} of {total} implemented. "
+                    f"{len(missing)} more to go."
                 ]
-                
-                # Show detailed info for the next 2 F-IDs to implement
+
                 for entry in missing[:2]:
                     fid = entry["id"]
                     title = entry["title"]
                     programs = ", ".join(entry["programs"])
-                    desc = entry["description"][:200] + "..." if len(entry["description"]) > 200 else entry["description"]
-                    
+                    desc = entry["description"][:200] + ("..." if len(entry["description"]) > 200 else "")
+
                     detail = f"\n**Next: {fid} — {title}**"
                     detail += f"\n  Source programs: {programs}"
                     detail += f"\n  Description: {desc}"
-                    
-                    # Add file summary if available
-                    for prog in entry["programs"][:1]:  # First program's summary
+
+                    for prog in entry["programs"][:1]:
                         summary = _get_file_summary(pid, prog)
                         if summary:
                             detail += f"\n  File Summary:\n  {summary[:300]}"
-                    
-                    # Add dependencies if available
+
                     for prog in entry["programs"][:1]:
                         deps = _get_dependencies(pid, prog)
                         if deps:
                             detail += f"\n  Dependencies: {deps}"
-                    
+
                     detail += "\n  Action: Call view_source_file() for the source program(s) and implement this functionality."
                     fail_lines.append(detail)
-                
-                # List remaining F-IDs briefly
+
                 if len(missing) > 2:
                     remaining_ids = [m["id"] + ": " + m["title"] for m in missing[2:]]
                     fail_lines.append(f"\nAlso remaining: {', '.join(remaining_ids)}")
-                
+
                 logger.warning(f"[Verification Step 1] FAIL — {len(missing)} functionalities missing")
-                return return_failures(fail_lines, step_name="Step 1: Functionality Coverage")
+                batch_failures.extend(fail_lines)
             else:
                 logger.info("[Verification Step 1] PASS — All functionalities tagged")
         else:
@@ -841,21 +880,19 @@ def create_codegen_agent(tools: list, project_id: str):
         # =================================================================
         logger.info("[Verification Step 2] Scanning for placeholder/stub files...")
         placeholders = _scan_placeholder_files(output_path)
-        
+
         if placeholders:
-            fail_lines = [
-                f"QUALITY: {len(placeholders)} file(s) are placeholders with no real implementation."
-            ]
-            for ph in placeholders[:5]:  # Show top 5
-                fail_lines.append(
+            batch_failures.append(
+                f"[Step 2 — Quality Scan] {len(placeholders)} file(s) are placeholders with no real implementation."
+            )
+            for ph in placeholders[:5]:
+                batch_failures.append(
                     f"  • {ph['file']} ({ph['line_count']} lines): {ph['reason']}\n"
                     f"    → Read the original source with view_source_file() and implement real logic."
                 )
             if len(placeholders) > 5:
-                fail_lines.append(f"  ... and {len(placeholders) - 5} more placeholder files.")
-            
+                batch_failures.append(f"  ... and {len(placeholders) - 5} more placeholder files.")
             logger.warning(f"[Verification Step 2] FAIL — {len(placeholders)} placeholders found")
-            return return_failures(fail_lines, step_name="Step 2: Quality Scan")
         else:
             logger.info("[Verification Step 2] PASS — No placeholders detected")
 
@@ -864,10 +901,11 @@ def create_codegen_agent(tools: list, project_id: str):
         # =================================================================
         logger.info("[Verification Step 3] Checking JCL → PowerShell scripts...")
         scripts_dir = output_path / "scripts" / "jobs"
-        
+        step3_failures: list[str] = []
+
         if not scripts_dir.exists() or not any(scripts_dir.iterdir()):
             logger.warning("[Verification Step 3] FAIL — scripts/jobs is empty or missing")
-            failures.append("scripts/jobs directory is empty or missing. You MUST convert JCL jobs to PowerShell scripts.")
+            step3_failures.append("scripts/jobs directory is empty or missing. You MUST convert JCL jobs to PowerShell scripts.")
         else:
             if source_path_str:
                 source_path = Path(source_path_str)
@@ -879,165 +917,208 @@ def create_codegen_agent(tools: list, project_id: str):
                             job_name = jcl_file.stem.lower()
                             expected_script = scripts_dir / f"run-{job_name}.ps1"
                             if not expected_script.exists():
-                                failures.append(f"Missing Script: run-{job_name}.ps1 (from {jcl_file.name}). Read {jcl_file.name} with view_source_file() first.")
+                                step3_failures.append(f"Missing Script: run-{job_name}.ps1 (from {jcl_file.name}). Read {jcl_file.name} with view_source_file() first.")
                             else:
-                                # Check script has substance (not just a header)
                                 try:
                                     ps_content = expected_script.read_text(encoding="utf-8", errors="replace")
                                     has_step_cmd = bool(re.search(r"dotnet run|Copy-Item|Remove-Item", ps_content))
                                     if not has_step_cmd and len(ps_content.splitlines()) < 8:
-                                        failures.append(
+                                        step3_failures.append(
                                             f"Stub Script: run-{job_name}.ps1 has no step commands (no 'dotnet run', 'Copy-Item', etc.). "
                                             f"Read {jcl_file.name} with view_source_file() and convert its actual steps."
                                         )
                                 except Exception:
                                     pass
-            
-            if not failures:
+
+            if not step3_failures:
                 logger.info("[Verification Step 3] PASS — All JCL scripts present and substantive")
-        
-        if failures:
-            return return_failures(failures, step_name="Step 3: JCL Scripts")
+
+        if step3_failures:
+            logger.warning(f"[Verification Step 3] FAIL — {len(step3_failures)} issue(s)")
+            batch_failures.append(f"[Step 3 — JCL Scripts] {len(step3_failures)} issue(s):")
+            batch_failures.extend(step3_failures)
 
         # =================================================================
         # STEP 4: 1:1 Job Mapping (.ps1 ↔ Worker Class)
         # =================================================================
         logger.info("[Verification Step 4] Checking 1:1 Job Mapping (.ps1 ↔ Worker logic)...")
         worker_jobs_dir = output_path / "src" / "Worker" / "Jobs"
-        
+        step4_failures: list[str] = []
+
         ps1_jobs = set()
         if scripts_dir.exists():
             for f in scripts_dir.glob("run-*.ps1"):
                 job_name = f.stem[4:].lower()
                 ps1_jobs.add(job_name)
-        
+
         worker_classes = set()
         if worker_jobs_dir.exists():
             for f in worker_jobs_dir.glob("*.cs"):
                 if f.name == "IJob.cs":
                     continue
                 worker_classes.add(f.stem.lower())
-                
+
         for job in ps1_jobs:
             if job not in worker_classes:
-                failures.append(f"Missing Worker Class: {job.title()}.cs (for run-{job}.ps1)")
-        
+                step4_failures.append(f"Missing Worker Class: {job.title()}.cs (for run-{job}.ps1)")
+
         for cls in worker_classes:
             if cls not in ps1_jobs:
-                failures.append(f"Missing Script: run-{cls}.ps1 (for {cls.title()}.cs)")
-        
-        if not failures:
+                step4_failures.append(f"Missing Script: run-{cls}.ps1 (for {cls.title()}.cs)")
+
+        if step4_failures:
+            logger.warning(f"[Verification Step 4] FAIL — {len(step4_failures)} mapping issue(s)")
+            batch_failures.append(f"[Step 4 — Job Mapping] {len(step4_failures)} issue(s):")
+            batch_failures.extend(step4_failures)
+        else:
             logger.info("[Verification Step 4] PASS — All jobs mapped 1:1")
-        
-        if failures:
-            return return_failures(failures, step_name="Step 4: Job Mapping")
 
         # =================================================================
         # STEP 5: Test Existence (rule-based — deterministic, no LLM call)
         # =================================================================
         logger.info("[Verification Step 5] Checking test file existence...")
-        
-        # Map source directories to their expected test directories
+        step5_failures: list[str] = []
+
         test_mapping = [
             ("src/Core/Services", "tests/Core.Tests/Services"),
             ("src/Infrastructure/Repositories", "tests/Infrastructure.Tests/Repositories"),
             ("src/Worker/Jobs", "tests/Worker.Tests/Jobs"),
         ]
-        
+
         skip_files = {"IJob.cs", "Program.cs"}
-        
+
         for src_rel, test_rel in test_mapping:
             src_dir = output_path / src_rel
             if not src_dir.exists():
                 continue
             for cs_file in src_dir.glob("*.cs"):
-                # Skip interfaces and special files
                 if cs_file.name in skip_files:
                     continue
                 if cs_file.name.startswith("I") and len(cs_file.name) > 1 and cs_file.name[1].isupper():
                     continue
-                
+
                 expected_test = output_path / test_rel / (cs_file.stem + "Tests.cs")
                 if not expected_test.exists():
-                    failures.append(
+                    step5_failures.append(
                         f"Missing Test: {test_rel}/{cs_file.stem}Tests.cs (for {src_rel}/{cs_file.name})"
                     )
-        
-        if failures:
-            logger.warning(f"[Verification Step 5] FAIL — {len(failures)} missing test files")
-            return return_failures(failures, step_name="Step 5: Test Existence")
+
+        if step5_failures:
+            logger.warning(f"[Verification Step 5] FAIL — {len(step5_failures)} missing test files")
+            batch_failures.append(f"[Step 5 — Test Existence] {len(step5_failures)} missing test file(s):")
+            batch_failures.extend(step5_failures)
         else:
             logger.info("[Verification Step 5] PASS — All logic files have tests")
 
-        # =================================================================
-        # STEP 6: Solution builds successfully (includes code analysis warnings)
-        # =================================================================
-        logger.info("[Verification Step 6] Checking dotnet build...")
-        sln_files = list(output_path.glob("*.sln"))
-        if not sln_files:
-            logger.warning("[Verification Step 6] FAIL — No .sln file found")
-            failures.append("Missing .sln file — solution was never initialized")
-        else:
-            try:
-                result = subprocess.run(
-                    ["dotnet", "build", str(sln_files[0])],
-                    cwd=str(output_path),
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-                if result.returncode == 0:
-                    logger.info("[Verification Step 6] PASS — Build succeeded")
-                else:
-                    build_output = result.stdout + result.stderr
-                    error_lines = [line for line in build_output.splitlines() if ": error " in line]
-                    logger.warning(f"[Verification Step 6] FAIL — Build failed with {len(error_lines)} errors")
-                    failures.append(f"Build FAILED with {len(error_lines)} errors. Run `run_dotnet_build()` to see details and fix.")
-            except Exception as e:
-                logger.warning(f"[Verification Step 6] SKIP — Build check error: {e}")
-                
-        if failures:
-            return return_failures(failures, step_name="Step 6: Build")
+        # -----------------------------------------------------------------
+        # Return ALL batched failures from Steps 0-5 at once
+        # -----------------------------------------------------------------
+        if batch_failures:
+            return _fmt_batch(batch_failures)
 
         # =================================================================
-        # STEP 7: Tests pass AND >0 tests ran
+        # STEP 6: Solution builds successfully (per-step budget)
+        # =================================================================
+        logger.info("[Verification Step 6] Checking dotnet build...")
+
+        # Resolve sln files once for both Step 6 and Step 7
+        sln_files = list(output_path.glob("*.sln"))
+
+        build_fail_count = step_failures.get("build", 0)
+        if build_fail_count >= MAX_STEP_BUDGET:
+            logger.warning(f"[Verification Step 6] SKIP — build budget exhausted ({build_fail_count}/{MAX_STEP_BUDGET})")
+        else:
+            if not sln_files:
+                logger.warning("[Verification Step 6] FAIL — No .sln file found")
+                step_failures["build"] = build_fail_count + 1
+                return _fmt_step("Step 6: Build", ["Missing .sln file — solution was never initialized"])
+            else:
+                try:
+                    result = subprocess.run(
+                        ["dotnet", "build", str(sln_files[0])],
+                        cwd=str(output_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    if result.returncode == 0:
+                        logger.info("[Verification Step 6] PASS — Build succeeded")
+                    else:
+                        build_output = result.stdout + result.stderr
+                        error_lines = [line for line in build_output.splitlines() if ": error " in line]
+                        # Cap inline errors to avoid token explosion
+                        shown_errors = error_lines[:30]
+                        truncated_msg = f"\n... and {len(error_lines) - 30} more errors" if len(error_lines) > 30 else ""
+                        logger.warning(f"[Verification Step 6] FAIL — Build failed with {len(error_lines)} errors")
+                        step_failures["build"] = build_fail_count + 1
+                        verification_update["verification_step_failures"] = step_failures
+                        return _fmt_step("Step 6: Build", [
+                            f"Build FAILED with {len(error_lines)} error(s) (attempt {build_fail_count + 1}/{MAX_STEP_BUDGET}).\n"
+                            "Fix these errors by reading each message and correcting the code:\n" +
+                            "\n".join(shown_errors) + truncated_msg
+                        ])
+                except Exception as e:
+                    logger.warning(f"[Verification Step 6] SKIP — Build check error: {e}")
+
+        # =================================================================
+        # STEP 7: Tests pass AND >0 tests ran (per-step budget)
         # =================================================================
         logger.info("[Verification Step 7] Checking dotnet test...")
-        if sln_files:
-            try:
-                result = subprocess.run(
-                    ["dotnet", "test", str(sln_files[0]), "--no-build"],
-                    cwd=str(output_path),
-                    capture_output=True,
-                    text=True,
-                    timeout=180,
-                )
-                test_output = result.stdout + result.stderr
-                
-                if result.returncode == 0:
-                    total_match = re.search(r'Total tests: (\d+)', test_output)
-                    passed_match = re.search(r'Passed: (\d+)', test_output)
-                    executed_count = 0
-                    if total_match:
-                        executed_count = int(total_match.group(1))
-                    elif passed_match:
-                        executed_count = int(passed_match.group(1))
-                    
-                    if executed_count > 0:
-                        logger.info(f"[Verification Step 7] PASS — {executed_count} tests passed")
-                    else:
-                        logger.warning("[Verification Step 7] FAIL — Build passed but 0 tests were executed")
-                        failures.append("Test suite passed but 0 tests were executed. You MUST write unit tests.")
-                else:
-                    logger.warning("[Verification Step 7] FAIL — Tests failed")
-                    failures.append("Tests FAILED. Run `run_dotnet_test()` to see details and fix.")
-            except Exception as e:
-                logger.warning(f"[Verification Step 7] SKIP — Test check error: {e}")
+
+        test_fail_count = step_failures.get("test", 0)
+        if test_fail_count >= MAX_STEP_BUDGET:
+            logger.warning(f"[Verification Step 7] SKIP — test budget exhausted ({test_fail_count}/{MAX_STEP_BUDGET})")
         else:
-            logger.info("[Verification Step 7] SKIP — No solution to test")
-            
-        if failures:
-            return return_failures(failures, step_name="Step 7: Tests")
+            if sln_files:
+                try:
+                    result = subprocess.run(
+                        ["dotnet", "test", str(sln_files[0]), "--no-build"],
+                        cwd=str(output_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                    )
+                    test_output = result.stdout + result.stderr
+
+                    if result.returncode == 0:
+                        total_match = re.search(r'Total tests: (\d+)', test_output)
+                        passed_match = re.search(r'Passed: (\d+)', test_output)
+                        executed_count = 0
+                        if total_match:
+                            executed_count = int(total_match.group(1))
+                        elif passed_match:
+                            executed_count = int(passed_match.group(1))
+
+                        if executed_count > 0:
+                            logger.info(f"[Verification Step 7] PASS — {executed_count} tests passed")
+                        else:
+                            logger.warning("[Verification Step 7] FAIL — Build passed but 0 tests were executed")
+                            step_failures["test"] = test_fail_count + 1
+                            verification_update["verification_step_failures"] = step_failures
+                            return _fmt_step("Step 7: Tests", [
+                                "Test suite passed but 0 tests were executed. "
+                                "You MUST write unit tests with actual [Fact] or [Theory] attributes."
+                            ])
+                    else:
+                        # Extract failed test details
+                        fail_lines = [
+                            line for line in test_output.splitlines()
+                            if "Failed" in line or ": error " in line or "Assert." in line
+                        ]
+                        shown = fail_lines[:30]
+                        truncated_msg = f"\n... and {len(fail_lines) - 30} more failures" if len(fail_lines) > 30 else ""
+                        logger.warning("[Verification Step 7] FAIL — Tests failed")
+                        step_failures["test"] = test_fail_count + 1
+                        verification_update["verification_step_failures"] = step_failures
+                        return _fmt_step("Step 7: Tests", [
+                            f"Tests FAILED (attempt {test_fail_count + 1}/{MAX_STEP_BUDGET}).\n"
+                            "Fix these failures by reading the error output and correcting the code:\n" +
+                            "\n".join(shown) + truncated_msg
+                        ])
+                except Exception as e:
+                    logger.warning(f"[Verification Step 7] SKIP — Test check error: {e}")
+            else:
+                logger.info("[Verification Step 7] SKIP — No solution to test")
 
         logger.info("[Verification] ═══ ALL CHECKS PASSED ═══")
         return {"messages": [], **verification_update}

@@ -163,8 +163,24 @@ def create_source_file_tools(project_id: str) -> list:
             
             # Register this read for provenance tracking
             _register_source_read(project_id, target.name, (start_line, end_line), total_lines)
-            
-            return f"File: {rel_path} (lines {start_line}-{end_line} of {total_lines})\n" + "\n".join(result_lines)
+
+            # Build the output
+            output = f"File: {rel_path} (lines {start_line}-{end_line} of {total_lines})\n" + "\n".join(result_lines)
+
+            # Partial read warning — nudge agent to read the rest
+            lines_returned = end_line - start_line + 1
+            if lines_returned < total_lines:
+                pct = (lines_returned / total_lines) * 100
+                remaining = total_lines - end_line
+                if pct < 80 and remaining > 0:
+                    output += (
+                        f"\n\n⚠ WARNING: You have only read {pct:.0f}% of this file "
+                        f"({lines_returned}/{total_lines} lines). "
+                        f"{remaining} lines remain (lines {end_line + 1}-{total_lines}). "
+                        "You MUST read the entire file before writing any code based on it."
+                    )
+
+            return output
             
         except ValueError as e:
             return f"Error: {e}"

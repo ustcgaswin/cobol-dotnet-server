@@ -248,6 +248,61 @@ class CodegenLocalService:
         except Exception as e:
             logger.warning(f"Intermediary file cleanup error: {e}")
 
+    def _build_source_manifest(self, source_path: Path) -> str:
+        """Build a manifest of all source files that must be converted.
+
+        Scans the project source directory and returns a formatted table the
+        agent uses as a concrete checklist.  Injected into the initial
+        HumanMessage so it survives context compression.
+        """
+        if not source_path.exists():
+            return ""
+
+        type_labels = {
+            "cobol": "COBOL",
+            "pli": "PLI",
+            "assembly": "Assembly",
+            "copybook": "Copybook",
+            "dclgen": "DCLGEN",
+            "jcl": "JCL",
+            "proc": "PROC",
+            "rexx": "REXX",
+            "ctl": "Parmlib",
+            "inc": "PLI Include",
+        }
+
+        rows: list[tuple[str, str, int]] = []
+        for type_dir in sorted(source_path.iterdir()):
+            if not type_dir.is_dir():
+                continue
+            type_name = type_dir.name.lower()
+            label = type_labels.get(type_name, type_name.upper())
+            for f in sorted(type_dir.iterdir()):
+                if not f.is_file():
+                    continue
+                try:
+                    line_count = len(
+                        f.read_text(encoding="utf-8", errors="replace").splitlines()
+                    )
+                except Exception:
+                    line_count = 0
+                rows.append((f.name, label, line_count))
+
+        if not rows:
+            return ""
+
+        lines = [
+            f"\n\n## Source File Manifest ({len(rows)} files)",
+            "You MUST convert ALL of these files. This is your definitive checklist.",
+            "",
+            "| # | File | Type | Lines |",
+            "|---|------|------|-------|",
+        ]
+        for i, (name, type_label, lc) in enumerate(rows, 1):
+            lines.append(f"| {i} | {name} | {type_label} | {lc} |")
+
+        return "\n".join(lines)
+
     async def _ensure_prerequisites(self) -> None:
         """Ensure Phase A outputs and Analyst outputs exist.
         
@@ -437,12 +492,16 @@ class CodegenLocalService:
                 except Exception as e:
                     logger.warning(f"Failed to read system overview: {e}")
             
-            # Run agent with project name and system overview in the message
+            # Build source manifest (concrete checklist of all files to convert)
+            manifest = self._build_source_manifest(source_path)
+
+            # Run agent with project name, system overview, and manifest in the message
             initial_message = HumanMessage(
                 content=f"Convert mainframe project '{project_name}' to .NET 8. "
                         f"Use '{project_name}' as the solution name when calling initialize_solution(). "
                         "Follow the MANDATORY FIRST ACTIONS in your system prompt before writing any code."
                         f"{system_overview_content}"
+                        f"{manifest}"
             )
             
             # Create codegen logs directory path
@@ -468,6 +527,7 @@ class CodegenLocalService:
                             "codegen_output_path": str(output_path),
                             "codegen_source_path": str(source_path),
                             "verification_attempts": 0,
+                            "verification_step_failures": {},
                         },
                         config={"recursion_limit": 10000},
                     )
