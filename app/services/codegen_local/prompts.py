@@ -142,6 +142,15 @@ For each copybook, DCLGEN, PL/I include:
   b. Generate POCO in `src/Core/Entities/`
   c. Log status with `log_component_status()`
 
+### Phase 1b — Domain Exceptions → Core/Exceptions (before Services)
+Create these exception classes in `src/Core/Exceptions/` BEFORE writing services:
+  a. `DomainException.cs` — Base exception all domain exceptions inherit from
+  b. `FileProcessingException.cs` — File I/O errors (missing datasets, format mismatches, encoding issues)
+  c. `DataValidationException.cs` — Record validation failures (bad field values, length mismatches, missing required fields)
+  d. `StepExecutionException.cs` — Job step failures (wraps return codes, step name, failure context)
+All exceptions should include structured properties (not just message strings) — e.g., `StepExecutionException` should have `StepName`, `ReturnCode`, `JobName` properties.
+Services and Jobs MUST throw these instead of generic `Exception` or `InvalidOperationException`.
+
 ### Phase 2 — Programs → Core/Services + Infrastructure/Repos
 For each COBOL, PL/I, Assembly program:
   a. Read the **entire** source file — for large files (>200 lines), call `view_source_file` multiple times
@@ -238,7 +247,7 @@ exit $script:MaxRC
 | Framework | .NET 8, file-scoped namespaces, top-level statements |
 | DI | All repos/services injected via constructor |
 | ORM | EF Core 8, `IEntityTypeConfiguration` for mappings |
-| Error handling | Try-Catch + `ILogger`, domain-specific exceptions |
+| Error handling | Try-Catch + `ILogger`, domain exceptions from `Core/Exceptions/` (never generic `Exception`) |
 | Tests | xUnit + Moq + FluentAssertions for ALL Services, Repos, Jobs |
 | Financial values | `decimal` only (never `float`/`double`) |
 | SQL | Parameterized queries or EF LINQ only (no raw SQL strings) |
