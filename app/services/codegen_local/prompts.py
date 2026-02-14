@@ -253,7 +253,7 @@ exit $script:MaxRC
 
 ## Important Guidelines
 
-- **Allowed output files**: `.cs`, `.csproj`, `.sln`, `.ps1` (scripts/jobs/ and scripts/common/ only), `README.md`, `setup.md`, `process_flow.md`, `.json`, `.config`, `.xml`, `.gitignore`, `.editorconfig`.
+- **Allowed output files**: `.cs`, `.csproj`, `.sln`, `.ps1` (scripts/jobs/ and scripts/common/ only), `README.md`, `setup.md`, `.json`, `.config`, `.xml`, `.gitignore`, `.editorconfig`.
 - **FORBIDDEN files** (tool will reject): Dockerfile, docker-compose.*, deploy.*, config.yml, CI/CD manifests, ad-hoc .ps1 outside scripts/.
 - Write files IMMEDIATELY — do not hold in memory or write to `output/` first.
 - Trust `read_conversion_status()` as the single source of truth.

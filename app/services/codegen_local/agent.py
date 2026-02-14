@@ -1123,148 +1123,38 @@ def create_codegen_agent(tools: list, project_id: str):
         logger.info("[Verification] ═══ ALL CHECKS PASSED ═══")
         return {"messages": [], **verification_update}
 
-    def generate_process_flow(state: CodegenState) -> dict:
-        """Generate final Process Flow by reading the actual generated code files."""
-        logger.info("Generating Process Flow Diagram (Architect Node)...")
-        
-        output_path_str = state.get("codegen_output_path", "")
-        if not output_path_str:
-            return {"messages": []}
-            
-        output_path = Path(output_path_str)
-        src_dir = output_path / "src"
-        
-        if not src_dir.exists():
-            return {"messages": []}
-
-        # 1. READ THE FILES (The "Eyes" of the Architect)
-        # We need to gather the code so the LLM can analyze the *actual* implementation.
-        # We focus on .cs files in Workers, Services, and Repositories.
-        
-        context_buffer = []
-        files_to_read = list(src_dir.rglob("*.cs"))
-        
-        # Sort for stability
-        files_to_read.sort()
-        
-        logger.info(f"Architect reading {len(files_to_read)} files for strict reverse engineering...")
-        
-        for file_path in files_to_read:
-            # Skip bin/obj or tests if they ended up here
-            if "bin" in file_path.parts or "obj" in file_path.parts:
-                continue
-                
-            try:
-                # Read content
-                content = file_path.read_text(encoding="utf-8", errors="replace")
-                
-                # OPTIMIZATION: We mainly need class definitions, methods, and calls.
-                # We can strip comments or empty lines to save context if needed.
-                # For now, let's just dump it, but formatted clearly.
-                relative_name = file_path.relative_to(src_dir)
-                context_buffer.append(f"--- FILE: {relative_name} ---\n{content}\n")
-            except Exception as e:
-                logger.warning(f"Failed to read {file_path}: {e}")
-
-        codebase_context = "\n".join(context_buffer)
-
-        # 2. GENERATE DIAGRAM
-        ARCHITECT_PROMPT = f"""You are a System Architect.
-        
-        CONTEXT: The following is the COMPLETE source code of a .NET application we just finished migrating.
-        
-        {codebase_context}
-        
-        TASK:
-        Reverse Engineer this code and generate a Mermaid process flow diagram.
-        
-        REQUIREMENTS:
-        1. Identify the Entry Points (Jobs/Workers).
-        2. Trace the flow: Job -> Service -> Repository -> Database.
-        3. Use Subgraphs for: `subgraph Workers`, `subgraph Services`, `subgraph Repositories`.
-        4. Nodes should be named by Class Name.
-        
-        OUTPUT FORMAT:
-        Return ONLY the mermaid code block. No conversational text.
-        
-        ```mermaid
-        graph TD
-          ...
-        ```
-        """
-        
-        try:
-             # We use the base model to generate the diagram based on the file content context
-             response = model.invoke([HumanMessage(content=ARCHITECT_PROMPT)])
-             content = str(response.content)
-             
-             # Extract mermaid block
-             mermaid_match = re.search(r"```mermaid\s*(.*?)\s*```", content, re.DOTALL)
-             if mermaid_match:
-                 diagram = mermaid_match.group(1)
-                 final_content = f"```mermaid\n{diagram}\n```"
-                 
-                 # Write file directly
-                 flow_file = output_path / "process_flow.md"
-                 flow_file.write_text(final_content, encoding="utf-8")
-                 logger.info(f"Architect wrote {flow_file}")
-             else:
-                 logger.warning("Architect failed to produce mermaid block")
-                 # Fallback: Write the raw response maybe? Or just error.
-                 # Let's write raw if block missing, might be malformed markdown
-                 if "graph TD" in content or "flowchart TD" in content:
-                     flow_file = output_path / "process_flow.md"
-                     flow_file.write_text(content, encoding="utf-8")
-        
-        except Exception as e:
-            logger.error(f"Architect Node failed: {e}")
-
-        return {
-            "messages": [
-                AIMessage(content="Process Flow Generated via Source Code Analysis. Session Complete.")
-            ]
-        }
-
-    def post_verification_routing(state: CodegenState) -> Literal["llm_call", "generate_process_flow"]:
-        """Decide next step after verification."""
+    def post_verification_routing(state: CodegenState) -> Literal["llm_call", "__end__"]:
+        """Route after verification: back to agent if CRITICAL, else done."""
         last_message = state["messages"][-1]
-        
-        # If verification failed (CRITICAL), go back to work (Fix Code)
         if isinstance(last_message, HumanMessage) and "CRITICAL" in str(last_message.content):
             return "llm_call"
-            
-        # Code Passed — proceed to Architect node (cleanup is handled by service layer)
-        logger.info("Code Verified. Proceeding to Architect Node.")
-        return "generate_process_flow"
+        logger.info("Verification PASSED. Codegen complete.")
+        return "__end__"
 
-    # Build the graph
+    # Build the graph (3 nodes: llm_call, tool_node, verify_completion)
     builder = StateGraph(CodegenState)
-    
+
     builder.add_node("llm_call", llm_call)
     builder.add_node("tool_node", tool_node)
     builder.add_node("verify_completion", verify_completion)
-    builder.add_node("generate_process_flow", generate_process_flow)
 
     # START -> LLM
     builder.add_edge(START, "llm_call")
-    
+
     builder.add_conditional_edges(
         "llm_call",
         should_continue,
         ["tool_node", "verify_completion"],
     )
     builder.add_edge("tool_node", "llm_call")
-    
+
     builder.add_conditional_edges(
         "verify_completion",
         post_verification_routing,
-        ["llm_call", "generate_process_flow"]
+        ["llm_call", END],
     )
-    
-    # Architect -> END
-    builder.add_edge("generate_process_flow", END) 
-    
+
     agent = builder.compile()
-    
+
     logger.info(f"Created Codegen Agent with {len(tools)} tools for project {project_id}")
     return agent

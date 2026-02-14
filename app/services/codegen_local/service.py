@@ -24,6 +24,7 @@ from app.services.codegen_local.tools.status_tools import create_status_tools
 from app.services.codegen_local.tools.source_file_tools import create_source_file_tools
 from app.services.codegen_local.tools.system_context_tools import create_system_context_tools
 from app.services.analyst.service import AnalystService
+from app.services.codegen_local.process_flow import ProcessFlowService
 from app.config.llm.tracing import trace_execution, trace_tool
 
 
@@ -546,7 +547,16 @@ class CodegenLocalService:
             self._cleanup_intermediary_files(output_path)
             self._cleanup_build_artifacts(output_path)
             self._cleanup_empty_directories(output_path)  # Must be last
-            
+
+            # Generate process flow diagram (non-fatal — codegen still completes)
+            try:
+                self._update_status(run_id, "running", phase="generating_process_flow")
+                pf_service = ProcessFlowService(self.project_id)
+                flow_path = await pf_service.generate()
+                logger.info(f"Process flow generated: {flow_path}")
+            except Exception as e:
+                logger.warning(f"Process flow generation failed (non-fatal): {e}")
+
             end_time = datetime.utcnow().isoformat()
             self._update_status(run_id, "complete", phase="done", completed_at=end_time)
             

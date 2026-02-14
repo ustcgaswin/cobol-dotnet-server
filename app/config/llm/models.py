@@ -96,7 +96,7 @@ class LLMModel(Enum):
 
     CLAUDE_SONNET_4_5 = ModelConfig(
         name="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
-        max_tokens=8192,
+        max_tokens=16384,
         temperature=0.1,
         description="Next-gen Anthropic model"
     )

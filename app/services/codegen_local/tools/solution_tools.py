@@ -138,9 +138,9 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str) -
                         f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}")
 
             # Block arbitrary markdown files (prevent pollution)
-            if ext == ".md" and target.name.lower() not in ("readme.md", "setup.md", "process_flow.md"):
+            if ext == ".md" and target.name.lower() not in ("readme.md", "setup.md"):
                 return (f"Error: Content Policy Violation. Writing '{target.name}' is FORBIDDEN.\n"
-                        "Allowed Markdown: 'README.md', 'setup.md', 'process_flow.md'.\n"
+                        "Allowed Markdown: 'README.md', 'setup.md'.\n"
                         "DO NOT write intermediate plans, thoughts, or status files.")
 
             # Block intermediate PowerShell scripts (prevent ad-hoc fix scripts)

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from loguru import logger
 
 from app.services.codegen_local import CodegenLocalService
+from app.services.codegen_local.process_flow import ProcessFlowService
 
 
 router = APIRouter(tags=["Codegen"])
@@ -147,4 +148,61 @@ async def download_codegen_zip(project_id: uuid.UUID):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}-local.zip"'}
     )
+
+
+@router.post("/projects/{project_id}/codegen/local/process-flow")
+async def generate_process_flow(project_id: uuid.UUID):
+    """Generate or regenerate the process flow diagram.
+
+    Analyzes the generated .NET solution and produces a Mermaid process
+    flow diagram saved as ``process_flow.md`` in the solution directory.
+
+    Can be called independently of code generation (e.g. to regenerate).
+    Requires that code generation has completed — returns 404 if no solution exists.
+    """
+    service = ProcessFlowService(project_id)
+
+    output_dir = service._get_output_dir()
+    if not output_dir or not output_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No generated solution found for project {project_id}. "
+                "Run code generation first."
+            ),
+        )
+
+    try:
+        flow_path = await service.generate()
+        return {
+            "status": "success",
+            "project_id": str(project_id),
+            "path": flow_path.name,
+            "message": "Process flow diagram generated successfully.",
+        }
+    except Exception as e:
+        logger.error(f"Process flow generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/projects/{project_id}/codegen/local/process-flow")
+async def get_process_flow(project_id: uuid.UUID):
+    """Get the process flow diagram if it exists.
+
+    Returns the mermaid markdown content of ``process_flow.md``.
+    Returns 404 if not yet generated — POST to ``/process-flow`` to create it.
+    """
+    service = ProcessFlowService(project_id)
+    content = service.get_existing()
+
+    if content is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Process flow not yet generated. POST to /process-flow to create it.",
+        )
+
+    return {
+        "project_id": str(project_id),
+        "content": content,
+    }
 
