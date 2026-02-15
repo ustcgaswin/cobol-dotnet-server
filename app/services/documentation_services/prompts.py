@@ -173,6 +173,61 @@ REQUIRED JSON STRUCTURE:
 }}
 """
 
+STRUCTURE_EXTRACTION_PROMPT = """
+You are a Mainframe System Architect. Your task is to analyze a raw dependency map and organize it into two structured, hierarchical JSON objects.
+
+RAW RELATIONSHIP MAP:
+{dependency_map}
+
+TASK:
+1. DATA FLOW ARCHITECTURE: Categorize components (Programs, Files, Tables) into high-level Business Domains (e.g., Payments, Customer, Accounting). Group these further into logical Functional Groups and Subgroups.
+2. PROCESS FLOW SPECIFICATION: Sequence the batch execution into logical Phases (e.g., Intake, Validation, Core Processing, Reporting).
+
+REQUIRED JSON FORMAT:
+{{
+    "data_flow_architecture": {{
+        "domains": [
+            {{
+                "domain_name": "Domain Name",
+                "groups": [
+                    {{
+                        "group_name": "Group Name",
+                        "subgroups": [
+                            {{
+                                "subgroup_name": "Subgroup Name",
+                                "components": ["List of component names"],
+                                "description": "Brief functional purpose"
+                            }}
+                        ]
+                    }}
+                ]
+            }}
+        ]
+    }},
+    "process_flow_specification": {{
+        "phases": [
+            {{
+                "phase_name": "Phase Name",
+                "sequence": 1,
+                "steps": [
+                    {{
+                        "step_id": "Step identifier",
+                        "action": "Functional description of the action",
+                        "technical_components": ["List of Jobs/Programs involved"],
+                        "depends_on": ["Previous step IDs"]
+                    }}
+                ]
+            }}
+        ]
+    }}
+}}
+
+CONSTRAINTS:
+- Use naming conventions in the map to infer domains (e.g., 'PAY' -> Payments, 'CUST' -> Customer).
+- Max 25 components per subgroup for readability.
+- Return ONLY valid JSON.
+"""
+
 COBOL_CHUNK_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 {CUMULATIVE_MERGE_INSTRUCTION}
 
@@ -209,15 +264,24 @@ REQUIRED JSON STRUCTURE:
     "technical_analysis": {{
         "functional_capabilities": ["Technical logic points"],
         "key_operations": ["File I/O"],
-        "data_interactions": [
-            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+        "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "logic_decision_points": [
+            "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
+            "Decision 2: (e.g. If record-type is 'X', bypass validation)"
         ],
-        
+        "data_interactions": [
+            {{ 
+                "target": "Table or File Name", 
+                "operation": "READ/WRITE/UPDATE",
+                "access_method": "Sequential / Random / Dynamic",
+                "is_gdg": true/false
+            }}
+        ],
         "execution_flow": [
-            "1. Initialization (Open Files)",
-            "2. Main Processing Loop (Perform 2000-PROCESS)",
-            "3. Database Update (EXEC SQL)",
-            "4. Termination (Close Files)"
+            "1. Initialization: Open files and clear working storage.",
+            "2. Data Ingestion: Read input record from SYSIN.",
+            "3. Validation: Verify account status via decision point X.",
+            "4. Finalization: Close files and return RC=0."
         ],
         
         "technical_notes": ["Error handling", "Performance notes"]
@@ -387,13 +451,19 @@ REQUIRED JSON STRUCTURE:
     "technical_analysis": {{
         "functional_capabilities": ["Specific procedure logic"],
         "key_operations": ["I/O and Calls"],
+        "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "logic_decision_points": [
+            "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
+            "Decision 2: (e.g. If record-type is 'X', bypass validation)"
+        ],
         "data_interactions": [
-            {{ "target": "Table/File", "operation": "Access Type" }}
+            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
         "execution_flow": [
-            "1. Proc Entry",
-            "2. Logic Step A",
-            "3. Logic Step B"
+            "1. Initialization: Open files and clear working storage.",
+            "2. Data Ingestion: Read input record from SYSIN.",
+            "3. Validation: Verify account status via decision point X.",
+            "4. Finalization: Close files and return RC=0."
         ],
         "technical_notes": ["Memory/Pointer notes"]
     }}
@@ -432,14 +502,19 @@ REQUIRED JSON STRUCTURE:
         "register_usage": ["R12: Base Register", "R15: Return Code"],
         "functional_capabilities": ["Specific logic flow"],
         "key_operations": ["Macros used (GETMAIN, WTOR, LINK)"],
+        "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "logic_decision_points": [
+            "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
+            "Decision 2: (e.g. If record-type is 'X', bypass validation)"
+        ],
         "data_interactions": [
             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
         "execution_flow": [
-            "1. Save Registers (SAVE)",
-            "2. Establish Addressability",
-            "3. Perform Logic",
-            "4. Restore Registers & Return"
+            "1. Initialization: Open files and clear working storage.",
+            "2. Data Ingestion: Read input record from SYSIN.",
+            "3. Validation: Verify account status via decision point X.",
+            "4. Finalization: Close files and return RC=0."
         ],
         "technical_notes": ["Addressing modes (AMODE/RMODE)"]
     }}
@@ -477,14 +552,19 @@ REQUIRED JSON STRUCTURE:
     "technical_analysis": {{
         "automation_tasks": ["Specific automation steps"],
         "external_utilities": ["TSO Commands (ALLOC, FREE)"],
+        "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "logic_decision_points": [
+            "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
+            "Decision 2: (e.g. If record-type is 'X', bypass validation)"
+        ],
         "data_interactions": [
             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
         "execution_flow": [
-            "1. Parse Arguments",
-            "2. Allocate Datasets",
-            "3. Call External Program",
-            "4. Free Datasets"
+            "1. Initialization: Open files and clear working storage.",
+            "2. Data Ingestion: Read input record from SYSIN.",
+            "3. Validation: Verify account status via decision point X.",
+            "4. Finalization: Close files and return RC=0."
         ],
         "technical_notes": ["Error trapping (SIGNAL ON ERROR)"]
     }}
@@ -504,6 +584,10 @@ Analyze this JCL/PROC and identify the data lineage.
 CODE:
 {content}
 
+TASK:
+Perform a deep technical analysis to provide a developer with an operational roadmap of this job. 
+Map every Step to its specific Programs, Input/Output files (DD Names), and Execution Logic.
+
 REQUIRED JSON STRUCTURE:
 {{
     "filename": "From metadata",
@@ -511,24 +595,53 @@ REQUIRED JSON STRUCTURE:
 
     "business_overview": {{
         "title": "Job Workflow Name",
-        "purpose": "What business process does this orchestrate?",
-        "functional_category": "Must be one of: 'Core Batch', 'Reporting', 'Housekeeping', 'Ingestion', 'Distribution'",
-        "scope": ["Process boundaries", "Frequency"],
-        "key_data_entities": ["Major inputs/outputs"]
+        "purpose": "2-3 sentences on the business goal of this job.",
+        "functional_category": "Core Batch / Reporting / Housekeeping / Ingestion / Distribution",
+        "scope": ["Processing boundaries", "Data retention impact", "Run frequency"],
+        "key_data_entities": ["Primary business objects modified (e.g., Master Customer File, GL Ledger)"]
     }},
 
     "technical_analysis": {{
         "job_header": {{
-            "job_name": "Name",
-            "class": "CLASS",
-            "owner": "USER/NOTIFY"
+            "job_name": "Name from JOB card",
+            "class": "Execution Class",
+            "owner": "USER/NOTIFY ID",
+            "region_limit": "Memory allocation (if specified)"
         }},
-        "steps": [
-            {{"step_name": "STEP01", "program": "PGMNAME", "description": "Technical description"}}
+        
+        "symbolic_parameters": [
+            {{ "name": "VARNAME", "default_value": "VALUE", "description": "Purpose of this JCL variable" }}
         ],
+
+        "steps": [
+            {{
+                "step_name": "STEP01",
+                "program": "PGMNAME or Utility (e.g., SORT, IDCAMS)",
+                "description": "Functional action of this specific step.",
+                "condition_logic": "Execution requirements (e.g., 'Runs only if STEP01 RC < 04' or 'IF-THEN-ELSE' logic)",
+                "io_mappings": [
+                    {{
+                        "dd_name": "SYSUT1",
+                        "dataset": "PHYSICAL.DATASET.NAME",
+                        "disposition": "SHR/NEW/MOD/DELETE",
+                        "purpose": "Input Data / Output Report / Work File",
+                        "is_temporary": true/false
+                    }}
+                ],
+                "control_card_summary": "If SYSIN/CONTROL is used, summarize the logic (e.g., 'Sorts by Account ID' or 'Deletes VSAM Cluster')"
+            }}
+        ],
+
+        "restart_and_recovery": {{
+            "restart_point": "Step name where job should be restarted on failure",
+            "cleanup_requirements": "Actions needed before restart (e.g., 'Delete output file from Step 2')",
+            "critical_checkpoints": ["Points where data is committed or finalized"]
+        }},
+
         "io_datasets": [
             {{"dataset": "A.B.C", "usage": "Input/Output"}}
         ],
+        
         "flow_context": {{
             "predecessors": ["List job names from the MASTER LIST that provide input to this job"],
             "successors": ["List job names from the MASTER LIST that will read outputs from this job"],
@@ -595,33 +708,30 @@ CODE:
 
 REQUIRED JSON STRUCTURE:
 {{
-    "filename": "From metadata",
+    "filename": "{filename}",
     "type": "COPYBOOK",
 
     "business_overview": {{
         "title": "Data Entity Definition",
-        "purpose": "What business entity does this structure represent? (e.g. 'Customer Address Record').",
-        "scope": [
-            "Data domain (e.g. Billing, Inventory)",
-            "Usage context"
-        ],
-        "key_data_entities": [
-            "The primary entity defined"
-        ]
+        "purpose": "What business entity does this represent?",
+        "data_domain": "e.g., Master Data / Transactional / Reference / Metadata",
+        "key_data_entities": ["The primary entity defined"]
     }},
 
     "technical_analysis": {{
-        "table_name": "SQL Table Name (if DCLGEN) or Root Field Name",
+        "storage_type": "DB2 / VSAM-KSDS / VSAM-ESDS / FLAT",
+        "record_length": "Calculated LRECL (if possible)",
         "key_fields": [
-            {{"field": "Field Name", "description": "Inferred usage (ID, Amount, Date)"}}
+            {{
+                "field": "Field Name", 
+                "is_primary_key": true/false,
+                "description": "Business meaning"
+            }}
         ],
         "table_structure": [
              {{"column_name": "Name", "type": "DataType", "nullable": "Yes/No"}}
         ],
-        "technical_notes": [
-            "Data types used (COMP-3, VARCHAR)",
-            "Redefines or arrays present"
-        ]
+        "technical_notes": ["Usage of COMP-3, REDEFINES, or binary formats"]
     }}
 }}
 """

@@ -624,6 +624,13 @@ class DocumentationService:
                 }
             )
 
+            # Call the new hierarchical JSON extractor
+            hierarchical_data = await analyzer.generate_hierarchical_structure_json()
+
+            # You can now log them exactly as you wanted
+            logger.info(f"The arch json : {hierarchical_data.get('data_flow_architecture')}")
+            logger.info(f"The process flow json : {hierarchical_data.get('process_flow_specification')}")
+
             # SAFETY CHECK: Ensure system_overview_json is a dict and not None
             if not isinstance(system_overview_json, dict):
                 logger.error("System summary returned non-dictionary. Using empty defaults.")

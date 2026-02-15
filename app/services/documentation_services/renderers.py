@@ -1180,49 +1180,148 @@ class TechnicalSpecBuilder(BaseBuilder):
 
     def _batch(self):
         self.h1("3. Batch Execution Specification")
+        
+        if not self.jcl_files:
+            self.para("No JCL/Batch Job artifacts identified in current scope.")
+            return
+        
         self.h2("3.1 Job Definitions")
+
         for jcl in self.jcl_files:
+            # 3.1 Job Identification
             self.h3(f"Job: {jcl.filename}")
+            
+            # Overview & Purpose
+            self.para(f"<b>Business Purpose:</b> {jcl.business_overview.get('purpose', 'N/A')}")
+            
             header = jcl.technical_analysis.get('job_header', {})
-            self.para(f"Class: {header.get('class', 'N/A')} | Owner: {header.get('owner', 'N/A')}")
+            self.para(f"<b>Technical Context:</b> Class {header.get('class', 'N/A')} | Owner: {header.get('owner', 'N/A')} | Region: {header.get('region_limit', 'Default')}")
+
+            # 3.1.1 Symbolic Parameters (JCL Variables)
+            sym_params = jcl.technical_analysis.get('symbolic_parameters', [])
+            if sym_params:
+                self.h4("Symbolic Parameters")
+                rows = [[p.get('name'), p.get('default_value'), p.get('description')] for p in sym_params if isinstance(p, dict)]
+                self.table(["Parameter", "Default Value", "Functional Description"], rows, [40*mm, 50*mm, 80*mm])
+
+            # 3.1.2 Step-wise Execution & I/O Mapping
             steps = jcl.technical_analysis.get('steps', [])
             if steps:
-                rows = [[str(s.get('step_name')), str(s.get('program')), str(s.get('description'))] for s in steps]
-                self.table(["Step", "Program", "Description"], rows, [30*mm, 40*mm, 100*mm])
+                self.h3("Step Execution Logic & I/O Mapping")
+                for step in steps:
+                    s_name = step.get('step_name', 'STEP')
+                    prog = step.get('program', 'UNKNOWN')
+                    self.para(f"<b>{s_name}</b> (Program: <b>{prog}</b>)")
+                    self.para(f"<b><i>Action:</i></b> {step.get('description', 'No description.')}")
+                    
+                    if step.get('condition_logic'):
+                        self.para(f"<b><i>Condition:</i></b>. {step.get('condition_logic')}")
 
-        self.h2("3.2 JCL Procedures")
+                    # THE GAP FILLER: Step-Level I/O Table
+                    io_list = step.get('io_mappings', [])
+                    if io_list:
+                        io_rows = []
+                        for io in io_list:
+                            dsn = io.get('dataset', 'Temporary / Inline')
+                            # Shorten long DSNs for table fit
+                            safe_dsn = dsn[:45] + "..." if len(dsn) > 45 else dsn
+                            io_rows.append([
+                                io.get('dd_name', 'SYSIN'),
+                                safe_dsn,
+                                io.get('disposition', 'SHR'),
+                                io.get('purpose', 'Work/Data')
+                            ])
+                        self.table(["DD Name", "Physical Dataset / Resource", "Disp", "Role"], io_rows, [30*mm, 80*mm, 20*mm, 40*mm])
+
+                    # Control Card Logic (e.g., SORT/IDCAMS instructions)
+                    if step.get('control_card_summary'):
+                        self.para(f"<b>Utility Logic:</b> {step.get('control_card_summary')}")
+                    
+                    self.elements.append(Spacer(1, 2*mm))
+
+            # 3.1.3 Restart & Recovery Instructions
+            recovery = jcl.technical_analysis.get('restart_and_recovery', {})
+            if recovery:
+                self.h3("Restart & Recovery")
+                self.para(f"<b>Restart Point:</b> {recovery.get('restart_point', 'Standard')}")
+                if recovery.get('cleanup_requirements'):
+                    self.para(f"<b>Cleanup Needed:</b> {recovery.get('cleanup_requirements')}")
+                checkpoints = recovery.get('critical_checkpoints', [])
+                if checkpoints:
+                    self.para(f"<b>Checkpoints:</b> {', '.join(checkpoints)}")
+
+            self.elements.append(Spacer(1, 5*mm))
+
+        # 3.2 JCL Procedures (PROCs)
+        self.h2("3.2 JCL Procedures (PROCs)")
         procs = [s for s in self.summaries if s.file_type == 'PROC']
         if procs:
-            rows = [[p.filename, p.business_overview.get('purpose', '')] for p in procs]
-            self.table(["Procedure", "Purpose"], rows, [60*mm, 110*mm])
+            rows = [[p.filename, p.business_overview.get('purpose', 'Logic snippet')] for p in procs]
+            self.table(["Procedure Name", "Encapsulated Logic Description"], rows, [60*mm, 110*mm])
         else:
-            self.para("No PROCs found.")
-
-        self.h2("3.3 Job Dependencies")
+            self.para("No shared procedures (PROCs) identified.")
+        
+        # --- NEW: 3.3 JOB DEPENDENCIES (The Execution Chain) ---
+        self.h2("3.3 Job Execution Dependencies")
+        self.para("The following execution dependencies have been identified via CA7/Control-M definitions and JCL triggers.")
+        
         chains = []
+        # Extract from the Graph Analyzer
         for u, v, d in self.graph_analyzer.graph.edges(data=True):
-            if d.get('type') in ['TRIGGER', 'EXEC_PGM', 'EXEC_PROC']:
-                chains.append([u, v, d.get('type')])
-        if chains:
-            self.table(["Source Job/File", "Target Component", "Relationship"], chains[:20], [60*mm, 60*mm, 40*mm])
-        else:
-            self.para("No automated job chains identified.")
+            if d.get('type') in ['TRIGGER', 'SUBMIT_JOB']:
+                chains.append([u, v, d.get('type', 'Sequential')])
 
+        if chains:
+            self.table(["Predecessor Job", "Successor Job", "Relationship Type"], chains[:30], [60*mm, 60*mm, 50*mm])
+        else:
+            # Fallback to JCL schedule notes if graph is sparse
+            notes_rows = []
+            for jcl in self.jcl_files:
+                notes = jcl.technical_analysis.get('schedule_notes')
+                if notes and notes != "N/A":
+                    notes_rows.append([jcl.filename, notes])
+            
+            if notes_rows:
+                self.table(["Job Name", "Scheduling / Dependency Notes"], notes_rows, [60*mm, 110*mm])
+            else:
+                self.para("No cross-job automated dependencies detected in the provided source.")
+
+        # --- NEW: 3.4 UTILITY & CONTROL SPECIFICATIONS ---
         self.h2("3.4 Utility & Control Specifications")
+        self.para("This section details the parameters for system utilities (SORT, IDCAMS, DB2 Utilities) found in control cards and parameter libraries.")
+
         if self.configs:
             for cfg in self.configs:
                 self.h3(f"Control Member: {cfg.filename}")
-                self.para(cfg.business_overview.get('purpose', ''))
+                self.para(f"<b>Associated Utility/Program:</b> {cfg.business_overview.get('title', 'System Utility')}")
+                self.para(f"<b>Description:</b> {cfg.business_overview.get('purpose', 'Configuration parameters.')}")
+
+                # Logic Rules (e.g., SORT FIELDS..., DELETE...)
                 rules = cfg.technical_analysis.get('configuration_areas', [])
                 if rules:
-                    self.h4("Logic Rules")
+                    self.h4("Configuration Logic")
                     self.bullet_list(rules)
+
+                # Key Parameters (extracted name/value pairs)
                 params = cfg.technical_analysis.get('key_parameters', [])
-                if params and isinstance(params[0], dict):
-                    rows = [[p.get('name'), p.get('value'), p.get('description')] for p in params]
-                    self.table(["Param", "Value", "Desc"], rows, [40*mm, 40*mm, 90*mm])
+                if params and isinstance(params, list) and isinstance(params[0], dict):
+                    p_rows = [[p.get('name', 'N/A'), p.get('value', 'N/A'), p.get('description', 'N/A')] for p in params]
+                    self.table(["Parameter", "Value", "Technical Impact"], p_rows, [40*mm, 40*mm, 90*mm])
+                
+                self.elements.append(Spacer(1, 4*mm))
         else:
-            self.para("No utilities identified")
+            # Check if JCL steps have inline control card summaries
+            inline_found = False
+            for jcl in self.jcl_files:
+                for step in jcl.technical_analysis.get('steps', []):
+                    if step.get('control_card_summary'):
+                        if not inline_found:
+                            self.para("Inline Utility Logic identified within Job Steps:")
+                            inline_found = True
+                        self.bullet(f"<b>{jcl.filename}</b> <b>({step.get('step_name')}):</b> {step.get('control_card_summary')}")
+            
+            if not inline_found:
+                self.para("No external or inline utility control specifications were identified.")
 
     def _logic(self):
         self.h1("4. Application Logic Specification")
@@ -1233,90 +1332,146 @@ class TechnicalSpecBuilder(BaseBuilder):
         for idx, prog in enumerate(sorted_code, 1):
             self.h3(f"4.1.{idx} {prog.filename} ({prog.file_type})")
             
-            # 1. Summary (Brief)
+            # 1. Functional Overview
             self.para(f"<b>Purpose:</b> {prog.business_overview.get('purpose', 'N/A')}")
-            
-            # 2. Structural Dependencies (Tables & Copybooks)
-            # Use the data_interactions we extracted
+            desc = prog.business_overview.get('functional_description')
+            if desc:
+                self.para(desc)
+
+            # 2. External Call Hierarchy (Filling the Gap)
+            calls = prog.technical_analysis.get('external_calls', [])
+            if calls:
+                self.h4("External Program Dependencies")
+                self.para(f"This module interacts with the following sub-programs: {', '.join(calls)}")
+
+            # 3. Decision Logic & Business Rules (Filling the Gap)
+            decisions = prog.technical_analysis.get('logic_decision_points', [])
+            if decisions:
+                self.h4("Critical Decision Logic")
+                self.bullet_list(decisions)
+
+            # 4. Execution Control Flow (FIXED: No double bullets)
+            flow = prog.technical_analysis.get('execution_flow', [])
+            if flow:
+                self.h4("Execution Control Flow")
+                # We do NOT use bullet_list here because the LLM provides numbers.
+                # We use para() to maintain the numbered format clearly.
+                for step in flow:
+                    self.para(str(step).strip())
+
+            # 5. Data Interactions (Table)
             interactions = prog.technical_analysis.get('data_interactions', [])
             if interactions:
-                self.h4("Data Dependencies")
-                # Deduplicate
+                self.h4("Data File & Table Access")
                 seen_deps = set()
                 rows = []
                 for i in interactions:
-                    # Handle both dict and string cases safely
                     if isinstance(i, dict):
-                        tgt = i.get('target', 'Unknown')
-                        op = i.get('operation', 'Access')
+                        tgt, op = i.get('target', 'Unknown'), i.get('operation', 'Access')
                     else:
-                        tgt = str(i)
-                        op = "Access"
+                        tgt, op = str(i), "Access"
                     
-                    key = f"{tgt}-{op}"
-                    if key not in seen_deps:
+                    if f"{tgt}-{op}" not in seen_deps:
                         rows.append([tgt, op])
-                        seen_deps.add(key)
+                        seen_deps.add(f"{tgt}-{op}")
                 
                 if rows:
                     self.table(["Object / File", "Operation"], rows, [100*mm, 60*mm])
 
-            # 3. Execution Control Flow (The "Technical" Meat)
-            flow = prog.technical_analysis.get('execution_flow', [])
-            if flow:
-                self.h4("Execution Control Flow")
-                self.para("Internal logic sequence:")
-                # Use a numbered list for flow
-                for step in flow:
-                    # Clean up the numbering if the LLM added it (e.g. "1. Step")
-                    step_text = str(step).strip()
-                    self.bullet(step_text)
-            else:
-                # Fallback to key operations if flow is missing
-                ops = prog.technical_analysis.get('key_operations', [])
-                if ops:
-                    self.h4("Key Operations")
-                    for op in ops: self.bullet(op)
-
-            # 4. Error Handling
+            # 6. Exception Handling
             notes = prog.technical_analysis.get('technical_notes', [])
-            error_notes = [n for n in notes if any(x in str(n).upper() for x in ['ERROR', 'ABEND', 'SQLCODE', 'RETURN', 'EXCEPTION'])]
-            
-            if error_notes:
-                self.h4("Exception Handling")
-                for note in error_notes: self.bullet(note)
+            if notes:
+                self.h4("Technical Operational Notes")
+                self.bullet_list(notes)
             
             self.elements.append(Spacer(1, 5*mm))
 
     def _data(self):
         self.h1("5. Data Specification")
+        
+        # 5.1 Database Schema (DB2)
         self.h2("5.1 Database Schema (DB2)")
         dclgens = [f for f in self.data_files if f.file_type in ['DCLGEN', 'SQL']]
-        for dcl in dclgens:
-            self.h3(f"Table: {dcl.technical_analysis.get('table_name', dcl.filename)}")
-            cols = dcl.technical_analysis.get('table_structure', [])
-            if cols:
-                rows = [[str(c.get('column_name')), str(c.get('type')), str(c.get('nullable'))] for c in cols if isinstance(c, dict)]
-                self.table(["Column", "Type", "Null"], rows, [60*mm, 60*mm, 40*mm])
+        if dclgens:
+            for dcl in dclgens:
+                self.h3(f"Table: {dcl.technical_analysis.get('table_name', dcl.filename)}")
+                self.para(f"<b>Domain:</b> {dcl.business_overview.get('data_domain', 'Relational Store')}")
+                cols = dcl.technical_analysis.get('table_structure', [])
+                if cols:
+                    rows = [[str(c.get('column_name')), str(c.get('type')), str(c.get('nullable'))] for c in cols if isinstance(c, dict)]
+                    self.table(["Column", "Type", "Null"], rows, [60*mm, 60*mm, 40*mm])
+        else:
+            self.para("No DB2 relational tables identified.")
 
-        self.h2("5.2 File Layouts (Copybooks)")
-        copybooks = [f for f in self.data_files if f.file_type in ['COPYBOOK', 'PLI_COPYBOOK']]
-        for copy in copybooks:
-            self.h3(f"Layout: {copy.filename}")
-            fields = copy.technical_analysis.get('table_structure') or copy.technical_analysis.get('key_fields')
+        # 5.2 Physical File Stores (VSAM & QSAM) - FILLING THE GAP
+        self.h2("5.2 Physical File Specifications")
+        file_specs = []
+        for copy in self.data_files:
+            if copy.file_type in ['COPYBOOK', 'PLI_COPYBOOK']:
+                tech = copy.technical_analysis
+                if tech.get('storage_type') != 'DB2':
+                    file_specs.append([
+                        copy.filename,
+                        tech.get('storage_type', 'FLAT'),
+                        str(tech.get('record_length', 'Variable')),
+                        copy.business_overview.get('data_domain', 'Transactional')
+                    ])
+        
+        if file_specs:
+            self.table(["File/Layout", "Type", "LRECL", "Domain"], file_specs, [50*mm, 40*mm, 30*mm, 50*mm])
+        else:
+            self.para("No physical file layouts identified.")
+
+        # 5.3 File Layouts & Keys
+        self.h2("5.3 Data Layouts & Key Identifiers")
+        for copy in self.data_files:
+            fields = copy.technical_analysis.get('key_fields', [])
             if fields:
-                rows = [[str(f.get('column_name') or f.get('field')), str(f.get('type') or f.get('description'))] for f in fields if isinstance(f, dict)]
-                self.table(["Field", "Type/Desc"], rows, [80*mm, 90*mm])
+                self.h3(f"Structure: {copy.filename}")
+                rows = []
+                for f in fields:
+                    if isinstance(f, dict):
+                        key_tag = "(Key)" if f.get('is_primary_key') else ""
+                        rows.append([f"{f.get('field')} {key_tag}", f.get('description', 'N/A')])
+                if rows:
+                    self.table(["Field Name", "Business Description"], rows, [70*mm, 100*mm])
 
-        self.h2("5.3 CRUD Matrix")
+        # 5.4 Data Versioning (GDG) - FILLING THE GAP
+        self.h2("5.4 Data Versioning & Retention")
+        gdg_files = []
+        seen_gdg = set()
+        for jcl in self.jcl_files:
+            for ds in jcl.technical_analysis.get('io_datasets', []):
+                if isinstance(ds, dict):
+                    dsn = ds.get('dataset', '')
+                    if '(+' in dsn or '(0)' in dsn:
+                        base_dsn = dsn.split('(')[0]
+                        if base_dsn not in seen_gdg:
+                            gdg_files.append([base_dsn, "Generation Data Group", jcl.filename])
+                            seen_gdg.add(base_dsn)
+        
+        if gdg_files:
+            self.para("The following datasets utilize GDG versioning for historical retention:")
+            self.table(["Base Dataset Name", "Management Type", "Orchestrated By"], gdg_files, [80*mm, 45*mm, 45*mm])
+        else:
+            self.para("No versioned (GDG) datasets identified.")
+
+        # 5.5 CRUD Matrix
+        self.h2("5.5 Data Access & CRUD Matrix")
         rows = []
         for prog in self.code_files:
             ops = prog.technical_analysis.get('data_interactions', [])
             for op in ops:
                 if isinstance(op, dict):
-                    rows.append([prog.filename, str(op.get('target')), str(op.get('operation'))])
+                    rows.append([
+                        prog.filename, 
+                        str(op.get('target', 'Unknown')), 
+                        str(op.get('operation', 'Access')),
+                        str(op.get('access_method', 'Sequential'))
+                    ])
         if rows:
-            self.table(["Program", "Table/File", "Op"], rows[:30], [50*mm, 80*mm, 40*mm])
+            # Added Access Method column to the CRUD matrix
+            self.table(["Program", "Table/File", "Operation", "Access Method"], rows[:30], [40*mm, 60*mm, 35*mm, 35*mm])
 
     def _ops(self):
         self.h1("6. Operational Support & Reliability")

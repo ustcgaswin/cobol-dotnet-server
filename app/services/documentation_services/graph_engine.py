@@ -8,7 +8,12 @@ import networkx as nx
 from typing import Dict, List, Any
 from app.api.schemas.doc_models import SystemMetrics
 from loguru import logger
+from app.services.documentation_services.prompts import STRUCTURE_EXTRACTION_PROMPT
+from app.config.settings import settings
+from app.config.llm_config import get_llm
+from langchain_core.messages import HumanMessage
 import re
+import json
 
 class GraphAnalyzer:
     def __init__(self, raw_dependency_data: Dict[str, Any]):
@@ -377,6 +382,58 @@ class GraphAnalyzer:
             label = o.replace('FILE:', '')
             lines.append(f"    Logic --> {clean_id}[\"{label}\"]")
         return "\n".join(lines)
+
+    async def generate_hierarchical_structure_json(self, max_edges: int = 100) -> Dict[str, Any]:
+        """
+        New Function: Leverages LLM to transform raw graph data into 
+        hierarchical Business Domain and Process Flow JSON.
+        """
+        try:
+            # 1. Extract significant edges from the NetworkX graph for context
+            edges_summary = []
+            # We focus on execution and data access for high-level structure
+            target_types = {'CALL', 'TRIGGER', 'EXEC_PGM', 'ACCESS_DB', 'SUBMIT_JOB'}
+            
+            count = 0
+            for u, v, d in self.graph.edges(data=True):
+                if d.get('type') in target_types:
+                    edges_summary.append(f"{u} -> {v} ({d.get('type')})")
+                    count += 1
+                if count >= max_edges:
+                    break
+
+            if not edges_summary:
+                logger.warning("Graph is empty or contains no relevant relationship types for JSON extraction.")
+                return {}
+
+            dependency_map_str = "\n".join(edges_summary)
+
+            # 2. Prepare the Prompt
+            prompt = STRUCTURE_EXTRACTION_PROMPT.format(
+                dependency_map=dependency_map_str
+            )
+
+            # 3. Call LLM
+            llm = get_llm()
+            response = await llm.ainvoke([HumanMessage(content=prompt)])
+            
+            # 4. Parse and Validate JSON
+            raw_content = response.content.strip()
+            # Remove markdown code blocks if present
+            clean_content = re.sub(r'```json|```', '', raw_content).strip()
+            
+            data = json.loads(clean_content)
+            
+            logger.info("Successfully generated hierarchical structure JSON via LLM.")
+            return data
+
+        except json.JSONDecodeError as e:
+            logger.error(f"LLM returned invalid JSON for hierarchical structure: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Failed to generate hierarchical JSON: {e}")
+            return {}
+
 
     def generate_batch_flow_diagram(self, summaries: List[Any]) -> str:
         """
