@@ -324,13 +324,6 @@ class GraphAnalyzer:
         import urllib3
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
-        # ... (headers/verify logic) ...
-
-        # URL LENGTH CHECK:
-        # If the code is huge, the URL will fail. 
-        if len(mermaid_code) > 1000:
-            logger.warning(f"Mermaid code for {output_path} is very long ({len(mermaid_code)} chars). Risk of 400 error.")
 
         graphbytes = mermaid_code.encode("utf8")
         base64_string = base64.urlsafe_b64encode(graphbytes).decode("ascii")
@@ -383,4 +376,74 @@ class GraphAnalyzer:
             clean_id = self._sanitize_node(o)
             label = o.replace('FILE:', '')
             lines.append(f"    Logic --> {clean_id}[\"{label}\"]")
+        return "\n".join(lines)
+
+    def generate_batch_flow_diagram(self, summaries: List[Any]) -> str:
+        """
+        Generates a Mermaid graph using the explicit 'flow_context' (Predecessors/Successors)
+        extracted by the LLM in the JCL Prompt.
+        """
+        edges = set()
+        
+        # 1. Create a lookup set of all valid JCL filenames in this project
+        # We strip extensions to make matching easier (JOB01.JCL == JOB01)
+        valid_jobs = {}
+        for s in summaries:
+            if s.file_type == 'JCL':
+                clean_name = s.filename.upper().replace('.JCL', '').replace('.TXT', '').strip()
+                valid_jobs[clean_name] = s.filename # Map short name back to full filename
+
+        # 2. Iterate through every JCL file
+        for s in summaries:
+            if s.file_type != 'JCL': 
+                continue
+
+            current_short_name = s.filename.upper().replace('.JCL', '').replace('.TXT', '').strip()
+            
+            # Safely get the flow context
+            flow = s.technical_analysis.get('flow_context', {})
+            if not flow: 
+                continue
+
+            # A. Handle Predecessors (They run BEFORE me) -> [Pred] --> [Current]
+            preds = flow.get('predecessors', [])
+            for p in preds:
+                p_clean = str(p).upper().strip().split(' ')[0] # Take first word if "JOB01 (Daily)"
+                p_clean = p_clean.replace('.JCL', '')
+                
+                # Only draw if the predecessor exists in our project
+                if p_clean in valid_jobs and p_clean != current_short_name:
+                    src_node = self._sanitize_node(valid_jobs[p_clean])
+                    tgt_node = self._sanitize_node(s.filename)
+                    edges.add(f"    {src_node}[{valid_jobs[p_clean]}] --> {tgt_node}[{s.filename}]")
+
+            # B. Handle Successors (They run AFTER me) -> [Current] --> [Succ]
+            succs = flow.get('successors', [])
+            for next_job in succs:
+                n_clean = str(next_job).upper().strip().split(' ')[0]
+                n_clean = n_clean.replace('.JCL', '')
+                
+                if n_clean in valid_jobs and n_clean != current_short_name:
+                    src_node = self._sanitize_node(s.filename)
+                    tgt_node = self._sanitize_node(valid_jobs[n_clean])
+                    edges.add(f"    {src_node}[{s.filename}] --> {tgt_node}[{valid_jobs[n_clean]}]")
+
+        # 3. If no edges found, return empty string (Service log will show "Batch Mermaid is missing")
+        if not edges:
+            return ""
+
+        # 4. Construct Mermaid
+        lines = ["graph TD"]
+        lines.append("    %% Styling")
+        lines.append("    classDef job fill:#e1f5fe,stroke:#01579b,stroke-width:2px,rx:5,ry:5;")
+        
+        # Sort edges for consistent output
+        for edge in sorted(list(edges)):
+            lines.append(edge)
+        
+        # Apply style to all nodes involved
+        lines.append("    class " + ",".join([e.split('[')[0].strip() for e in edges]) + " job;")
+
+        logger.info(lines)
+        
         return "\n".join(lines)
