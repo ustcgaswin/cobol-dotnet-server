@@ -25,6 +25,7 @@ from app.services.codegen_local.tools.source_file_tools import create_source_fil
 from app.services.codegen_local.tools.system_context_tools import create_system_context_tools
 from app.services.analyst.service import AnalystService
 from app.services.codegen_local.process_flow import ProcessFlowService
+from app.services.codegen_local.test_generator import TestGeneratorService
 from app.config.llm.tracing import trace_execution, trace_tool
 
 
@@ -556,6 +557,15 @@ class CodegenLocalService:
                 logger.info(f"Process flow generated: {flow_path}")
             except Exception as e:
                 logger.warning(f"Process flow generation failed (non-fatal): {e}")
+
+            # Generate/Verify tests (non-fatal — codegen still completes)
+            try:
+                self._update_status(run_id, "running", phase="generating_tests")
+                test_service = TestGeneratorService(self.project_id)
+                test_summary = await test_service.generate()
+                logger.info(f"Test generation complete: {test_summary}")
+            except Exception as e:
+                logger.warning(f"Test generation failed (non-fatal): {e}")
 
             end_time = datetime.utcnow().isoformat()
             self._update_status(run_id, "complete", phase="done", completed_at=end_time)

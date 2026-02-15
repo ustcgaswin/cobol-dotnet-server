@@ -7,6 +7,7 @@ from loguru import logger
 
 from app.services.codegen_local import CodegenLocalService
 from app.services.codegen_local.process_flow import ProcessFlowService
+from app.services.codegen_local.test_generator import TestGeneratorService
 
 
 router = APIRouter(tags=["Codegen"])
@@ -205,4 +206,36 @@ async def get_process_flow(project_id: uuid.UUID):
         "project_id": str(project_id),
         "content": content,
     }
+
+
+@router.post("/projects/{project_id}/codegen/local/test-cases")
+async def generate_test_cases(project_id: uuid.UUID):
+    """Generate or verify test cases for a project.
+
+    Analyzes the generated code and ensures all logic has corresponding tests.
+    Reuses valid existing tests and adds missing coverage.
+    """
+    service = TestGeneratorService(project_id)
+
+    # Verify that code exists first
+    codegen_service = CodegenLocalService(project_id)
+    project_name = await codegen_service._get_project_name()
+    output_path = codegen_service._get_output_path(project_name)
+
+    if not output_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No generated solution found. Run code generation first."
+        )
+
+    try:
+        summary = await service.generate()
+        return {
+            "status": "success",
+            "project_id": str(project_id),
+            "message": summary
+        }
+    except Exception as e:
+        logger.error(f"Test generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
