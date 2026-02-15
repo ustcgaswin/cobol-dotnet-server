@@ -236,7 +236,7 @@ class CodegenLocalService:
                     removed.append(pattern)
 
             for md_file in output_path.glob("*.md"):
-                if md_file.name.lower() not in ("readme.md", "setup.md", "process_flow.md"):
+                if md_file.name.lower() not in ("readme.md", "setup.md", "process_flow.md", "dependency_graph_output.md"):
                     md_file.unlink()
                     removed.append(md_file.name)
 
