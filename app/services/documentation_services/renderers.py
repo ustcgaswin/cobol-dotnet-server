@@ -1457,90 +1457,146 @@ class TechnicalSpecBuilder(BaseBuilder):
         for idx, prog in enumerate(sorted_code, 1):
             self.h3(f"4.1.{idx} {prog.filename} ({prog.file_type})")
             
-            # 1. Summary (Brief)
+            # 1. Functional Overview
             self.para(f"<b>Purpose:</b> {prog.business_overview.get('purpose', 'N/A')}")
-            
-            # 2. Structural Dependencies (Tables & Copybooks)
-            # Use the data_interactions we extracted
+            desc = prog.business_overview.get('functional_description')
+            if desc:
+                self.para(desc)
+
+            # 2. External Call Hierarchy (Filling the Gap)
+            calls = prog.technical_analysis.get('external_calls', [])
+            if calls:
+                self.h4("External Program Dependencies")
+                self.para(f"This module interacts with the following sub-programs: {', '.join(calls)}")
+
+            # 3. Decision Logic & Business Rules (Filling the Gap)
+            decisions = prog.technical_analysis.get('logic_decision_points', [])
+            if decisions:
+                self.h4("Critical Decision Logic")
+                self.bullet_list(decisions)
+
+            # 4. Execution Control Flow (FIXED: No double bullets)
+            flow = prog.technical_analysis.get('execution_flow', [])
+            if flow:
+                self.h4("Execution Control Flow")
+                # We do NOT use bullet_list here because the LLM provides numbers.
+                # We use para() to maintain the numbered format clearly.
+                for step in flow:
+                    self.para(str(step).strip())
+
+            # 5. Data Interactions (Table)
             interactions = prog.technical_analysis.get('data_interactions', [])
             if interactions:
-                self.h4("Data Dependencies")
-                # Deduplicate
+                self.h4("Data File & Table Access")
                 seen_deps = set()
                 rows = []
                 for i in interactions:
-                    # Handle both dict and string cases safely
                     if isinstance(i, dict):
-                        tgt = i.get('target', 'Unknown')
-                        op = i.get('operation', 'Access')
+                        tgt, op = i.get('target', 'Unknown'), i.get('operation', 'Access')
                     else:
-                        tgt = str(i)
-                        op = "Access"
+                        tgt, op = str(i), "Access"
                     
-                    key = f"{tgt}-{op}"
-                    if key not in seen_deps:
+                    if f"{tgt}-{op}" not in seen_deps:
                         rows.append([tgt, op])
-                        seen_deps.add(key)
+                        seen_deps.add(f"{tgt}-{op}")
                 
                 if rows:
                     self.table(["Object / File", "Operation"], rows, [100*mm, 60*mm])
 
-            # 3. Execution Control Flow (The "Technical" Meat)
-            flow = prog.technical_analysis.get('execution_flow', [])
-            if flow:
-                self.h4("Execution Control Flow")
-                self.para("Internal logic sequence:")
-                # Use a numbered list for flow
-                for step in flow:
-                    # Clean up the numbering if the LLM added it (e.g. "1. Step")
-                    step_text = str(step).strip()
-                    self.bullet(step_text)
-            else:
-                # Fallback to key operations if flow is missing
-                ops = prog.technical_analysis.get('key_operations', [])
-                if ops:
-                    self.h4("Key Operations")
-                    for op in ops: self.bullet(op)
-
-            # 4. Error Handling
+            # 6. Exception Handling
             notes = prog.technical_analysis.get('technical_notes', [])
-            error_notes = [n for n in notes if any(x in str(n).upper() for x in ['ERROR', 'ABEND', 'SQLCODE', 'RETURN', 'EXCEPTION'])]
-            
-            if error_notes:
-                self.h4("Exception Handling")
-                for note in error_notes: self.bullet(note)
+            if notes:
+                self.h4("Technical Operational Notes")
+                self.bullet_list(notes)
             
             self.elements.append(Spacer(1, 5*mm))
 
     def _data(self):
         self.h1("5. Data Specification")
+        
+        # 5.1 Database Schema (DB2)
         self.h2("5.1 Database Schema (DB2)")
         dclgens = [f for f in self.data_files if f.file_type in ['DCLGEN', 'SQL']]
-        for dcl in dclgens:
-            self.h3(f"Table: {dcl.technical_analysis.get('table_name', dcl.filename)}")
-            cols = dcl.technical_analysis.get('table_structure', [])
-            if cols:
-                rows = [[str(c.get('column_name')), str(c.get('type')), str(c.get('nullable'))] for c in cols if isinstance(c, dict)]
-                self.table(["Column", "Type", "Null"], rows, [60*mm, 60*mm, 40*mm])
+        if dclgens:
+            for dcl in dclgens:
+                self.h3(f"Table: {dcl.technical_analysis.get('table_name', dcl.filename)}")
+                self.para(f"<b>Domain:</b> {dcl.business_overview.get('data_domain', 'Relational Store')}")
+                cols = dcl.technical_analysis.get('table_structure', [])
+                if cols:
+                    rows = [[str(c.get('column_name')), str(c.get('type')), str(c.get('nullable'))] for c in cols if isinstance(c, dict)]
+                    self.table(["Column", "Type", "Null"], rows, [60*mm, 60*mm, 40*mm])
+        else:
+            self.para("No DB2 relational tables identified.")
 
-        self.h2("5.2 File Layouts (Copybooks)")
-        copybooks = [f for f in self.data_files if f.file_type in ['COPYBOOK', 'PLI_COPYBOOK']]
-        for copy in copybooks:
-            self.h3(f"Layout: {copy.filename}")
-            fields = copy.technical_analysis.get('table_structure') or copy.technical_analysis.get('key_fields')
+        # 5.2 Physical File Stores (VSAM & QSAM) - FILLING THE GAP
+        self.h2("5.2 Physical File Specifications")
+        file_specs = []
+        for copy in self.data_files:
+            if copy.file_type in ['COPYBOOK', 'PLI_COPYBOOK']:
+                tech = copy.technical_analysis
+                if tech.get('storage_type') != 'DB2':
+                    file_specs.append([
+                        copy.filename,
+                        tech.get('storage_type', 'FLAT'),
+                        str(tech.get('record_length', 'Variable')),
+                        copy.business_overview.get('data_domain', 'Transactional')
+                    ])
+        
+        if file_specs:
+            self.table(["File/Layout", "Type", "LRECL", "Domain"], file_specs, [50*mm, 40*mm, 30*mm, 50*mm])
+        else:
+            self.para("No physical file layouts identified.")
+
+        # 5.3 File Layouts & Keys
+        self.h2("5.3 Data Layouts & Key Identifiers")
+        for copy in self.data_files:
+            fields = copy.technical_analysis.get('key_fields', [])
             if fields:
-                rows = [[str(f.get('column_name') or f.get('field')), str(f.get('type') or f.get('description'))] for f in fields if isinstance(f, dict)]
-                self.table(["Field", "Type/Desc"], rows, [80*mm, 90*mm])
+                self.h3(f"Structure: {copy.filename}")
+                rows = []
+                for f in fields:
+                    if isinstance(f, dict):
+                        key_tag = "(Key)" if f.get('is_primary_key') else ""
+                        rows.append([f"{f.get('field')} {key_tag}", f.get('description', 'N/A')])
+                if rows:
+                    self.table(["Field Name", "Business Description"], rows, [70*mm, 100*mm])
 
-        self.h2("5.3 CRUD Matrix")
+        # 5.4 Data Versioning (GDG) - FILLING THE GAP
+        self.h2("5.4 Data Versioning & Retention")
+        gdg_files = []
+        seen_gdg = set()
+        for jcl in self.jcl_files:
+            for ds in jcl.technical_analysis.get('io_datasets', []):
+                if isinstance(ds, dict):
+                    dsn = ds.get('dataset', '')
+                    if '(+' in dsn or '(0)' in dsn:
+                        base_dsn = dsn.split('(')[0]
+                        if base_dsn not in seen_gdg:
+                            gdg_files.append([base_dsn, "Generation Data Group", jcl.filename])
+                            seen_gdg.add(base_dsn)
+        
+        if gdg_files:
+            self.para("The following datasets utilize GDG versioning for historical retention:")
+            self.table(["Base Dataset Name", "Management Type", "Orchestrated By"], gdg_files, [80*mm, 45*mm, 45*mm])
+        else:
+            self.para("No versioned (GDG) datasets identified.")
+
+        # 5.5 CRUD Matrix
+        self.h2("5.5 Data Access & CRUD Matrix")
         rows = []
         for prog in self.code_files:
             ops = prog.technical_analysis.get('data_interactions', [])
             for op in ops:
                 if isinstance(op, dict):
-                    rows.append([prog.filename, str(op.get('target')), str(op.get('operation'))])
+                    rows.append([
+                        prog.filename, 
+                        str(op.get('target', 'Unknown')), 
+                        str(op.get('operation', 'Access')),
+                        str(op.get('access_method', 'Sequential'))
+                    ])
         if rows:
-            self.table(["Program", "Table/File", "Op"], rows[:30], [50*mm, 80*mm, 40*mm])
+            # Added Access Method column to the CRUD matrix
+            self.table(["Program", "Table/File", "Operation", "Access Method"], rows[:30], [40*mm, 60*mm, 35*mm, 35*mm])
 
     def _ops(self):
         self.h1("6. Operational Support & Reliability")

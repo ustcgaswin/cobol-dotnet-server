@@ -260,15 +260,24 @@ REQUIRED JSON STRUCTURE:
     "technical_analysis": {{
         "functional_capabilities": ["Technical logic points"],
         "key_operations": ["File I/O"],
-        "data_interactions": [
-            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
+        "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "logic_decision_points": [
+            "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
+            "Decision 2: (e.g. If record-type is 'X', bypass validation)"
         ],
-        
+        "data_interactions": [
+            {{ 
+                "target": "Table or File Name", 
+                "operation": "READ/WRITE/UPDATE",
+                "access_method": "Sequential / Random / Dynamic",
+                "is_gdg": true/false
+            }}
+        ],
         "execution_flow": [
-            "1. Initialization (Open Files)",
-            "2. Main Processing Loop (Perform 2000-PROCESS)",
-            "3. Database Update (EXEC SQL)",
-            "4. Termination (Close Files)"
+            "1. Initialization: Open files and clear working storage.",
+            "2. Data Ingestion: Read input record from SYSIN.",
+            "3. Validation: Verify account status via decision point X.",
+            "4. Finalization: Close files and return RC=0."
         ],
         
         "technical_notes": ["Error handling", "Performance notes"]
@@ -438,13 +447,19 @@ REQUIRED JSON STRUCTURE:
     "technical_analysis": {{
         "functional_capabilities": ["Specific procedure logic"],
         "key_operations": ["I/O and Calls"],
+        "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "logic_decision_points": [
+            "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
+            "Decision 2: (e.g. If record-type is 'X', bypass validation)"
+        ],
         "data_interactions": [
-            {{ "target": "Table/File", "operation": "Access Type" }}
+            {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
         "execution_flow": [
-            "1. Proc Entry",
-            "2. Logic Step A",
-            "3. Logic Step B"
+            "1. Initialization: Open files and clear working storage.",
+            "2. Data Ingestion: Read input record from SYSIN.",
+            "3. Validation: Verify account status via decision point X.",
+            "4. Finalization: Close files and return RC=0."
         ],
         "technical_notes": ["Memory/Pointer notes"]
     }}
@@ -483,14 +498,19 @@ REQUIRED JSON STRUCTURE:
         "register_usage": ["R12: Base Register", "R15: Return Code"],
         "functional_capabilities": ["Specific logic flow"],
         "key_operations": ["Macros used (GETMAIN, WTOR, LINK)"],
+        "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "logic_decision_points": [
+            "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
+            "Decision 2: (e.g. If record-type is 'X', bypass validation)"
+        ],
         "data_interactions": [
             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
         "execution_flow": [
-            "1. Save Registers (SAVE)",
-            "2. Establish Addressability",
-            "3. Perform Logic",
-            "4. Restore Registers & Return"
+            "1. Initialization: Open files and clear working storage.",
+            "2. Data Ingestion: Read input record from SYSIN.",
+            "3. Validation: Verify account status via decision point X.",
+            "4. Finalization: Close files and return RC=0."
         ],
         "technical_notes": ["Addressing modes (AMODE/RMODE)"]
     }}
@@ -528,14 +548,19 @@ REQUIRED JSON STRUCTURE:
     "technical_analysis": {{
         "automation_tasks": ["Specific automation steps"],
         "external_utilities": ["TSO Commands (ALLOC, FREE)"],
+        "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "logic_decision_points": [
+            "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
+            "Decision 2: (e.g. If record-type is 'X', bypass validation)"
+        ],
         "data_interactions": [
             {{ "target": "Table or File Name", "operation": "READ/WRITE/UPDATE/DELETE" }}
         ],
         "execution_flow": [
-            "1. Parse Arguments",
-            "2. Allocate Datasets",
-            "3. Call External Program",
-            "4. Free Datasets"
+            "1. Initialization: Open files and clear working storage.",
+            "2. Data Ingestion: Read input record from SYSIN.",
+            "3. Validation: Verify account status via decision point X.",
+            "4. Finalization: Close files and return RC=0."
         ],
         "technical_notes": ["Error trapping (SIGNAL ON ERROR)"]
     }}
@@ -663,33 +688,30 @@ CODE:
 
 REQUIRED JSON STRUCTURE:
 {{
-    "filename": "From metadata",
+    "filename": "{filename}",
     "type": "COPYBOOK",
 
     "business_overview": {{
         "title": "Data Entity Definition",
-        "purpose": "What business entity does this structure represent? (e.g. 'Customer Address Record').",
-        "scope": [
-            "Data domain (e.g. Billing, Inventory)",
-            "Usage context"
-        ],
-        "key_data_entities": [
-            "The primary entity defined"
-        ]
+        "purpose": "What business entity does this represent?",
+        "data_domain": "e.g., Master Data / Transactional / Reference / Metadata",
+        "key_data_entities": ["The primary entity defined"]
     }},
 
     "technical_analysis": {{
-        "table_name": "SQL Table Name (if DCLGEN) or Root Field Name",
+        "storage_type": "DB2 / VSAM-KSDS / VSAM-ESDS / FLAT",
+        "record_length": "Calculated LRECL (if possible)",
         "key_fields": [
-            {{"field": "Field Name", "description": "Inferred usage (ID, Amount, Date)"}}
+            {{
+                "field": "Field Name", 
+                "is_primary_key": true/false,
+                "description": "Business meaning"
+            }}
         ],
         "table_structure": [
              {{"column_name": "Name", "type": "DataType", "nullable": "Yes/No"}}
         ],
-        "technical_notes": [
-            "Data types used (COMP-3, VARCHAR)",
-            "Redefines or arrays present"
-        ]
+        "technical_notes": ["Usage of COMP-3, REDEFINES, or binary formats"]
     }}
 }}
 """
