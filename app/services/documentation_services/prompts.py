@@ -614,11 +614,34 @@ REQUIRED JSON STRUCTURE:
         ],
 
         "steps": [
-            {{"step_name": "STEP01", "program": "PGMNAME", "description": "Technical description"}}
+            {{
+                "step_name": "STEP01",
+                "program": "PGMNAME or Utility (e.g., SORT, IDCAMS)",
+                "description": "Functional action of this specific step.",
+                "condition_logic": "Execution requirements (e.g., 'Runs only if STEP01 RC < 04' or 'IF-THEN-ELSE' logic)",
+                "io_mappings": [
+                    {{
+                        "dd_name": "SYSUT1",
+                        "dataset": "PHYSICAL.DATASET.NAME",
+                        "disposition": "SHR/NEW/MOD/DELETE",
+                        "purpose": "Input Data / Output Report / Work File",
+                        "is_temporary": true/false
+                    }}
+                ],
+                "control_card_summary": "If SYSIN/CONTROL is used, summarize the logic (e.g., 'Sorts by Account ID' or 'Deletes VSAM Cluster')"
+            }}
         ],
+
+        "restart_and_recovery": {{
+            "restart_point": "Step name where job should be restarted on failure",
+            "cleanup_requirements": "Actions needed before restart (e.g., 'Delete output file from Step 2')",
+            "critical_checkpoints": ["Points where data is committed or finalized"]
+        }},
+
         "io_datasets": [
             {{"dataset": "A.B.C", "usage": "Input/Output"}}
         ],
+        
         "flow_context": {{
             "predecessors": ["List job names from the MASTER LIST that provide input to this job"],
             "successors": ["List job names from the MASTER LIST that will read outputs from this job"],
