@@ -435,11 +435,97 @@ class GraphAnalyzer:
             return {}
 
 
+    # def generate_batch_flow_diagram(self, summaries: List[Any]) -> str:
+    #     """
+    #     Optimized Batch Flow Generator.
+    #     Limits nodes and edges to avoid 'URL Too Long' errors.
+    #     Prioritizes central processing jobs over housekeeping.
+    #     """
+    #     import re
+    #     import networkx as nx
+        
+    #     # 1. Setup temporary graph for analysis
+    #     temp_nx = nx.DiGraph()
+        
+    #     def normalize_dsn(dsn):
+    #         return re.sub(r'\(.*?\)', '', str(dsn)).strip().upper()
+
+    #     jcl_summaries = [s for s in summaries if s.file_type == 'JCL']
+        
+    #     # Filter out 'Noise' jobs (Housekeeping/Utilities)
+    #     noise_patterns = ['SORT', 'IDCAMS', 'BR14', 'GENER', 'DB2UTIL', 'CLEANUP', 'BACKUP']
+    #     filtered_jcls = [
+    #         s for s in jcl_summaries 
+    #         if not any(noise in s.filename.upper() for noise in noise_patterns)
+    #     ]
+
+    #     # 2. Build Internal Graph to identify the 'Important' nodes
+    #     dataset_producers = {}
+    #     for s in filtered_jcls:
+    #         io_list = s.technical_analysis.get('io_datasets', [])
+    #         for ds in io_list:
+    #             if not isinstance(ds, dict): continue
+    #             usage = str(ds.get('usage', '')).upper()
+    #             dsn = normalize_dsn(ds.get('dataset', ''))
+    #             if any(k in usage for k in ['NEW', 'WRITE', 'OUTPUT', 'CATLG']) and dsn:
+    #                 if 'TEMP' not in dsn and '&&' not in dsn:
+    #                     dataset_producers[dsn] = s.filename
+
+    #     # Add edges to temp_nx based on Dataset Handoffs and flow_context
+    #     for s in filtered_jcls:
+    #         # Add from flow_context (Predecessors/Successors)
+    #         flow = s.technical_analysis.get('flow_context', {})
+    #         preds = flow.get('predecessors', []) or []
+    #         for p in preds:
+    #             p_name = str(p).split(' ')[0].upper().replace('.JCL', '')
+    #             temp_nx.add_edge(p_name, s.filename.upper().replace('.JCL', ''))
+
+    #         # Add from Dataset Handoffs
+    #         io_list = s.technical_analysis.get('io_datasets', [])
+    #         for ds in io_list:
+    #             if not isinstance(ds, dict): continue
+    #             if any(k in str(ds.get('usage', '')).upper() for k in ['OLD', 'SHR', 'INPUT']):
+    #                 dsn = normalize_dsn(ds.get('dataset', ''))
+    #                 producer = dataset_producers.get(dsn)
+    #                 if producer:
+    #                     temp_nx.add_edge(producer.upper().replace('.JCL', ''), s.filename.upper().replace('.JCL', ''))
+
+    #     if temp_nx.number_of_nodes() == 0:
+    #         return ""
+
+    #     # 3. CAP THE GRAPH (Complexity Management)
+    #     # Keep only the top 25 nodes based on their connectivity (degree)
+    #     top_nodes = sorted(temp_nx.degree, key=lambda x: x[1], reverse=True)[:25]
+    #     nodes_to_keep = [n[0] for n in top_nodes]
+    #     subgraph = temp_nx.subgraph(nodes_to_keep)
+
+    #     # 4. Generate Mermaid with Shortened IDs to save URL space
+    #     lines = ["graph TD"]
+    #     lines.append("    classDef job fill:#e1f5fe,stroke:#01579b,stroke-width:2px;")
+        
+    #     # ID map to keep Mermaid IDs extremely short (e.g., j1, j2)
+    #     id_map = {name: f"j{i}" for i, name in enumerate(subgraph.nodes())}
+        
+    #     for u, v in subgraph.edges():
+    #         u_id, v_id = id_map[u], id_map[v]
+    #         # [ID] is the label shown in the box
+    #         lines.append(f"    {u_id}[\"{u}\"] --> {v_id}[\"{v}\"]")
+    #         lines.append(f"    class {u_id},{v_id} job")
+
+    #     # 5. Length Safety Valve
+    #     mermaid_code = "\n".join(lines)
+    #     if len(mermaid_code) > 3000: # Raw code length check
+    #         # If still too long, return even more limited version
+    #         return "graph TD\n    Warning[\"Batch Flow too complex to render\"]"
+            
+    #     return mermaid_code
+
     def generate_batch_flow_diagram(self, summaries: List[Any]) -> str:
         """
         Optimized Batch Flow Generator.
-        Limits nodes and edges to avoid 'URL Too Long' errors.
-        Prioritizes central processing jobs over housekeeping.
+        1. Removes self-references.
+        2. Uses flowchart TD for straighter arrows.
+        3. Maintains URL length safety via node capping.
         """
         import re
         import networkx as nx
@@ -452,14 +538,14 @@ class GraphAnalyzer:
 
         jcl_summaries = [s for s in summaries if s.file_type == 'JCL']
         
-        # Filter out 'Noise' jobs (Housekeeping/Utilities)
-        noise_patterns = ['SORT', 'IDCAMS', 'BR14', 'GENER', 'DB2UTIL', 'CLEANUP', 'BACKUP']
+        # Filter out 'Noise' jobs (Housekeeping) to keep diagram clean
+        noise_patterns = ['CLEANUP', 'BACKUP', 'BR14', 'IDCAMS']
         filtered_jcls = [
             s for s in jcl_summaries 
             if not any(noise in s.filename.upper() for noise in noise_patterns)
         ]
 
-        # 2. Build Internal Graph to identify the 'Important' nodes
+        # 2. Build Dataset Handoff Map
         dataset_producers = {}
         for s in filtered_jcls:
             io_list = s.technical_analysis.get('io_datasets', [])
@@ -471,16 +557,20 @@ class GraphAnalyzer:
                     if 'TEMP' not in dsn and '&&' not in dsn:
                         dataset_producers[dsn] = s.filename
 
-        # Add edges to temp_nx based on Dataset Handoffs and flow_context
+        # 3. Build Internal Graph
         for s in filtered_jcls:
-            # Add from flow_context (Predecessors/Successors)
+            curr_job = s.filename.upper().replace('.JCL', '')
+            
+            # Layer A: flow_context
             flow = s.technical_analysis.get('flow_context', {})
             preds = flow.get('predecessors', []) or []
             for p in preds:
                 p_name = str(p).split(' ')[0].upper().replace('.JCL', '')
-                temp_nx.add_edge(p_name, s.filename.upper().replace('.JCL', ''))
+                # FILTER: Remove Self-Reference
+                if p_name != curr_job:
+                    temp_nx.add_edge(p_name, curr_job)
 
-            # Add from Dataset Handoffs
+            # Layer B: Dataset Handoffs
             io_list = s.technical_analysis.get('io_datasets', [])
             for ds in io_list:
                 if not isinstance(ds, dict): continue
@@ -488,34 +578,41 @@ class GraphAnalyzer:
                     dsn = normalize_dsn(ds.get('dataset', ''))
                     producer = dataset_producers.get(dsn)
                     if producer:
-                        temp_nx.add_edge(producer.upper().replace('.JCL', ''), s.filename.upper().replace('.JCL', ''))
+                        p_name = producer.upper().replace('.JCL', '')
+                        # FILTER: Remove Self-Reference
+                        if p_name != curr_job:
+                            temp_nx.add_edge(p_name, curr_job)
 
         if temp_nx.number_of_nodes() == 0:
             return ""
 
-        # 3. CAP THE GRAPH (Complexity Management)
-        # Keep only the top 25 nodes based on their connectivity (degree)
+        # 4. CAP COMPLEXITY (URL Length Safety)
         top_nodes = sorted(temp_nx.degree, key=lambda x: x[1], reverse=True)[:25]
         nodes_to_keep = [n[0] for n in top_nodes]
         subgraph = temp_nx.subgraph(nodes_to_keep)
 
-        # 4. Generate Mermaid with Shortened IDs to save URL space
-        lines = ["graph TD"]
-        lines.append("    classDef job fill:#e1f5fe,stroke:#01579b,stroke-width:2px;")
+        # 5. Generate Mermaid Flowchart (TD + Optimized IDs)
+        # Using 'flowchart TD' instead of 'graph TD' for straighter lines
+        lines = ["flowchart TD"]
         
-        # ID map to keep Mermaid IDs extremely short (e.g., j1, j2)
+        # classDef ensures boxes are consistent size, making arrows straighter
+        lines.append("    classDef job fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#333;")
+        
+        # ID map to keep Mermaid IDs short for URL limits
         id_map = {name: f"j{i}" for i, name in enumerate(subgraph.nodes())}
         
+        # Add Edges
         for u, v in subgraph.edges():
             u_id, v_id = id_map[u], id_map[v]
-            # [ID] is the label shown in the box
+            # Use " " for labels to handle potential dots/special chars
             lines.append(f"    {u_id}[\"{u}\"] --> {v_id}[\"{v}\"]")
             lines.append(f"    class {u_id},{v_id} job")
 
-        # 5. Length Safety Valve
+        # 6. Final Code Assembly
         mermaid_code = "\n".join(lines)
-        if len(mermaid_code) > 3000: # Raw code length check
-            # If still too long, return even more limited version
-            return "graph TD\n    Warning[\"Batch Flow too complex to render\"]"
+        
+        # Safety check: If still too massive, return a warning node
+        if len(mermaid_code) > 4000:
+            return "flowchart TD\n    Warn[\"Batch Graph too complex to render\"]"
             
         return mermaid_code
