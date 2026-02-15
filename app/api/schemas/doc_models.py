@@ -30,6 +30,7 @@ class FileSummary(BaseModel):
     business_risks: List[str] = Field(default_factory=list)
     external_interfaces: List[Dict[str, Any]] = Field(default_factory=list)
     ownership: Dict[str, str] = Field(default_factory=dict)
+    execution_context: Optional[str] = None
 
     class Config:
         populate_by_name = True

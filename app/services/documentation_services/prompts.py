@@ -164,7 +164,11 @@ REQUIRED JSON STRUCTURE:
     }},
 
     "glossary": [
-        {{ "term": "Acronym", "definition": "Business Definition" }}
+        {{ 
+            "term": "Acronym", 
+            "definition": "Business Definition",
+            "source_clue": "Cite the comment or variable name that provided this definition (e.g. 'Found in comment in PROG01', 'Derived from DSN naming pattern')" 
+        }}
     ]
 }}
 """
@@ -569,7 +573,13 @@ REQUIRED JSON STRUCTURE:
 
 JCL_PROMPT = """{JSON_FORMAT_INSTRUCTION}
 
-Analyze this JCL (Job Control Language) or PROC (Procedure).
+CONTEXT:
+MASTER LIST OF JOBS IN THIS SYSTEM: {all_job_names}
+
+TASK:
+Analyze this JCL/PROC and identify the data lineage. 
+1. PREDECESSORS: Which jobs produce the input files for this job? (Check comments and DISP=OLD/SHR).
+2. SUCCESSORS: Which jobs consume the files created by this job? (Check DISP=NEW/MOD).
 
 CODE:
 {content}
@@ -604,31 +614,18 @@ REQUIRED JSON STRUCTURE:
         ],
 
         "steps": [
-            {{
-                "step_name": "STEP01",
-                "program": "PGMNAME or Utility (e.g., SORT, IDCAMS)",
-                "description": "Functional action of this specific step.",
-                "condition_logic": "Execution requirements (e.g., 'Runs only if STEP01 RC < 04' or 'IF-THEN-ELSE' logic)",
-                "io_mappings": [
-                    {{
-                        "dd_name": "SYSUT1",
-                        "dataset": "PHYSICAL.DATASET.NAME",
-                        "disposition": "SHR/NEW/MOD/DELETE",
-                        "purpose": "Input Data / Output Report / Work File",
-                        "is_temporary": true/false
-                    }}
-                ],
-                "control_card_summary": "If SYSIN/CONTROL is used, summarize the logic (e.g., 'Sorts by Account ID' or 'Deletes VSAM Cluster')"
-            }}
+            {{"step_name": "STEP01", "program": "PGMNAME", "description": "Technical description"}}
         ],
-
-        "restart_and_recovery": {{
-            "restart_point": "Step name where job should be restarted on failure",
-            "cleanup_requirements": "Actions needed before restart (e.g., 'Delete output file from Step 2')",
-            "critical_checkpoints": ["Points where data is committed or finalized"]
+        "io_datasets": [
+            {{"dataset": "A.B.C", "usage": "Input/Output"}}
+        ],
+        "flow_context": {{
+            "predecessors": ["List job names from the MASTER LIST that provide input to this job"],
+            "successors": ["List job names from the MASTER LIST that will read outputs from this job"],
+            "external_inputs": ["List descriptions of files that come from outside this system (e.g. 'Monthly Master from HR')"],
+            "external_outputs": ["List descriptions of files sent to external systems"]
         }},
-
-        "schedule_notes": "Dependencies on other jobs or specific timing constraints."
+        "schedule_notes": "Restart/timing notes"
     }}
 }}
 """
@@ -850,6 +847,10 @@ RESEARCH PROTOCOL:
 1. ANALYZE: Use 'view_file' to read the code logic.
 2. SEARCH: Use 'grep_search' to find external references if imports are unclear.
 3. CONTEXT: The system structure has been provided in the user message (Mermaid Diagram).
+4. GLOSSARY DISCOVERY: If you encounter an acronym (e.g., CATO, DIN, MST) that isn't defined, 
+   search the project for the acronym followed by a hyphen or 'IS' 
+   (e.g., 'grep_search "CATO -"' or 'grep_search "DIN IS"'). 
+   This is critical for accurate business terminology.
 
 STRICT EXIT CRITERIA:
 - For COPYBOOKS/DCLGEN: Once you have the record structure/columns, STOP.
