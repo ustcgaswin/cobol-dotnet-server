@@ -752,7 +752,9 @@ from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER
 
 from app.api.schemas.doc_models import FileSummary, SystemMetrics
+from app.config.settings import settings
 from loguru import logger
+import os
 
 class DocTemplateWithTOC(SimpleDocTemplate):
     def __init__(self, filename, **kw):
@@ -790,6 +792,8 @@ class BaseBuilder:
         self.process_flow_image_path = self.images.get('process_flow')
         self.functional_image_path = self.images.get('functional')
         self.batch_flow_image_path = self.images.get('batch_flow')
+        self.hierarchical_arch_link = self.images.get('hierarchical_arch_link')
+        self.hierarchical_proc_link = self.images.get('hierarchical_proc_link')
         
         # Data Slicing
         self.jcl_files = [s for s in summaries if s.file_type == 'JCL']
@@ -1098,19 +1102,50 @@ class TechnicalSpecBuilder(BaseBuilder):
 
         # --- Technical Spec 2.3: Process Flow ---
         self.h2("2.3 High-Level Process Flow")
-        if self.process_flow_image_path and Path(self.process_flow_image_path).exists():
-            self._render_stretched_image(self.process_flow_image_path, "Figure 2: Sequential execution flow of JCL Jobs and batch procedures.", is_architecture=False)
+        # if self.process_flow_image_path and Path(self.process_flow_image_path).exists():
+        #     self._render_stretched_image(self.process_flow_image_path, "Figure 2: Sequential execution flow of JCL Jobs and batch procedures.", is_architecture=False)
+        proc_data = self.system_summary.get('process_flow_specification', {})
+        if proc_data.get('phases'):
+                self.hyperlink_to_file(
+                self.hierarchical_proc_link, 
+                "🔗 Click here to open Process Flow Diagram"
+            )
         else:
             self.para("Process flow diagram generation failed or no job chains detected.")
         
         self.h2("2.4 Data Flow Architecture")
         self.para("The following diagram illustrates the data-level dependencies, showing how programs interact with DB2 tables, VSAM files, and GDGs.")
     
-        if self.architecture_image_path and Path(self.architecture_image_path).exists():
-            # Use existing Architecture Diagram for Data Flow
-            self._render_stretched_image(self.architecture_image_path, "Figure 3: System data architecture and component dependency graph.", is_architecture = True)
+        # i
+        arch_data = self.system_summary.get('data_flow_architecture', {})
+        if arch_data.get('domains'):
+                self.hyperlink_to_file(
+                self.hierarchical_arch_link, 
+                "🔗 Click here to open Full Architecture Dependency Map"
+            )
         else:
             self.para("Data flow architecture diagram unavailable.")
+
+    def hyperlink_to_file(self, file_path: str, label: str):
+        """Creates a blue, underlined clickable link in the PDF."""
+        if not file_path: return
+        # abs_path = os.path.abspath(file_path)
+        # # Convert OS path to file URL (e.g., file:///C:/path/to/img.jpg)
+        # link_url = f"file:///{abs_path.replace(os.sep, '/')}"
+
+        relative_path = Path(file_path).relative_to(settings.get_artifacts_path())
+    
+        # Build a URL pointing to your server
+        # e.g., http://localhost:8000/artifacts/123/graph.jpg
+        server_base_url = "http://localhost:8000/artifacts" # This should come from your config
+        link_url = f"{server_base_url}/{relative_path.as_posix()}"
+        
+        style = ParagraphStyle(
+            'Link', parent=self.styleN, textColor=colors.blue, 
+            underline=True, fontName='Helvetica-BoldOblique'
+        )
+        self.elements.append(Paragraph(f'<link href="{link_url}">{label}</link>', style))
+        self.elements.append(Spacer(1, 6*mm))
         
     # Private helper to handle the elongation/squeezing for this specific builder
     def _render_stretched_image(self, path, caption, is_architecture=False):
