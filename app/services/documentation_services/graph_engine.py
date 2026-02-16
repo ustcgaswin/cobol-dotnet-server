@@ -4,7 +4,9 @@ Constructs a directed graph representing the entire system architecture.
 Updated to align with v2.0 Parsers and Extractors.
 """
 
+import matplotlib.pyplot as plt
 import networkx as nx
+import os
 from typing import Dict, List, Any
 from app.api.schemas.doc_models import SystemMetrics
 from loguru import logger
@@ -440,4 +442,85 @@ class GraphAnalyzer:
         except Exception as e:
             logger.error(f"Failed to generate hierarchical JSON: {e}")
             return {}
+    
+    # Inside GraphAnalyzer class
+    def generate_visual_graph_from_json(self, data: Dict, output_path: str):
+        """
+        Renders a stylized JPG/PNG from hierarchical JSON using NetworkX/Matplotlib.
+        Handles both 'phases' (Process Flow) and 'domains' (Architecture).
+        """
+        plt.switch_backend('Agg')  # Required for server environments without GUI
+        G = nx.DiGraph()
+        node_types = {}
+
+        if "phases" in data:
+            for phase in sorted(data["phases"], key=lambda x: x.get("sequence", 0)):
+                p_name = phase["phase_name"]
+                G.add_node(p_name)
+                node_types[p_name] = "phase"
+                for step in phase.get("steps", []):
+                    s_id = step["step_id"]
+                    G.add_node(s_id)
+                    node_types[s_id] = "step"
+                    G.add_edge(p_name, s_id)
+                    for comp in step.get("technical_components", []):
+                        G.add_node(comp)
+                        node_types[comp] = "component"
+                        G.add_edge(s_id, comp)
+            title = "Process Flow Graph"
+
+        elif "domains" in data:
+            for domain in data["domains"]:
+                d_name = domain["domain_name"]
+                G.add_node(d_name)
+                node_types[d_name] = "domain"
+                for group in domain.get("groups", []):
+                    g_name = group["group_name"]
+                    G.add_node(g_name)
+                    node_types[g_name] = "group"
+                    G.add_edge(d_name, g_name)
+                    for subgroup in group.get("subgroups", []):
+                        sg_name = subgroup["subgroup_name"]
+                        G.add_node(sg_name)
+                        node_types[sg_name] = "subgroup"
+                        G.add_edge(g_name, sg_name)
+                        for comp in subgroup.get("components", []):
+                            G.add_node(comp)
+                            node_types[comp] = "component"
+                            G.add_edge(sg_name, comp)
+            title = "Architecture Hierarchy Graph"
+        else:
+            return False
+
+        # Styling logic
+        plt.figure(figsize=(16, 14))
+        pos = nx.spring_layout(G, k=0.7, iterations=100, seed=42)
+        node_colors = []
+        node_sizes = []
+
+        for node in G.nodes():
+            ntype = node_types.get(node)
+            if ntype in ["phase", "domain"]:
+                node_colors.append("purple" if ntype=="phase" else "red")
+                node_sizes.append(4000)
+            elif ntype in ["step", "group"]:
+                node_colors.append("orange" if ntype=="step" else "gold")
+                node_sizes.append(3000)
+            elif ntype == "subgroup":
+                node_colors.append("green")
+                node_sizes.append(2200)
+            else:
+                node_colors.append("skyblue")
+                node_sizes.append(1200)
+
+        nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=node_colors, edgecolors="black", linewidths=1.5)
+        nx.draw_networkx_edges(G, pos, arrows=True, arrowstyle='-|>', width=1.5, alpha=0.6)
+        nx.draw_networkx_labels(G, pos, font_size=8, font_weight="bold", font_color="white", 
+                                bbox=dict(facecolor="black", alpha=0.6, edgecolor="none"))
+
+        plt.title(title, fontsize=16)
+        plt.axis("off")
+        plt.savefig(output_path, format="JPG", dpi=300, bbox_inches="tight")
+        plt.close()
+        return True
 

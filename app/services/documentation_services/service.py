@@ -631,6 +631,8 @@ class DocumentationService:
             logger.info(f"The arch json : {hierarchical_data.get('data_flow_architecture')}")
             logger.info(f"The process flow json : {hierarchical_data.get('process_flow_specification')}")
 
+            system_overview_json.update(hierarchical_data)
+
             # SAFETY CHECK: Ensure system_overview_json is a dict and not None
             if not isinstance(system_overview_json, dict):
                 logger.error("System summary returned non-dictionary. Using empty defaults.")
@@ -644,21 +646,35 @@ class DocumentationService:
             # 9. Generate Graph Image (Needed for PDF)
             output_dir = self.artifacts_path / str(project_id)
             output_dir.mkdir(parents=True, exist_ok=True)
-            
             image_paths = {}
+
+            # Generate the actual JPG files from the JSON
+            if system_overview_json.get("data_flow_architecture"):
+                arch_img = output_dir / "hierarchical_architecture.jpg"
+                if analyzer.generate_visual_graph_from_json(system_overview_json["data_flow_architecture"], str(arch_img)):
+                    image_paths['hierarchical_arch_link'] = str(arch_img)
+                    logger.info("the architecture diagram generated")
+
+            if system_overview_json.get("process_flow_specification"):
+                proc_img = output_dir / "hierarchical_process.jpg"
+                if analyzer.generate_visual_graph_from_json(system_overview_json["process_flow_specification"], str(proc_img)):
+                    image_paths['hierarchical_proc_link'] = str(proc_img)
+                    logger.info("the process flow diagram generated")
+            
+    
             success = None
 
             # A. Technical Architecture Diagram (2.3)
-            arch_path = output_dir / "architecture.png"
-            if analyzer.generate_mermaid_png(str(arch_path)):
-                image_paths['architecture'] = str(arch_path)
-                success = str(arch_path)
+            # arch_path = output_dir / "architecture.png"
+            # if analyzer.generate_mermaid_png(str(arch_path)):
+            #     image_paths['architecture'] = str(arch_path)
+            #     success = str(arch_path)
             
-            if success:
-                logger.info(f"Successfully generated graph image at {success}")
-                success = None
-            else:
-                logger.warning("Failed to generate arch graph image via Mermaid API")
+            # if success:
+            #     logger.info(f"Successfully generated graph image at {success}")
+            #     success = None
+            # else:
+            #     logger.warning("Failed to generate arch graph image via Mermaid API")
 
             # B. System Context Diagram (1.4)
             ctx_path = output_dir / "context.png"
@@ -673,20 +689,20 @@ class DocumentationService:
             else:
                 logger.warning("Failed to generate context graph image via Mermaid API")
             
-            #C process flow diagram
-            process_flow_path = output_dir / "process_flow.png"
-            # Logic: Ask analyzer to generate a JCL-only flow (Job A -> Job B)
-            process_mermaid = analyzer.generate_process_flow_diagram()
+            # #C process flow diagram
+            # process_flow_path = output_dir / "process_flow.png"
+            # # Logic: Ask analyzer to generate a JCL-only flow (Job A -> Job B)
+            # process_mermaid = analyzer.generate_process_flow_diagram()
 
-            if analyzer.render_mermaid_code_to_png(process_mermaid, str(process_flow_path)):
-                image_paths['process_flow'] = str(process_flow_path)
-                success = str(process_flow_path)
+            # if analyzer.render_mermaid_code_to_png(process_mermaid, str(process_flow_path)):
+            #     image_paths['process_flow'] = str(process_flow_path)
+            #     success = str(process_flow_path)
             
-            if success:
-                logger.info(f"Successfully generated graph image at {success}")
-                success = None 
-            else:
-                logger.warning("Failed to generate process graph image via Mermaid API")
+            # if success:
+            #     logger.info(f"Successfully generated graph image at {success}")
+            #     success = None 
+            # else:
+            #     logger.warning("Failed to generate process graph image via Mermaid API")
 
             # C. Functional Sequence Diagram (Functional 3.1)
             # Extracted from the LLM response in system_overview_json
