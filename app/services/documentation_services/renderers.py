@@ -790,6 +790,7 @@ class BaseBuilder:
         self.architecture_image_path = self.images.get('architecture')
         self.process_flow_image_path = self.images.get('process_flow')
         self.functional_image_path = self.images.get('functional')
+        self.batch_flow_image_path = self.images.get('batch_flow')
         self.hierarchical_arch_link = self.images.get('hierarchical_arch_link')
         self.hierarchical_proc_link = self.images.get('hierarchical_proc_link')
         
@@ -1736,43 +1737,51 @@ class FunctionalSpecBuilder(BaseBuilder):
         #     self.para("No direct file-based job chains detected. Jobs may operate as independent silos.")
 
         self.h2("3.2 Batch Execution Flow (Data Lineage)")
-        self.para("The following narratives describe the end-to-end processing sequence, including external data entrances and internal job-to-job handoffs.")
+        self.para("The following diagram illustrates the sequential flow of data through the batch system based on dataset handoffs.")
 
-        found_any = False
+        if self.batch_flow_image_path:
+             self.image(self.batch_flow_image_path)
+             self.para("<i>Figure: Automatic JCL Dependency Graph (Producer-Consumer Analysis).</i>")
+        else:
+             self.para("No visual batch flow could be generated (no shared datasets found).")
 
-        for jcl in sorted(self.jcl_files, key=lambda x: x.filename):
-            flow = jcl.technical_analysis.get('flow_context', {})
+        # self.para("The following narratives describe the end-to-end processing sequence, including external data entrances and internal job-to-job handoffs.")
+
+        # found_any = False
+
+        # for jcl in sorted(self.jcl_files, key=lambda x: x.filename):
+        #     flow = jcl.technical_analysis.get('flow_context', {})
             
-            # 1. Document External Entrances (The "Monthly Master" fix)
-            ext_in = flow.get('external_inputs', [])
-            if ext_in:
-                found_any = True
-                self.h4(f"External Input: {jcl.filename}")
-                self.para(f"Job <b>{jcl.filename}</b> initiates processing using the following external sources:")
-                for item in ext_in:
-                    self.bullet(f"<b>Input Source:</b> {item}")
-                self.elements.append(Spacer(1, 3*mm))
+        #     # 1. Document External Entrances (The "Monthly Master" fix)
+        #     ext_in = flow.get('external_inputs', [])
+        #     if ext_in:
+        #         found_any = True
+        #         self.h4(f"External Input: {jcl.filename}")
+        #         self.para(f"Job <b>{jcl.filename}</b> initiates processing using the following external sources:")
+        #         for item in ext_in:
+        #             self.bullet(f"<b>Input Source:</b> {item}")
+        #         self.elements.append(Spacer(1, 3*mm))
 
-            # 2. Document Internal Handoffs
-            preds = flow.get('predecessors', [])
-            if preds:
-                found_any = True
-                self.h4(f"Process Chain: {jcl.filename}")
-                self.para(f"Job <b>{jcl.filename}</b> relies on successful completion of upstream processes:")
+        #     # 2. Document Internal Handoffs
+        #     preds = flow.get('predecessors', [])
+        #     if preds:
+        #         found_any = True
+        #         self.h4(f"Process Chain: {jcl.filename}")
+        #         self.para(f"Job <b>{jcl.filename}</b> relies on successful completion of upstream processes:")
                 
-                for pred in preds:
-                    # Look for the purpose of the predecessor job in our summaries list
-                    pred_purpose = "Upstream Data Provider"
-                    for s in self.jcl_files:
-                        if s.filename == pred:
-                            pred_purpose = s.business_overview.get('purpose', pred_purpose)
-                            break
+        #         for pred in preds:
+        #             # Look for the purpose of the predecessor job in our summaries list
+        #             pred_purpose = "Upstream Data Provider"
+        #             for s in self.jcl_files:
+        #                 if s.filename == pred:
+        #                     pred_purpose = s.business_overview.get('purpose', pred_purpose)
+        #                     break
                     
-                    self.bullet(f"<b>Predecessor: {pred}</b> - {pred_purpose}")
-                self.elements.append(Spacer(1, 3*mm))
+        #             self.bullet(f"<b>Predecessor: {pred}</b> - {pred_purpose}")
+        #         self.elements.append(Spacer(1, 3*mm))
 
-        if not found_any:
-            self.para("No explicit job-to-job execution chains or external data entrances were identified.")
+        # if not found_any:
+        #     self.para("No explicit job-to-job execution chains or external data entrances were identified.")
 
     def _render_detailed_logic(self):
         self.h1("4. Detailed Functional Logic")

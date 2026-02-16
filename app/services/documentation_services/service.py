@@ -726,6 +726,20 @@ class DocumentationService:
                 logger.info(f"Successfully generated graph image at {success}")
             else:
                 logger.warning("Failed to generate functional graph image via Mermaid API")
+          
+            # D. Batch Flow Diagram (NEW)
+            # Uses the list of summaries to find JCL-to-JCL links
+            batch_mermaid = analyzer.generate_batch_flow_diagram(all_summaries)
+            
+            if batch_mermaid:
+                batch_path = output_dir / "batch_flow.png"
+                if analyzer.render_mermaid_code_to_png(batch_mermaid, str(batch_path)):
+                    image_paths['batch_flow'] = str(batch_path)
+                    logger.info(f"Successfully generated batch flow image at {batch_path}")
+                else:
+                    logger.info(f"Failed generating batch flow image")
+            else:
+                logger.info(f"Batch Mermaid is missing")
 
             # 10. Build Real PDFs with the Images dict
             if mode in ["ALL", "TECHNICAL"]:
