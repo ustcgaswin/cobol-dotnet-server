@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import FileResponse
 from app.config.settings import settings
+from pathlib import Path
 
 from app.api.dependencies import get_db
 from app.api.schemas.common import APIResponse
@@ -24,6 +25,13 @@ class DocumentationGenerateResponse(BaseModel):
     base_output_path: str
     message: str
     mode: str  # Added to track what was requested
+
+class RunbookGenerateResponse(BaseModel):
+    """Response for Single JCL Runbook generation."""
+    project_id: uuid.UUID
+    jcl_file: str
+    status: str
+    download_url: str
 
 class DocumentationStatusResponse(BaseModel):
     """Response for checking progress of requirement generation."""
@@ -238,5 +246,74 @@ async def preview_documentation(
         path=file_path,
         filename=filename,
         media_type="application/pdf",
-        content_disposition_type="inline"  # <--- THIS IS THE KEY CHANGE
+        content_disposition_type="inline"
+    )
+
+class RunbookRequest(BaseModel):
+    jcl_filename: str
+
+@router.post("/runbook", response_model=APIResponse[RunbookGenerateResponse])
+async def generate_single_jcl_runbook(
+    project_id: uuid.UUID,
+    payload: RunbookRequest,
+    doc_service: DocumentationService = Depends(get_doc_service),
+    project_service: ProjectService = Depends(get_project_service)
+) -> APIResponse[RunbookGenerateResponse]:
+    """
+    Generate a targeted "Job Specification / Runbook" for a single JCL file.
+    """
+
+    project = await project_service.get_project(project_id)
+    if not project:
+        raise ProjectNotFoundException(str(project_id))
+
+    try:
+        pdf_path_str = await doc_service.generate_single_jcl_runbook(project_id, payload.jcl_filename)
+        
+        actual_filename = Path(pdf_path_str).name
+
+        download_url = f"/api/v1/projects/{project_id}/documentation/download/runbook?filename={actual_filename}"
+
+        return APIResponse.ok(RunbookGenerateResponse(
+            project_id=project_id,
+            jcl_file=payload.jcl_filename,
+            status="COMPLETED",
+            download_url=download_url
+        ))
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Runbook generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate runbook. Check server logs.")
+
+@router.get("/download/runbook", response_class=FileResponse)
+async def download_runbook(
+    project_id: uuid.UUID,
+    filename: str = Query(..., description="The filename returned by the generation endpoint"),
+    project_service: ProjectService = Depends(get_project_service),
+):
+    """
+    Download a specific JCL Runbook PDF.
+    """
+
+    project = await project_service.get_project(project_id)
+    if not project:
+        raise ProjectNotFoundException(str(project_id))
+
+    safe_filename = filename.split("/")[-1].split("\\")[-1]
+
+    file_path = settings.get_artifacts_path() / str(project_id) / "runbooks" / safe_filename
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Runbook '{safe_filename}' not found. Please regenerate it."
+        )
+
+    return FileResponse(
+        path=file_path,
+        filename=safe_filename,
+        media_type="application/pdf",
+        content_disposition_type="attachment"
     )

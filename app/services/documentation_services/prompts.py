@@ -251,6 +251,16 @@ REQUIRED JSON STRUCTURE:
         "functional_category": "Transaction Processing / Reporting / Data Maintenance",
         
         "functional_description": "A detailed paragraph (3-5 sentences) explaining what this module does in business terms. Do NOT mention variable names or 'GO TO'. Explain the RULES.",
+
+        "core_calculations": [
+            "Formula 1: (e.g. Total Amount = Principal + (Principal * Interest_Rate))",
+            "Formula 2: (e.g. Applies a 2% rounding discount to net totals)"
+        ],
+
+        "reconciliation_logic": [
+            "Reconciliation 1: (e.g. Verifies that the number of records read from the input file matches the records written to the database)",
+            "Reconciliation 2: (e.g. Compares the sum of transaction amounts against the control total provided in the file trailer)"
+        ],
         
         "scope": [
             "Rule 1: (e.g. Accounts must be active)",
@@ -265,6 +275,10 @@ REQUIRED JSON STRUCTURE:
         "functional_capabilities": ["Technical logic points"],
         "key_operations": ["File I/O"],
         "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "control_total_validations": [
+            "Validation 1: (e.g. Comparison of WS-INPUT-COUNT and WS-OUTPUT-COUNT during termination)",
+            "Validation 2: (e.g. Verification of SQL SUM(BALANCE) against Trailer Record totals)"
+        ],
         "logic_decision_points": [
             "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
             "Decision 2: (e.g. If record-type is 'X', bypass validation)"
@@ -443,6 +457,16 @@ REQUIRED JSON STRUCTURE:
         "functional_category": "Must be one of: 'Transaction Processing', 'Reporting', 'Data Maintenance', 'Interface/Transfer', or 'Utility'",
         
         "functional_description": "A detailed paragraph (3-5 sentences) explaining what this module does in business terms. Describe the core logic and decisions made.",
+
+        "core_calculations": [
+            "Formula 1: (e.g. Total Amount = Principal + (Principal * Interest_Rate))",
+            "Formula 2: (e.g. Applies a 2% rounding discount to net totals)"
+        ],
+
+        "reconciliation_logic": [
+            "Reconciliation 1: (e.g. Verifies that the number of records read from the input file matches the records written to the database)",
+            "Reconciliation 2: (e.g. Compares the sum of transaction amounts against the control total provided in the file trailer)"
+        ],
         
         "scope": ["Business logic scope"],
         "key_data_entities": ["Entities processed"]
@@ -452,6 +476,10 @@ REQUIRED JSON STRUCTURE:
         "functional_capabilities": ["Specific procedure logic"],
         "key_operations": ["I/O and Calls"],
         "external_calls": ["List of sub-programs called via CALL or LINK"],
+        "control_total_validations": [
+            "Validation 1: (e.g. Comparison of WS-INPUT-COUNT and WS-OUTPUT-COUNT during termination)",
+            "Validation 2: (e.g. Verification of SQL SUM(BALANCE) against Trailer Record totals)"
+        ],
         "logic_decision_points": [
             "Decision 1: (e.g. If balance < 100, trigger low-balance-warning)",
             "Decision 2: (e.g. If record-type is 'X', bypass validation)"

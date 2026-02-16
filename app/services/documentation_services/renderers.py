@@ -1816,6 +1816,16 @@ class FunctionalSpecBuilder(BaseBuilder):
                     for r in clean_rules: 
                         self.bullet(r)
 
+                calcs = prog.business_overview.get('core_calculations', [])
+                if calcs:
+                    self.h4("Core Business Calculations")
+                    self.bullet_list(calcs)
+
+                recon = prog.business_overview.get('reconciliation_logic', [])
+                if recon:
+                    self.h4("Reconciliation & Balance Controls")
+                    self.bullet_list(recon)
+
     def _render_interfaces(self):
         self.h1("5. Interface Specification")
         
