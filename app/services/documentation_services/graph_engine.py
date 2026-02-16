@@ -436,84 +436,106 @@ class GraphAnalyzer:
             logger.error(f"Failed to generate hierarchical JSON: {e}")
             return {}
     
-    # Inside GraphAnalyzer class
     def generate_visual_graph_from_json(self, data: Dict, output_path: str):
         """
-        Renders a stylized JPG/PNG from hierarchical JSON using NetworkX/Matplotlib.
-        Handles both 'phases' (Process Flow) and 'domains' (Architecture).
+        Renders a standardized, spaced-out JPG/PNG from hierarchical JSON.
+        Standardized color sets for high-level vs low-level logic.
         """
-        plt.switch_backend('Agg')  # Required for server environments without GUI
+        plt.switch_backend('Agg')
         G = nx.DiGraph()
         node_types = {}
 
+        # 1. Process JSON into Graph
         if "phases" in data:
             for phase in sorted(data["phases"], key=lambda x: x.get("sequence", 0)):
                 p_name = phase["phase_name"]
-                G.add_node(p_name)
-                node_types[p_name] = "phase"
+                G.add_node(p_name); node_types[p_name] = "L1" # Root
                 for step in phase.get("steps", []):
                     s_id = step["step_id"]
-                    G.add_node(s_id)
-                    node_types[s_id] = "step"
+                    G.add_node(s_id); node_types[s_id] = "L2" # Mid
                     G.add_edge(p_name, s_id)
                     for comp in step.get("technical_components", []):
-                        G.add_node(comp)
-                        node_types[comp] = "component"
+                        G.add_node(comp); node_types[comp] = "L4" # Leaf
                         G.add_edge(s_id, comp)
-            title = "Process Flow Graph"
+            title = "Process Flow Architecture"
 
         elif "domains" in data:
             for domain in data["domains"]:
                 d_name = domain["domain_name"]
-                G.add_node(d_name)
-                node_types[d_name] = "domain"
+                G.add_node(d_name); node_types[d_name] = "L1" # Root
                 for group in domain.get("groups", []):
                     g_name = group["group_name"]
-                    G.add_node(g_name)
-                    node_types[g_name] = "group"
+                    G.add_node(g_name); node_types[g_name] = "L2" # Mid
                     G.add_edge(d_name, g_name)
                     for subgroup in group.get("subgroups", []):
                         sg_name = subgroup["subgroup_name"]
-                        G.add_node(sg_name)
-                        node_types[sg_name] = "subgroup"
+                        G.add_node(sg_name); node_types[sg_name] = "L3" # Lower-Mid
                         G.add_edge(g_name, sg_name)
                         for comp in subgroup.get("components", []):
-                            G.add_node(comp)
-                            node_types[comp] = "component"
+                            G.add_node(comp); node_types[comp] = "L4" # Leaf
                             G.add_edge(sg_name, comp)
-            title = "Architecture Hierarchy Graph"
+            title = "Domain Data Architecture"
         else:
             return False
 
-        # Styling logic
-        plt.figure(figsize=(16, 14))
-        pos = nx.spring_layout(G, k=0.7, iterations=100, seed=42)
+        # 2. STANDARDIZED COLOR & SIZE SETTINGS
+        # L1: High Level, L2: Mid Level, L3: Grouping, L4: Specific Component
+        style_map = {
+            "L1": {"color": "#4B0082", "size": 5000},  # Indigo/Purple (Root)
+            "L2": {"color": "#FF8C00", "size": 3500},  # Dark Orange (Mid)
+            "L3": {"color": "#2E8B57", "size": 2500},  # Sea Green (Subgroups)
+            "L4": {"color": "#4682B4", "size": 1500},  # Steel Blue (Components)
+        }
+
+        # 3. SPACING LOGIC
+        # Increase figure size and k-parameter for more "breathing room"
+        plt.figure(figsize=(20, 16))
+        # k: Optimal distance between nodes. Increase this to push nodes further apart.
+        # iterations: Helps find a more stable, less-cluttered layout.
+        pos = nx.spring_layout(G, k=1.5, iterations=150, seed=42)
+
         node_colors = []
         node_sizes = []
 
         for node in G.nodes():
-            ntype = node_types.get(node)
-            if ntype in ["phase", "domain"]:
-                node_colors.append("purple" if ntype=="phase" else "red")
-                node_sizes.append(4000)
-            elif ntype in ["step", "group"]:
-                node_colors.append("orange" if ntype=="step" else "gold")
-                node_sizes.append(3000)
-            elif ntype == "subgroup":
-                node_colors.append("green")
-                node_sizes.append(2200)
-            else:
-                node_colors.append("skyblue")
-                node_sizes.append(1200)
+            level = node_types.get(node, "L4")
+            node_colors.append(style_map[level]["color"])
+            node_sizes.append(style_map[level]["size"])
 
-        nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color=node_colors, edgecolors="black", linewidths=1.5)
-        nx.draw_networkx_edges(G, pos, arrows=True, arrowstyle='-|>', width=1.5, alpha=0.6)
-        nx.draw_networkx_labels(G, pos, font_size=8, font_weight="bold", font_color="white", 
-                                bbox=dict(facecolor="black", alpha=0.6, edgecolor="none"))
+        # 4. DRAWING
+        nx.draw_networkx_nodes(
+            G, pos, 
+            node_size=node_sizes, 
+            node_color=node_colors, 
+            edgecolors="white", 
+            linewidths=2,
+            alpha=0.9
+        )
 
-        plt.title(title, fontsize=16)
+        nx.draw_networkx_edges(
+            G, pos, 
+            arrows=True, 
+            arrowstyle='-|>', 
+            arrowsize=25, 
+            width=2, 
+            edge_color="#D3D3D3", # Light Gray lines so they don't clutter the view
+            alpha=0.5
+        )
+
+        # Simplified Labels
+        nx.draw_networkx_labels(
+            G, pos, 
+            font_size=9, 
+            font_weight="bold", 
+            font_color="white",
+            bbox=dict(facecolor="black", alpha=0.5, edgecolor="none", boxstyle='round,pad=0.2')
+        )
+
+        plt.title(title, fontsize=22, fontweight='bold', pad=20)
         plt.axis("off")
-        plt.savefig(output_path, format="JPG", dpi=300, bbox_inches="tight")
+        
+        # Save with tight layout to maximize space usage
+        plt.savefig(output_path, format="JPG", dpi=300, bbox_inches="tight", facecolor='white')
         plt.close()
         return True
 

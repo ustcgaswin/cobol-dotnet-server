@@ -1107,7 +1107,7 @@ class TechnicalSpecBuilder(BaseBuilder):
         if proc_data.get('phases'):
                 self.hyperlink_to_file(
                 self.hierarchical_proc_link, 
-                "🔗 Click here to open Interactive Process Flow Diagram"
+                "🔗 Click here to open Process Flow Diagram"
             )
         else:
             self.para("Process flow diagram generation failed or no job chains detected.")
