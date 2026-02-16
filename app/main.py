@@ -10,6 +10,9 @@ from app.config.logging_config import configure_logging
 from app.config.mlflow_config import configure_mlflow
 from app.config.settings import settings
 from app.db.base import engine
+from fastapi.staticfiles import StaticFiles
+
+
 
 
 configure_logging()
@@ -64,6 +67,9 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+# In your main.py or app setup
+app.mount("/artifacts", StaticFiles(directory="project_artifacts"), name="artifacts")
 
 # CORS middleware
 app.add_middleware(

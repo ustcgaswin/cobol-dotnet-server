@@ -752,6 +752,7 @@ from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.lib.enums import TA_JUSTIFY, TA_LEFT, TA_CENTER
 
 from app.api.schemas.doc_models import FileSummary, SystemMetrics
+from app.config.settings import settings
 from loguru import logger
 import os
 
@@ -1128,9 +1129,16 @@ class TechnicalSpecBuilder(BaseBuilder):
     def hyperlink_to_file(self, file_path: str, label: str):
         """Creates a blue, underlined clickable link in the PDF."""
         if not file_path: return
-        abs_path = os.path.abspath(file_path)
-        # Convert OS path to file URL (e.g., file:///C:/path/to/img.jpg)
-        link_url = f"file:///{abs_path.replace(os.sep, '/')}"
+        # abs_path = os.path.abspath(file_path)
+        # # Convert OS path to file URL (e.g., file:///C:/path/to/img.jpg)
+        # link_url = f"file:///{abs_path.replace(os.sep, '/')}"
+
+        relative_path = Path(file_path).relative_to(settings.get_artifacts_path())
+    
+        # Build a URL pointing to your server
+        # e.g., http://localhost:8000/artifacts/123/graph.jpg
+        server_base_url = "http://localhost:8000/artifacts" # This should come from your config
+        link_url = f"{server_base_url}/{relative_path.as_posix()}"
         
         style = ParagraphStyle(
             'Link', parent=self.styleN, textColor=colors.blue, 
