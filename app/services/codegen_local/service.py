@@ -16,10 +16,11 @@ from app.core.tools.rag_tools import search_docs
 from app.db.base import async_session_factory
 from app.db.repositories.project import ProjectRepository
 from app.services.codegen_local.agent import create_codegen_agent
+from app.services.codegen_local.languages import LanguageStrategy
+from app.services.codegen_local.languages.dotnet import DotNetStrategy
+from app.services.codegen_local.languages.java import JavaStrategy
 from app.services.codegen_local.tools.knowledge_tools import create_knowledge_tools
 from app.services.codegen_local.tools.solution_tools import create_solution_tools
-from app.services.codegen_local.tools.scaffold import scaffold_solution
-from app.services.codegen_local.tools.build_tools import create_build_tools
 from app.services.codegen_local.tools.status_tools import create_status_tools
 from app.services.codegen_local.tools.source_file_tools import create_source_file_tools
 from app.services.codegen_local.tools.system_context_tools import create_system_context_tools
@@ -45,9 +46,19 @@ class CodegenLocalService:
     
     _tasks: dict[str, asyncio.Task] = {}
     
-    def __init__(self, project_id: UUID):
+    def __init__(self, project_id: UUID, target_language: str = "dotnet"):
         self.project_id = project_id
+        self.target_language = target_language
         self._project_name: str | None = None
+        self.strategy: LanguageStrategy = self._get_strategy(target_language)
+
+    def _get_strategy(self, language: str) -> LanguageStrategy:
+        if language == "dotnet":
+            return DotNetStrategy()
+        elif language == "java":
+            return JavaStrategy()
+        else:
+            raise ValueError(f"Unsupported language: {language}")
     
     def _get_codegen_path(self) -> Path:
         """Get the code-migration directory (parent folder for all outputs).
@@ -391,14 +402,16 @@ class CodegenLocalService:
         
         run_id = str(uuid4())
         
+        # Pass target language to execute if needed, but it's on self now
         task = asyncio.create_task(self._execute(run_id))
         self._tasks[run_id] = task
         
-        logger.info(f"Started codegen run: {run_id} for project {self.project_id}")
+        logger.info(f"Started codegen run: {run_id} for project {self.project_id} ({self.target_language})")
         return {
             "success": True,
             "run_id": run_id,
             "project_id": str(self.project_id),
+            "target_language": self.target_language,
         }
     
     async def _update_db_status(self, status: str) -> None:
@@ -449,15 +462,15 @@ class CodegenLocalService:
             
             logger.info(f"Output path: {output_path}")
 
-            # Pre-create the .NET solution scaffold (deterministic, no LLM)
-            scaffold_result = scaffold_solution(output_path, source_path, project_name)
+            # Pre-create the solution scaffold (Strategy Pattern)
+            scaffold_result = self.strategy.scaffold_solution(output_path, source_path, project_name)
             logger.info(f"Solution scaffold: {scaffold_result[:200]}")
 
             # Create all tools with project_id binding
             artifact_tools = create_artifact_tools(project_id_str)
-            knowledge_tools = create_knowledge_tools()
-            solution_tools = create_solution_tools(project_id_str, str(output_path), str(source_path))
-            build_tools = create_build_tools(project_id_str, str(output_path))
+            knowledge_tools = create_knowledge_tools(self.target_language)
+            solution_tools = create_solution_tools(project_id_str, str(output_path), str(source_path), self.target_language)
+            build_tools = self.strategy.get_build_tools(project_id_str, output_path)
             status_tools = create_status_tools(project_id_str)
             source_file_tools = create_source_file_tools(project_id_str)
             system_context_tools = create_system_context_tools(project_id_str)
@@ -478,9 +491,14 @@ class CodegenLocalService:
             all_tools = [trace_tool(t) for t in all_tools]
             
             # Create agent
+            
+            # Get system prompt from strategy
+            system_prompt = self.strategy.get_system_prompt()
+
             agent = create_codegen_agent(
                 tools=all_tools,
                 project_id=project_id_str,
+                system_prompt=system_prompt,
             )
             
             self._update_status(run_id, "running", phase="converting")
@@ -503,8 +521,8 @@ class CodegenLocalService:
 
             # Run agent with project name, system overview, and manifest in the message
             initial_message = HumanMessage(
-                content=f"Convert mainframe project '{project_name}' to .NET 8. "
-                        f"The solution scaffold ('{project_name}.sln', .csproj files, Worker Job stubs, PS1 skeletons) "
+                content=f"Convert mainframe project '{project_name}' to {self.target_language}. "
+                        f"The solution scaffold (project files, stubs) "
                         "has already been created for you. Do NOT call initialize_solution() — it is already done. "
                         "Follow the MANDATORY FIRST ACTIONS in your system prompt before writing any code."
                         f"{system_overview_content}"

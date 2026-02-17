@@ -16,32 +16,47 @@ def _get_knowledge_path() -> Path:
     return Path(__file__).resolve().parents[4] / "knowledge"
 
 
-def create_knowledge_tools() -> list:
+def create_knowledge_tools(target_language: str = "dotnet") -> list:
     """Create knowledge access tools.
+    
+    Args:
+        target_language: Target language ("dotnet" or "java") for guide selection.
     
     Returns:
         List of LangChain tools for knowledge file access
     """
     knowledge_path = _get_knowledge_path()
     
+    # Select guide filenames based on language
+    if target_language == "java":
+        conversion_guide_file = "java_conversion_guide.md"
+        style_guide_file = "java_style_guide.md"
+    else:
+        conversion_guide_file = "dotnet_conversion_guide.md"
+        style_guide_file = "dotnet_style_guide.md"
+    
     @tool("read_conversion_guide")
     def read_conversion_guide() -> str:
-        """Read the COBOL to C# conversion guide.
+        """Read the language-specific conversion guide.
         
         Contains patterns, anti-patterns, and data type mappings for converting
-        mainframe code to .NET. Use this to understand how to convert specific
+        mainframe code to the target language. Use this to understand how to convert specific
         COBOL constructs.
         
         Returns:
             The complete conversion guide content
         """
         try:
-            filepath = knowledge_path / "conversion_guide.md"
+            filepath = knowledge_path / conversion_guide_file
             if not filepath.exists():
-                return "Error: conversion_guide.md not found"
+                # Fallback to generic if specific not found (backward compatibility)
+                fallback = knowledge_path / "conversion_guide.md"
+                if fallback.exists():
+                    return f"=== Conversion Guide (Generic) ===\n\n{fallback.read_text(encoding='utf-8')}"
+                return f"Error: {conversion_guide_file} not found"
             
             content = filepath.read_text(encoding="utf-8")
-            return f"=== Conversion Guide ===\n\n{content}"
+            return f"=== Conversion Guide ({target_language}) ===\n\n{content}"
             
         except Exception as e:
             logger.error(f"read_conversion_guide error: {e}")
@@ -49,7 +64,7 @@ def create_knowledge_tools() -> list:
     
     @tool("read_style_guide")
     def read_style_guide() -> str:
-        """Read the C# code style guide.
+        """Read the language-specific code style guide.
         
         Contains naming conventions, file structure, documentation requirements.
         Use this to ensure generated code follows consistent standards.
@@ -58,12 +73,16 @@ def create_knowledge_tools() -> list:
             The complete style guide content
         """
         try:
-            filepath = knowledge_path / "code_style_guide.md"
+            filepath = knowledge_path / style_guide_file
             if not filepath.exists():
-                return "Error: code_style_guide.md not found"
+                # Fallback
+                fallback = knowledge_path / "code_style_guide.md"
+                if fallback.exists():
+                    return f"=== Code Style Guide (Generic) ===\n\n{fallback.read_text(encoding='utf-8')}"
+                return f"Error: {style_guide_file} not found"
             
             content = filepath.read_text(encoding="utf-8")
-            return f"=== Code Style Guide ===\n\n{content}"
+            return f"=== Code Style Guide ({target_language}) ===\n\n{content}"
             
         except Exception as e:
             logger.error(f"read_style_guide error: {e}")
@@ -71,20 +90,20 @@ def create_knowledge_tools() -> list:
     
     @tool("lookup_utility")
     def lookup_utility(name: str) -> str:
-        """Look up the .NET equivalent for an IBM or third-party utility.
+        """Look up the equivalent for an IBM or third-party utility.
         
         Args:
             name: Utility name (e.g., "SORT", "IDCAMS", "IEBGENER")
             
         Returns:
-            The .NET equivalent and notes, or "not found" message
+            The equivalent in the target language and notes.
         """
         try:
             filepath = knowledge_path / "utility_mappings.json"
             if not filepath.exists():
                 return "Error: utility_mappings.json not found"
             
-            with open(filepath, "r") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
             utilities = data.get("utilities", [])
@@ -92,12 +111,25 @@ def create_knowledge_tools() -> list:
             
             for util in utilities:
                 if util.get("name", "").upper() == name_upper:
-                    return (
-                        f"Utility: {util['name']}\n"
-                        f"Description: {util.get('description', 'N/A')}\n"
-                        f".NET Equivalent: {util.get('dotnet_equivalent', 'N/A')}\n"
-                        f"Notes: {util.get('notes', 'N/A')}"
-                    )
+                    description = util.get('description', 'N/A')
+                    notes = util.get('notes', 'N/A')
+                    
+                    if target_language == "java":
+                        equiv = util.get('java_equivalent', 'N/A')
+                        return (
+                            f"Utility: {util['name']}\n"
+                            f"Description: {description}\n"
+                            f"Java Equivalent: {equiv}\n"
+                            f"Notes: {notes}"
+                        )
+                    else:
+                        equiv = util.get('dotnet_equivalent', 'N/A')
+                        return (
+                            f"Utility: {util['name']}\n"
+                            f"Description: {description}\n"
+                            f".NET Equivalent: {equiv}\n"
+                            f"Notes: {notes}"
+                        )
             
             return f"Utility '{name}' not found in mappings. Log this with log_issue() for later research."
             

@@ -13,11 +13,15 @@ router = APIRouter(tags=["Codegen"])
 
 
 @router.post("/projects/{project_id}/codegen/local")
-async def start_codegen_local(project_id: uuid.UUID):
+async def start_codegen_local(project_id: uuid.UUID, target_language: str = "dotnet"):
     """Start local code generation for a project.
     
-    Converts mainframe components (COBOL, copybooks, JCL) to .NET code.
+    Converts mainframe components (COBOL, copybooks, JCL) to .NET or Java code.
     Runs asynchronously - returns immediately with a run_id.
+    
+    Args:
+        project_id: Project UUID
+        target_language: Target language ("dotnet" or "java"), default "dotnet".
     
     Prerequisites:
     - Phase A artifacts (file_summaries.md, dependency_graph.md).
@@ -26,7 +30,7 @@ async def start_codegen_local(project_id: uuid.UUID):
     Output:
     - Generated code in project_artifacts/{project_id}/code-migration/{project_name}-local/
     """
-    service = CodegenLocalService(project_id)
+    service = CodegenLocalService(project_id, target_language)
     
     # run() will auto-generate prerequisites if missing
     result = await service.run()

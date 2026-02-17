@@ -14,13 +14,14 @@ from app.services.codegen_local.tools.scaffold import scaffold_solution
 from app.services.codegen_local.tools.source_file_tools import get_source_read_registry
 
 
-def create_solution_tools(project_id: str, output_path: str, source_path: str) -> list:
+def create_solution_tools(project_id: str, output_path: str, source_path: str, target_language: str = "dotnet") -> list:
     """Create solution management tools.
     
     Args:
         project_id: Project ID for scoping file operations
         output_path: Absolute path to the output directory for generated code
         source_path: Absolute path to the source directory (for listing components)
+        target_language: Target language ("dotnet" or "java")
         
     Returns:
         List of LangChain tools
@@ -77,18 +78,22 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str) -
     
     @tool("initialize_solution")
     def initialize_solution(solution_name: str) -> str:
-        """Initialize a .NET solution with the standard project structure.
+        """Initialize the solution skeleton.
 
         Note: The solution scaffold is pre-created by the system before
-        the agent starts.  This tool verifies it exists and returns the
+        the agent starts. This tool verifies it exists and returns the
         current structure.
 
         Args:
-            solution_name: Name for the solution (e.g., "ConvertedBatch")
+            solution_name: Name for the solution
 
         Returns:
             Success message with created structure
         """
+        # Scaffolding is handled by the strategy before agent start, 
+        # but we reuse the dotnet scaffold logic if called here for dotnet.
+        # For Java, it's also pre-done.
+        # This tool is mostly a "check if exists" or "noop" for the agent's mental model.
         return scaffold_solution(output_dir, source_dir, solution_name)
 
     @tool("write_code_file")
@@ -102,13 +107,22 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str) -
         Returns:
             Success or error message
         """
-        ALLOWED_EXTENSIONS = {
-            ".cs", ".csproj", ".sln",
-            ".ps1", ".sh", ".bat",
-            ".md",
-            ".json", ".config", ".xml",
-            ".gitignore", ".editorconfig"
-        }
+        # Language-specific extensions
+        if target_language == "java":
+            ALLOWED_EXTENSIONS = {
+                ".java", ".xml", ".properties", 
+                ".ps1", ".sh", ".bat",
+                ".md", ".json", ".gitignore", ".editorconfig",
+                ".cmd" # mvnw.cmd
+            }
+        else:
+            ALLOWED_EXTENSIONS = {
+                ".cs", ".csproj", ".sln",
+                ".ps1", ".sh", ".bat",
+                ".md",
+                ".json", ".config", ".xml",
+                ".gitignore", ".editorconfig"
+            }
 
         # Filenames the agent must NEVER create (infra / devops files)
         FORBIDDEN_FILENAMES = {
@@ -134,7 +148,7 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str) -
             # Validate extension
             ext = target.suffix.lower()
             if ext not in ALLOWED_EXTENSIONS:
-                return (f"Error: Extension '{ext}' is not allowed. "
+                return (f"Error: Extension '{ext}' is not allowed for {target_language}. "
                         f"Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}")
 
             # Block arbitrary markdown files (prevent pollution)
@@ -171,8 +185,14 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str) -
             # === PROVENANCE ENFORCEMENT ===
             # Service and Job files MUST have a // Source: tag referencing a
             # source file that was actually read via view_source_file().
-            is_service = "/Services/" in relative_path and ext == ".cs"
-            is_job = "/Jobs/" in relative_path and ext == ".cs" and target.name != "IJob.cs"
+            
+            # Detect logic files based on language
+            if target_language == "java":
+                is_service = "/services/" in relative_path.lower() and ext == ".java"
+                is_job = "/jobs/" in relative_path.lower() and ext == ".java"
+            else:
+                is_service = "/Services/" in relative_path and ext == ".cs"
+                is_job = "/Jobs/" in relative_path and ext == ".cs" and target.name != "IJob.cs"
 
             if is_service or is_job:
                 source_tag = re.search(r'//\s*Source:\s*([\w.\-]+)', content)

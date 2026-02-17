@@ -4,72 +4,84 @@
             "name": "SORT",
             "description": "Sorts records in a file based on specified key fields",
             "dotnet_equivalent": "LINQ OrderBy/OrderByDescending or List.Sort()",
+            "java_equivalent": "Collections.sort() or Stream.sorted()",
             "notes": "For large files, consider external sort or database ORDER BY"
         },
         {
             "name": "IEBGENER",
             "description": "Copies a sequential dataset",
             "dotnet_equivalent": "File.Copy() or Stream.CopyTo()",
+            "java_equivalent": "Files.copy() or InputStream.transferTo()",
             "notes": "Simple file copy operation"
         },
         {
             "name": "IDCAMS",
             "description": "Access Method Services - manages VSAM datasets",
             "dotnet_equivalent": "EF Core DbContext operations",
+            "java_equivalent": "Spring Data JPA Repository methods",
             "notes": "DEFINE CLUSTER → CREATE TABLE, DELETE → DROP TABLE, REPRO → INSERT"
         },
         {
             "name": "IEBCOPY",
             "description": "Copies or merges PDS members",
             "dotnet_equivalent": "Directory/File operations",
+            "java_equivalent": "Files.copy() (directory traversal)",
             "notes": "Copy files between directories"
         },
         {
             "name": "IEFBR14",
             "description": "Dummy program that does nothing (used for allocation)",
             "dotnet_equivalent": "No-op or skip",
+            "java_equivalent": "No-op",
             "notes": "Usually just creates/deletes files via DD statements"
         },
         {
             "name": "DFSORT",
             "description": "IBM's high-performance sort utility",
             "dotnet_equivalent": "LINQ OrderBy or database ORDER BY",
+            "java_equivalent": "Stream.sorted() or Database ORDER BY",
             "notes": "Same as SORT, may have additional features like INCLUDE/OMIT"
         },
         {
             "name": "IKJEFT01",
             "description": "TSO/E Terminal Monitor Program - runs TSO commands in batch",
             "dotnet_equivalent": "Process.Start() or PowerShell invocation",
+            "java_equivalent": "ProcessBuilder or Shell invocation",
             "notes": "Usually runs REXX or executes SQL"
         },
         {
             "name": "DSNUTILB",
             "description": "DB2 Utilities - LOAD, UNLOAD, REORG",
             "dotnet_equivalent": "EF Core bulk operations or SqlBulkCopy",
+            "java_equivalent": "Spring Batch or JPA Bulk Operations",
             "notes": "LOAD → BulkInsert, UNLOAD → SELECT to file"
         },
         {
             "name": "ICETOOL",
             "description": "DFSORT utility for multiple operations",
             "dotnet_equivalent": "LINQ operations or custom C# logic",
+            "java_equivalent": "Java Stream API or custom logic",
             "notes": "Supports COUNT, SELECT, STATS operations"
         },
         {
             "name": "ADRDSSU",
             "description": "Data Facility Storage Management - DUMP/RESTORE",
             "dotnet_equivalent": "Backup/Restore operations",
+            "java_equivalent": "Backup/Restore operations",
             "notes": "Usually handled by infrastructure, not application code"
         },
         {
             "name": "SYNCSORT",
             "description": "Third-party sort utility (similar to DFSORT)",
             "dotnet_equivalent": "LINQ OrderBy or database ORDER BY",
+            "java_equivalent": "Stream.sorted() or Database ORDER BY",
             "notes": "Same patterns as SORT/DFSORT"
         },
         {
             "name": "FILEAID",
             "description": "Third-party file viewing/editing tool",
             "dotnet_equivalent": "Skip or log-only",
+            "java_equivalent": "Skip or log-only",
             "notes": "Usually used for debugging, not production logic"
         }
     ]

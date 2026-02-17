@@ -18,7 +18,7 @@ from typing_extensions import TypedDict
 
 from app.config.llm import get_llm, CODEGEN, LLMModel
 from app.config.settings import settings
-from app.services.codegen_local.prompts import SYSTEM_PROMPT
+from app.config.settings import settings
 
 # Summarization configuration
 SUMMARIZE_THRESHOLD = 60  # Trigger summarization at this message count
@@ -620,12 +620,13 @@ def _compress_messages(
     return compressed
 
 
-def create_codegen_agent(tools: list, project_id: str):
+def create_codegen_agent(tools: list, project_id: str, system_prompt: str):
     """Create the Code Generation LangGraph agent.
     
     Args:
         tools: List of tools to bind
         project_id: Project ID for scoping operations
+        system_prompt: The detailed system instructions for the agent
         
     Returns:
         Compiled LangGraph agent
@@ -659,7 +660,7 @@ def create_codegen_agent(tools: list, project_id: str):
         
         # Invoke LLM with system prompt + processed messages
         
-        system_instructions = [SystemMessage(content=SYSTEM_PROMPT)]
+        system_instructions = [SystemMessage(content=system_prompt)]
         
         # Conditionally add memory management instructions
         if settings.CODEGEN_ENABLE_SUMMARIZATION:

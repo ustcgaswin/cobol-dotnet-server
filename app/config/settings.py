@@ -142,6 +142,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",
     )
     
     def get_file_size_limit_bytes(self, file_type: str) -> int:
