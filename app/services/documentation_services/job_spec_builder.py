@@ -207,6 +207,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Spacer, Paragraph
 from .renderers import BaseBuilder
+import re
 
 class SingleJCLReportBuilder(BaseBuilder):
     """
@@ -270,45 +271,82 @@ class SingleJCLReportBuilder(BaseBuilder):
             self.bullet_list(rules)
         else:
             self.para("No specific business constraints identified.")
+    
+    def _clean_for_mermaid(self, text: str) -> str:
+        """Removes HTML tags and special characters that break Mermaid API."""
+        if not text: return ""
+        # Remove any existing HTML tags like <b> or <br/>
+        clean = re.sub(r'<[^>]*>', '', text)
+        # Remove characters that cause syntax errors in Mermaid labels
+        clean = clean.replace('"', "'").replace('(', '[').replace(')', ']')
+        return clean.strip()
 
     def _section_visual_step_flow(self):
-        """Generates and renders a sequential flow of JCL steps."""
-        self.h2("2. Job Execution Flow")
+        """Generates a wrapped grid layout (5 steps per row) for the JCL flow."""
+        self.h2("4. Job Execution Flow")
         steps = self.jcl.technical_analysis.get('steps', [])
         if not steps:
+            self.para("No execution steps identified.")
             return
 
-        # Build Mermaid Sequence: Step 1 --> Step 2 --> Step 3
-        mermaid_lines = ["flowchart LR"]
-        mermaid_lines.append("    classDef stepNode fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#333;")
+        # Configuration for the grid
+        STEPS_PER_ROW = 5
+        mermaid_lines = ["flowchart TD"]
+        mermaid_lines.append("    classDef stepNode fill:#e1f5fe,stroke:#01579b,stroke-width:1px,color:#333,font-size:12px;")
         
-        nodes = []
-        for i, step in enumerate(steps):
-            s_name = step.get('step_name', f"STEP{i+1}")
-            pgm = step.get('program', 'UTILITY')
-            node_id = f"s{i}"
-            nodes.append(node_id)
-            # Label with bold step name and program name
-            mermaid_lines.append(f"    {node_id}[\"<b>{s_name}</b><br/>{pgm}\"]")
-            mermaid_lines.append(f"    class {node_id} stepNode")
+        # We group steps into chunks of 5
+        rows = [steps[i:i + STEPS_PER_ROW] for i in range(0, len(steps), STEPS_PER_ROW)]
+        
+        last_node_id = None
 
-        # Connect nodes sequentially
-        for i in range(len(nodes) - 1):
-            mermaid_lines.append(f"    {nodes[i]} --> {nodes[i+1]}")
+        for row_idx, row_steps in enumerate(rows):
+            mermaid_lines.append(f"    subgraph Row_{row_idx} [ ]")
+            mermaid_lines.append("        direction LR")
+            
+            row_node_ids = []
+            for step_idx, step in enumerate(row_steps):
+                # Calculate global index
+                global_idx = (row_idx * STEPS_PER_ROW) + step_idx
+                node_id = f"step_{global_idx}"
+                
+                # Sanitize text (NO HTML allowed here to avoid 503)
+                s_name = self._clean_for_mermaid(step.get('step_name', f"STP{global_idx}"))
+                pgm = self._clean_for_mermaid(step.get('program', 'UTIL'))
+                
+                # Format: "StepName | Program"
+                label = f"{s_name} : {pgm}"
+                mermaid_lines.append(f"        {node_id}[\"{label}\"]")
+                mermaid_lines.append(f"        class {node_id} stepNode")
+                row_node_ids.append(node_id)
+
+            # Link nodes within the row
+            for i in range(len(row_node_ids) - 1):
+                mermaid_lines.append(f"        {row_node_ids[i]} --> {row_node_ids[i+1]}")
+            
+            mermaid_lines.append("    end") # End row subgraph
+
+            # Link this row to the previous row
+            if last_node_id and row_node_ids:
+                # Vertical arrow from end of last row to start of this row
+                mermaid_lines.append(f"    {last_node_id} --> {row_node_ids[0]}")
+            
+            if row_node_ids:
+                last_node_id = row_node_ids[-1]
 
         mermaid_code = "\n".join(mermaid_lines)
         
-        # Render PNG via GraphAnalyzer's existing utility
-        img_path = self.output_dir / f"{self.jcl.filename}_step_flow.png"
+        # Render
+        img_path = self.output_dir / f"{self.jcl.filename}_snake_flow.png"
         if self.graph_analyzer.render_mermaid_code_to_png(mermaid_code, str(img_path)):
-            self.image(str(img_path), width=160*mm)
-            self.para("<i>Figure 1: Sequential step execution and program orchestration.</i>")
+            # Force width to fill page, height will scale
+            self.image(str(img_path), width=165*mm)
+            self.para("<i>Figure 1: Sequential step execution roadmap (Wrapped Layout).</i>")
         else:
-            self.para("<i>[Visual flow diagram could not be generated]</i>")
+            self.para("<i>[Visual flow could not be rendered due to complexity]</i>")
 
     def _section_input_data(self):
         """Aggregates all DISP=SHR/OLD datasets across all steps."""
-        self.h2("3. Input Data Requirements")
+        self.h2("5. Input Data Requirements")
         self.para("The following permanent datasets are required as input for the processing steps in this job.")
 
         input_rows = []
@@ -335,7 +373,7 @@ class SingleJCLReportBuilder(BaseBuilder):
 
     def _section_output_data(self):
         """Aggregates all DISP=NEW/MOD/CATLG datasets across all steps."""
-        self.h2("4. Output Artifacts & Reports")
+        self.h2("6. Output Artifacts & Reports")
         self.para("The following files and reports are generated by the execution of this job.")
 
         output_rows = []
@@ -361,7 +399,7 @@ class SingleJCLReportBuilder(BaseBuilder):
 
     def _section_technical_config(self):
         """Extracts Job Card and Header details."""
-        self.h2("5. Technical Configuration")
+        self.h2("7. Technical Configuration")
         
         header = self.jcl.technical_analysis.get('job_header', {})
         rows = [
@@ -375,14 +413,14 @@ class SingleJCLReportBuilder(BaseBuilder):
         # Parameters
         params = self.jcl.technical_analysis.get('symbolic_parameters', [])
         if params:
-            self.h3("5.1 Symbolic Parameters")
+            self.h3("7.1 Symbolic Parameters")
             param_rows = [[p.get('name'), p.get('default_value'), p.get('description')] for p in params if isinstance(p, dict)]
             if param_rows:
                 self.table(["Variable", "Default", "Description"], param_rows, [40*mm, 40*mm, 90*mm])
 
     def _section_execution_steps(self):
         """Analyzes every JCL step and links to Program logic."""
-        self.h2("6. Execution Roadmap")
+        self.h2("8. Execution Roadmap")
         self.para("Detailed breakdown of sequential processing steps and the internal program logic applied.")
 
         steps = self.jcl.technical_analysis.get('steps', [])
@@ -430,68 +468,68 @@ class SingleJCLReportBuilder(BaseBuilder):
 
             self.elements.append(Spacer(1, 5*mm))
 
-    def _section_data_structures(self):
-        """Extracts field-level details for layouts used in this job."""
-        self.h2("7. Data Structure Definitions")
-        self.para("The following record layouts define the data formats processed by the programs in this job.")
+    # def _section_data_structures(self):
+    #     """Extracts field-level details for layouts used in this job."""
+    #     self.h2("7. Data Structure Definitions")
+    #     self.para("The following record layouts define the data formats processed by the programs in this job.")
 
-        layouts_to_render = []
-        seen_layouts = set()
+    #     layouts_to_render = []
+    #     seen_layouts = set()
 
-        for step in self.jcl.technical_analysis.get('steps', []):
-            pgm = step.get('program')
-            prog_summary = self._find_summary_by_name(pgm)
+    #     for step in self.jcl.technical_analysis.get('steps', []):
+    #         pgm = step.get('program')
+    #         prog_summary = self._find_summary_by_name(pgm)
             
-            if prog_summary:
-                # Iterate through interactions to find mappings (Copybooks)
-                interactions = prog_summary.technical_analysis.get('data_interactions', [])
-                for io in interactions:
-                    if not isinstance(io, dict): continue
-                    layout_name = io.get('mapping')
-                    if layout_name and layout_name not in seen_layouts:
-                        layout_summary = self._find_summary_by_name(layout_name)
-                        if layout_summary:
-                            layouts_to_render.append(layout_summary)
-                            seen_layouts.add(layout_name)
+    #         if prog_summary:
+    #             # Iterate through interactions to find mappings (Copybooks)
+    #             interactions = prog_summary.technical_analysis.get('data_interactions', [])
+    #             for io in interactions:
+    #                 if not isinstance(io, dict): continue
+    #                 layout_name = io.get('mapping')
+    #                 if layout_name and layout_name not in seen_layouts:
+    #                     layout_summary = self._find_summary_by_name(layout_name)
+    #                     if layout_summary:
+    #                         layouts_to_render.append(layout_summary)
+    #                         seen_layouts.add(layout_name)
 
-        if not layouts_to_render:
-            self.para("<i>No specific file layouts or copybooks identified for this job's datasets.</i>")
-            return
+    #     if not layouts_to_render:
+    #         self.para("<i>No specific file layouts or copybooks identified for this job's datasets.</i>")
+    #         return
 
-        for layout in layouts_to_render:
-            self.h3(f"Entity Definition: {layout.filename}")
-            self.para(f"<b>Purpose:</b> {layout.business_overview.get('purpose', 'N/A')}")
+    #     for layout in layouts_to_render:
+    #         self.h3(f"Entity Definition: {layout.filename}")
+    #         self.para(f"<b>Purpose:</b> {layout.business_overview.get('purpose', 'N/A')}")
             
-            fields = layout.technical_analysis.get('key_fields', []) or layout.technical_analysis.get('table_structure', [])
-            if fields:
-                rows = []
-                for f in fields:
-                    if isinstance(f, dict):
-                        # Extract name and description/type
-                        name = str(f.get('field') or f.get('column_name') or 'N/A')
-                        desc = str(f.get('description') or f.get('type') or 'N/A')
-                        rows.append([name, desc])
-                if rows:
-                    self.table(["Field Name", "Business Meaning / Format"], rows, [70*mm, 100*mm])
-            self.elements.append(Spacer(1, 5*mm))
+    #         fields = layout.technical_analysis.get('key_fields', []) or layout.technical_analysis.get('table_structure', [])
+    #         if fields:
+    #             rows = []
+    #             for f in fields:
+    #                 if isinstance(f, dict):
+    #                     # Extract name and description/type
+    #                     name = str(f.get('field') or f.get('column_name') or 'N/A')
+    #                     desc = str(f.get('description') or f.get('type') or 'N/A')
+    #                     rows.append([name, desc])
+    #             if rows:
+    #                 self.table(["Field Name", "Business Meaning / Format"], rows, [70*mm, 100*mm])
+    #         self.elements.append(Spacer(1, 5*mm))
 
     def _section_flow_dependencies(self):
         """Workflow lineage (Predecessors/Successors)."""
-        self.h2("8. Dependencies & Data Lineage")
+        self.h2("9. Dependencies & Data Lineage")
         
         flow = self.jcl.technical_analysis.get('flow_context', {})
         
-        self.h3("8.1 External Data Entrances")
+        self.h3("9.1 External Data Entrances")
         ext_in = flow.get('external_inputs', [])
         if ext_in: self.bullet_list(ext_in)
         else: self.para("No external upstream data sources identified.")
 
-        self.h3("8.2 Upstream Job Dependencies")
+        self.h3("9.2 Upstream Job Dependencies")
         preds = flow.get('predecessors', [])
         if preds: self.bullet_list(preds)
         else: self.para("No internal predecessors identified.")
 
-        self.h3("8.3 Downstream Job Dependencies")
+        self.h3("9.3 Downstream Job Dependencies")
         succs = flow.get('successors', [])
         if succs: self.bullet_list(succs)
         else: self.para("No internal successors identified.")
