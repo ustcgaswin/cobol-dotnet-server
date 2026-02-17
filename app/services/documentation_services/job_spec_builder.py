@@ -205,8 +205,9 @@ from typing import List, Any, Dict
 from pathlib import Path
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Spacer, Paragraph
+from reportlab.platypus import SimpleDocTemplate, Spacer, Paragraph, Image as RLImage
 from .renderers import BaseBuilder
+from reportlab.lib.utils import ImageReader
 import re
 
 class SingleJCLReportBuilder(BaseBuilder):
@@ -224,6 +225,8 @@ class SingleJCLReportBuilder(BaseBuilder):
         self.all_summaries = summaries
         self.output_dir = output_dir # Needed to store the step flow PNG
         self.title_text = f"Job Specification: {self.jcl.filename}"
+        self.MAX_IMG_WIDTH = 165 * mm
+        self.MAX_IMG_HEIGHT = 230 * mm 
 
     def build(self):
         """Main orchestrator for the Runbook layout."""
@@ -247,7 +250,7 @@ class SingleJCLReportBuilder(BaseBuilder):
         self._section_execution_steps()
 
         # 7. Data Structure Definitions (NEW)
-        self._section_data_structures()
+        # self._section_data_structures()
         
         # 8. Data Lineage & Flow (Existing - Renumbered to 8)
         self._section_flow_dependencies()
@@ -289,60 +292,75 @@ class SingleJCLReportBuilder(BaseBuilder):
             self.para("No execution steps identified.")
             return
 
-        # Configuration for the grid
         STEPS_PER_ROW = 5
         mermaid_lines = ["flowchart TD"]
         mermaid_lines.append("    classDef stepNode fill:#e1f5fe,stroke:#01579b,stroke-width:1px,color:#333,font-size:12px;")
         
-        # We group steps into chunks of 5
         rows = [steps[i:i + STEPS_PER_ROW] for i in range(0, len(steps), STEPS_PER_ROW)]
-        
         last_node_id = None
 
         for row_idx, row_steps in enumerate(rows):
+            # Using subgraphs to keep rows together
             mermaid_lines.append(f"    subgraph Row_{row_idx} [ ]")
             mermaid_lines.append("        direction LR")
             
             row_node_ids = []
             for step_idx, step in enumerate(row_steps):
-                # Calculate global index
                 global_idx = (row_idx * STEPS_PER_ROW) + step_idx
-                node_id = f"step_{global_idx}"
-                
-                # Sanitize text (NO HTML allowed here to avoid 503)
+                node_id = f"s{global_idx}"
                 s_name = self._clean_for_mermaid(step.get('step_name', f"STP{global_idx}"))
                 pgm = self._clean_for_mermaid(step.get('program', 'UTIL'))
-                
-                # Format: "StepName | Program"
                 label = f"{s_name} : {pgm}"
+                
                 mermaid_lines.append(f"        {node_id}[\"{label}\"]")
                 mermaid_lines.append(f"        class {node_id} stepNode")
                 row_node_ids.append(node_id)
 
-            # Link nodes within the row
             for i in range(len(row_node_ids) - 1):
                 mermaid_lines.append(f"        {row_node_ids[i]} --> {row_node_ids[i+1]}")
             
-            mermaid_lines.append("    end") # End row subgraph
+            mermaid_lines.append("    end") 
 
-            # Link this row to the previous row
             if last_node_id and row_node_ids:
-                # Vertical arrow from end of last row to start of this row
+                # Vertical link between rows
                 mermaid_lines.append(f"    {last_node_id} --> {row_node_ids[0]}")
             
             if row_node_ids:
                 last_node_id = row_node_ids[-1]
 
         mermaid_code = "\n".join(mermaid_lines)
+        img_path = self.output_dir / f"{self.jcl.filename}_flow.png"
         
-        # Render
-        img_path = self.output_dir / f"{self.jcl.filename}_snake_flow.png"
         if self.graph_analyzer.render_mermaid_code_to_png(mermaid_code, str(img_path)):
-            # Force width to fill page, height will scale
-            self.image(str(img_path), width=165*mm)
-            self.para("<i>Figure 1: Sequential step execution roadmap (Wrapped Layout).</i>")
+            # --- FIX: SMART SCALING LOGIC ---
+            self._add_scaled_image(str(img_path))
+            self.para("<i>Figure 1: Sequential step execution roadmap.</i>")
         else:
-            self.para("<i>[Visual flow could not be rendered due to complexity]</i>")
+            self.para("<i>[Visual flow could not be rendered]</i>")
+
+    def _add_scaled_image(self, path: str):
+        """Helper to add image to PDF while ensuring it fits on the page."""
+        try:
+            img_reader = ImageReader(path)
+            iw, ih = img_reader.getSize()
+            aspect = ih / float(iw)
+
+            # Initial target based on width
+            target_w = self.MAX_IMG_WIDTH
+            target_h = target_w * aspect
+
+            # If the resulting height is too big, scale down based on height
+            if target_h > self.MAX_IMG_HEIGHT:
+                target_h = self.MAX_IMG_HEIGHT
+                target_w = target_h / aspect
+
+            img_flowable = RLImage(path, width=target_w, height=target_h)
+            img_flowable.hAlign = 'CENTER'
+            self.elements.append(img_flowable)
+            self.elements.append(Spacer(1, 5*mm))
+        except Exception as e:
+            from loguru import logger
+            logger.error(f"Image scaling failed: {e}")
 
     def _section_input_data(self):
         """Aggregates all DISP=SHR/OLD datasets across all steps."""
