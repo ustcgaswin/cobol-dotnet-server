@@ -536,6 +536,11 @@ class SingleJCLReportBuilder(BaseBuilder):
                 if recons:
                     self.para("<b>Integrity & Balance Controls:</b>")
                     self.bullet_list(recons)
+
+                tech_notes = prog_summary.technical_analysis.get('technical_notes', [])
+                if tech_notes:
+                    self.h4("Technical Implementation Notes")
+                    self.bullet_list(tech_notes)
             else:
                 self.para(f"<i>Note: Logic for '{program}' is managed via system utility or external module.</i>")
 

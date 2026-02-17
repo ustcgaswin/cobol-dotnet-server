@@ -547,31 +547,18 @@ class DocumentationService:
     async def generate_single_jcl_runbook(self, project_id: uuid.UUID, jcl_filename: str) -> str:
         """
         Generates a targeted 'Runbook' for a specific JCL file.
-        MODE: BRUTE FORCE (Process relevant files + Target File)
+        This mirrors 'run_full_pipeline' to ensure 100% data availability.
         """
         try:
             logger.info(f"Starting Runbook Generation for {jcl_filename}")
 
-            # 1. Load System-wide Context
+            # 1. Load System-wide Context (Exactly like run_full_pipeline)
             system_data = await self._load_all_parsed_jsons(project_id)
             if not system_data:
                 await self.parser_service.parse_project(project_id)
                 system_data = await self._load_all_parsed_jsons(project_id)
 
-            # --- PARMLIB PATCH (Prevents 'list has no get' error) ---
-            if 'PARMLIB' in system_data:
-                for entry in system_data['PARMLIB']:
-                    raw_deps = entry.get('dependencies', [])
-                    if isinstance(raw_deps, list):
-                        entry['dependencies'] = {
-                            'programs': [d for d in raw_deps if d.get('type') in ['PROGRAM', 'PGM', 'EXEC']],
-                            'datasets': [d for d in raw_deps if d.get('type') in ['DATASET', 'FILE', 'DSN']],
-                            'system_parameters': [d for d in raw_deps if d.get('type') == 'PARAMETER'],
-                            'symbols': [d for d in raw_deps if d.get('type') == 'SYMBOL'],
-                            'jcl_references': [] 
-                        }
-
-            # 2. Initialize Graph Engine
+            # 2. Initialize Graph Engine (Uses the fixed _map_dependencies)
             dependency_mapped_data = self._map_dependencies(system_data)
             analyzer = GraphAnalyzer(dependency_mapped_data)
 
@@ -583,129 +570,73 @@ class DocumentationService:
             
             @tool("view_file")
             def agent_view_file(filepath: str, start_line: int, end_line: int) -> str:
-                """Read lines from a file."""
+                """Read lines from a source file."""
                 return view_file.func(filepath, start_line, end_line, runtime=shim)
 
             @tool("grep_search")
             def agent_grep_search(pattern: str, file_pattern: str = "*") -> str:
-                """Search for patterns."""
+                """Search for text patterns in files."""
                 return grep_search.func(pattern, file_pattern, runtime=shim)
 
             tools = {"view_file": agent_view_file, "grep_search": agent_grep_search}
             llm = get_llm()
             agent_app = create_documentation_graph(llm, analyzer, tools)
 
-            # 4. Identify Files to Process
+            # 4. Fetch ALL Project Files (No filtering, matches run_full_pipeline)
             all_files = await self._get_project_files(project_id)
-            
-            # A. Clean the target name
-            clean_target = jcl_filename.upper().replace('.JCL', '').replace('.TXT', '').strip()
-            
-            # B. Find the TARGET FILE explicitly
-            target_file_record = next((
-                f for f in all_files 
-                if f.filename.upper().replace('.JCL', '').replace('.TXT', '').strip() == clean_target
-            ), None)
+            total_files = len(all_files)
+            logger.info(f"Runbook Pipeline: Analyzing all {total_files} files for full context.")
 
-            if not target_file_record:
-                # Debugging help: List top 5 available files
-                debug_list = [f.filename for f in all_files[:5]]
-                raise ValueError(f"File {jcl_filename} not found in DB. Available: {debug_list}...")
-
-            # C. Select other relevant files (Context)
-            # Define types in UPPERCASE
-            relevant_types = [
-                'COBOL', 'PLI', 'ASSEMBLY', 'REXX', 'JCL', 'PROC', 'CATPROC',
-                'CONTROL_CARD', 'PARMLIB', 'COPYBOOK', 'PLI_COPYBOOK',
-                'TEXT', 'FLAT_FILE', 'SQL', 'DCLGEN'
-            ]
-            
-            files_set = {target_file_record} 
-            
-            for f in all_files:
-                # --- FIX: Normalize to UPPER() before checking ---
-                if f.file_type.upper() in relevant_types:
-                    files_set.add(f)
-            
-            files_to_process = list(files_set)
-            
-            logger.info(f"Processing {len(files_to_process)} files. Target: {target_file_record.filename}")
-
-            # 5. Execute Agent Loop
+            # 5. Execute Agent Loop with Progress Logging
             tasks = []
-            sem = asyncio.Semaphore(8) 
+            sem = asyncio.Semaphore(8) # Concurrency
 
-            async def _bounded_process(file_record):
+            async def _bounded_process(file_record, idx):
                 async with sem:
-                    # IMPORTANT: Force file_type to 'JCL' in the state if it's the target,
-                    # so the Agent uses the JCL Prompt even if DB says 'TEXT'
-                    actual_type = file_record.file_type
-                    if file_record.id == target_file_record.id:
-                        # Override logic: If it looks like JCL, treat as JCL
-                        if actual_type in ['TEXT', 'FLAT_FILE', 'UNKNOWN']:
-                            actual_type = 'JCL'
+                    # PROGRESS LOGGING
+                    logger.info(f"Analyzing File [{idx}/{total_files}]: {file_record.filename}")
+                    return await self._process_single_file(agent_app, project_id, file_record, "ALL")
 
-                    # Manually construct state to force type if needed
-                    initial_state = {
-                        "project_id": str(project_id),
-                        "target_file": file_record.filename,
-                        "file_type": actual_type, # <--- Use overridden type
-                        "generation_mode": "ALL",
-                        "iterations": 0, "research_complete": False,
-                        "mermaid_graph": "", "code_snippets": "",
-                        "functional_json": {}, "technical_json": {}, "messages": []
-                    }
-                    config = {"recursion_limit": 50}
-                    return await agent_app.ainvoke(initial_state, config=config)
-
-            for file_record in files_to_process:
-                tasks.append(_bounded_process(file_record))
+            for i, file_record in enumerate(all_files, 1):
+                tasks.append(_bounded_process(file_record, i))
             
             completed_states = await asyncio.gather(*tasks)
 
-            # 6. Collect Summaries
+            # 6. Collect All Summaries
             all_summaries = []
-            target_summary = None
-
             for state in completed_states:
                 if not state: continue
                 raw_json = state.get("technical_json") or state.get("functional_json")
-                
                 if raw_json:
-                    # Enforce metadata
                     raw_json['filename'] = state['target_file']
                     raw_json['type'] = state['file_type']
-                    summary_obj = FileSummary(**raw_json)
-                    all_summaries.append(summary_obj)
-                    
-                    # Check if this is our target
-                    s_base = summary_obj.filename.upper().replace('.JCL', '').replace('.TXT', '').strip()
-                    if s_base == clean_target:
-                        target_summary = summary_obj
+                    all_summaries.append(FileSummary(**raw_json))
+
+            # 7. Identify the Target JCL Summary
+            clean_target = jcl_filename.upper().replace('.JCL', '').replace('.TXT', '').strip()
+            target_summary = next((
+                s for s in all_summaries 
+                if s.filename.upper().replace('.JCL', '').replace('.TXT', '').strip() == clean_target
+            ), None)
 
             if not target_summary:
-                # Debug info
-                found_names = [s.filename for s in all_summaries]
-                raise ValueError(f"Analysis completed but target '{jcl_filename}' summary missing. Processed: {found_names}")
+                raise ValueError(f"Target JCL '{jcl_filename}' summary missing after full analysis.")
 
-            # 7. Generate Metrics
+            # 8. Generate System Metrics (Required by Builder)
             type_counts = {}
             for s in all_summaries:
-                type_counts[s.file_type] = type_counts.get(s.file_type, 0) + 1
-            
-            metrics = SystemMetrics(
-                total_files=len(all_summaries),
-                files_by_type=type_counts,
-                top_complex_modules=[]
-            )
+                t = s.file_type.upper()
+                type_counts[t] = type_counts.get(t, 0) + 1
+            metrics = SystemMetrics(total_files=len(all_summaries), files_by_type=type_counts, top_complex_modules=[])
 
-            # 8. Build PDF
+            # 9. Build the Runbook PDF
             output_dir = self.artifacts_path / str(project_id) / "runbooks"
             output_dir.mkdir(parents=True, exist_ok=True)
             report_path = output_dir / f"{clean_target}_Runbook.pdf"
 
-            logger.info(f"Building Runbook for {target_summary.filename}...")
+            logger.info(f"Full analysis complete. Rendering Runbook PDF for {target_summary.filename}...")
             
+            # Pass everything to the builder
             builder = SingleJCLReportBuilder(
                 jcl_summary=target_summary,
                 summaries=all_summaries, 
@@ -717,8 +648,9 @@ class DocumentationService:
             builder.build()
             builder.save(str(report_path))
             
+            logger.info(f"Runbook generated: {report_path}")
             return str(report_path)
 
         except Exception as e:
-            logger.exception(f"Failed to generate JCL Runbook: {e}")
+            logger.exception(f"Runbook Pipeline failed: {e}")
             raise e
