@@ -546,27 +546,99 @@ class DocumentationService:
 
     async def generate_single_jcl_runbook(self, project_id: uuid.UUID, jcl_filename: str) -> str:
         """
-        Generates a targeted 'Runbook' for a specific JCL file by processing the project context.
-        Strategy: Run the pipeline logic to get full context, then filter for the specific runbook.
+        Generates a targeted 'Runbook' for a specific JCL file.
+        Includes a local data patch for PARMLIB compatibility.
         """
         try:
             logger.info(f"Starting Runbook Generation for {jcl_filename} (Full Context Mode)")
 
-            # 1. Load System-wide Context (Same as run_full_pipeline)
+            # 1. Load System-wide Context
             system_data = await self._load_all_parsed_jsons(project_id)
             
-            # If parsing data is missing, we must parse first to get the graph
             if not system_data:
                 logger.info("Parsing data not found. Triggering Parser Service...")
                 await self.parser_service.parse_project(project_id)
                 system_data = await self._load_all_parsed_jsons(project_id)
 
+            if 'PARMLIB' in system_data:
+                for entry in system_data['PARMLIB']:
+                    raw_deps = entry.get('dependencies', [])
+                    if isinstance(raw_deps, list):
+                        # Convert List -> Dict to satisfy extractors.py
+                        entry['dependencies'] = {
+                            'programs': [d for d in raw_deps if d.get('type') in ['PROGRAM', 'PGM', 'EXEC']],
+                            'datasets': [d for d in raw_deps if d.get('type') in ['DATASET', 'FILE', 'DSN']],
+                            'system_parameters': [d for d in raw_deps if d.get('type') == 'PARAMETER'],
+                            'symbols': [d for d in raw_deps if d.get('type') == 'SYMBOL'],
+                            'jcl_references': [] 
+                        }
+
             # 2. Initialize Full Graph Engine
-            # This ensures we know exactly who calls whom across the whole system
             dependency_mapped_data = self._map_dependencies(system_data)
             analyzer = GraphAnalyzer(dependency_mapped_data)
 
-            # 3. Setup Agent Tools
+            # 3. Define the Target (Normalize Name)
+            clean_target = jcl_filename.upper().replace('.JCL', '').replace('.TXT', '').strip()
+            
+            # Find the node in the Graph
+            target_node = next((n for n in analyzer.graph.nodes() if n == clean_target or n.startswith(clean_target)), None)
+
+            # 4. Identify the JCL File object from DB
+            all_files = await self._get_project_files(project_id)
+            jcl_file = next((f for f in all_files if f.filename.upper().startswith(clean_target)), None)
+            
+            if not jcl_file:
+                raise ValueError(f"JCL file {jcl_filename} not found in DB.")
+
+            # 5. Aggressive File Identification (Fuzzy Matching)
+            root_storage = settings.get_storage_path()
+            jcl_path = root_storage / str(project_id) / jcl_file.filename
+            if not jcl_path.exists():
+                jcl_path = root_storage / str(project_id) / "JCL" / jcl_file.filename
+                # Fallback for lowercase files
+                if not jcl_path.exists():
+                     jcl_path = root_storage / str(project_id) / jcl_file.filename.lower()
+
+            # Read raw JCL to find Program names
+            jcl_content = jcl_path.read_text(encoding="utf-8", errors="ignore").upper()
+            pgm_names_in_jcl = set(re.findall(r'PGM=([A-Z0-9@#$]+)', jcl_content))
+            
+            files_to_process = {jcl_file} 
+
+            # A. Match PGM names to Source Files
+            for pgm in pgm_names_in_jcl:
+                if pgm in ['IEFBR14', 'IDCAMS', 'SORT', 'ICETOOL', 'IEBGENER', 'IKJEFT01']:
+                    continue
+                for f in all_files:
+                    f_base = f.filename.upper().split('.')[0]
+                    # Check if filename starts with PGM name
+                    if f_base.startswith(pgm) or pgm.startswith(f_base):
+                        if f.file_type in ['COBOL', 'PLI', 'ASSEMBLY', 'REXX', 'CONTROL_CARD', 'PARMLIB']:
+                            files_to_process.add(f)
+                            logger.info(f"Fuzzy Match Found: {f.filename} for JCL PGM {pgm}")
+
+            # B. Add Successors from Graph (Capture .ctl and Parmlibs)
+            if target_node:
+                for succ in analyzer.graph.successors(target_node):
+                    clean_succ = succ.split(':')[-1].upper().split('(')[0]
+                    for f in all_files:
+                        if f.filename.upper().startswith(clean_succ):
+                            files_to_process.add(f)
+
+            # C. Add Grandchildren (Copybooks used by the found programs)
+            for f_meta in list(files_to_process):
+                f_node = f_meta.filename.upper().split('.')[0]
+                if f_node in analyzer.graph:
+                    for child in analyzer.graph.successors(f_node):
+                        clean_child = child.split(':')[-1].upper().split('(')[0]
+                        for f in all_files:
+                            if f.filename.upper().startswith(clean_child) and f.file_type in ['COPYBOOK', 'PLI_COPYBOOK']:
+                                files_to_process.add(f)
+
+            files_to_process_list = list(files_to_process)
+            logger.info(f"Processing cluster of {len(files_to_process_list)} files for Runbook.")
+
+            # 6. Execute Agent Loop
             project_id_str = str(project_id)
             class RuntimeShim:
                 def __init__(self, pid): self.context = type('obj', (object,), {'project_id': pid})
@@ -576,125 +648,60 @@ class DocumentationService:
             def agent_view_file(filepath: str, start_line: int, end_line: int) -> str:
                 """Read lines from a file."""
                 return view_file.func(filepath, start_line, end_line, runtime=shim)
-
             @tool("grep_search")
             def agent_grep_search(pattern: str, file_pattern: str = "*") -> str:
-                """Search for patterns in files."""
+                """Search for patterns."""
                 return grep_search.func(pattern, file_pattern, runtime=shim)
 
             tools = {"view_file": agent_view_file, "grep_search": agent_grep_search}
             llm = get_llm()
             agent_app = create_documentation_graph(llm, analyzer, tools)
 
-            # 4. Fetch ALL Files
-            all_files = await self._get_project_files(project_id)
-            
-            # OPTIMIZATION: 
-            # While we have the full graph, we can still limit the *LLM processing* 
-            # to the relevant cluster to save time, OR we can process everything as requested.
-            # Below implements the "Smart Cluster" approach: 
-            # It uses the Graph (which is now accurate) to find neighbors, instead of regex.
-            
-            # Find the target node in the graph (normalize names)
-            target_node = None
-            clean_target = jcl_filename.upper().replace('.JCL', '').replace('.TXT', '').strip()
-            
-            # Try to find the node in the graph
-            for node in analyzer.graph.nodes():
-                if node.startswith(clean_target):
-                    target_node = node
-                    break
-            
-            files_to_process = []
-            
-            if target_node:
-                # 1. Get Programs called by JCL (Successors)
-                programs = list(analyzer.graph.successors(target_node))
-                
-                # 2. Get Layouts/Tables used by those Programs (Grandchildren)
-                data_structures = []
-                for p in programs:
-                    data_structures.extend(list(analyzer.graph.successors(p)))
-                
-                # 3. Combine everything
-                all_relevant_nodes = set(programs + data_structures + [target_node])
-                
-                relevant_names = set(n.split(':')[0] for n in all_relevant_nodes)
-                files_to_process = [
-                    f for f in all_files 
-                    if any(rn in f.filename.upper() for rn in relevant_names)
-                ]
-            else:
-                # Fallback: If graph lookup fails, just find the JCL file itself
-                logger.warning(f"Target JCL {jcl_filename} not found in Graph. processing file only.")
-                files_to_process = [f for f in all_files if f.filename.upper().startswith(clean_target)]
-
-            if not files_to_process:
-                raise ValueError(f"File {jcl_filename} could not be located in project files.")
-
-            logger.info(f"Identified {len(files_to_process)} relevant files for Runbook context.")
-
-            # 5. Execute Agent Loop
             tasks = []
             sem = asyncio.Semaphore(5)
-
             async def _bounded_process(file_record):
                 async with sem:
-                    # We use "ALL" mode to get both tech/func details
                     return await self._process_single_file(agent_app, project_id, file_record, "ALL")
 
-            for file_record in files_to_process:
+            for file_record in files_to_process_list:
                 tasks.append(_bounded_process(file_record))
             
             completed_states = await asyncio.gather(*tasks)
 
-            # 6. Collect Summaries
+            # 7. Collect Summaries
             all_summaries = []
             for state in completed_states:
                 if not state: continue
                 raw_json = state.get("technical_json") or state.get("functional_json")
                 if raw_json:
-                    # Enforce metadata
                     raw_json['filename'] = state['target_file']
                     raw_json['type'] = state['file_type']
                     all_summaries.append(FileSummary(**raw_json))
 
-            # 7. Generate Metrics (Required by Builder)
-            type_counts = {}
-            for s in all_summaries:
-                type_counts[s.file_type] = type_counts.get(s.file_type, 0) + 1
-            
-            metrics = SystemMetrics(
-                total_files=len(all_summaries),
-                files_by_type=type_counts,
-                top_complex_modules=[]
-            )
-
-            # 8. Build PDF
-            clean_target = jcl_filename.upper().replace('.JCL', '').replace('.TXT', '').strip()
-            
+            # 8. Identify the specific JCL summary
             target_summary = next((
                 s for s in all_summaries 
                 if s.filename.upper().replace('.JCL', '').replace('.TXT', '').strip() == clean_target
             ), None)
 
             if not target_summary:
-                # If for some reason the JCL wasn't analyzed, 
-                # we can't build a runbook.
                 raise ValueError(f"Analysis failed for {jcl_filename}. No summary data found.")
 
             # 9. Build PDF
             output_dir = self.artifacts_path / str(project_id) / "runbooks"
             output_dir.mkdir(parents=True, exist_ok=True)
-            
             report_path = output_dir / f"{target_summary.filename.split('.')[0]}_Runbook.pdf"
 
             logger.info(f"Building Runbook for {target_summary.filename}...")
             
-            # --- PASS THE SUMMARY DIRECTLY ---
+            type_counts = {}
+            for s in all_summaries:
+                type_counts[s.file_type] = type_counts.get(s.file_type, 0) + 1
+            metrics = SystemMetrics(total_files=len(all_summaries), files_by_type=type_counts, top_complex_modules=[])
+
             builder = SingleJCLReportBuilder(
-                jcl_summary=target_summary, # <--- Direct Object Injection
-                summaries=all_summaries,    # Still needed to find called programs
+                jcl_summary=target_summary,
+                summaries=all_summaries,
                 metrics=metrics,
                 graph_analyzer=analyzer,
                 output_dir=output_dir
