@@ -289,6 +289,7 @@ REQUIRED JSON STRUCTURE:
                 "operation": "READ/WRITE/UPDATE",
                 "access_method": "Sequential / Random / Dynamic",
                 "is_gdg": true/false
+                "mapping": "Name of the COPYBOOK or DCLGEN used for this file"
             }}
         ],
         "execution_flow": [

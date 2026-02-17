@@ -17,7 +17,6 @@ from app.db.repositories.source_file import SourceFileRepository
 from app.db.models.source_file import SourceFile
 from app.db.models.project import Project, ProjectStatus
 
-# --- Import Models & Extractors ---
 from app.api.schemas.doc_models import DocAgentState, FileSummary, SystemMetrics
 from app.services.dependency_extractor.extractors import (
     extract_cobol_dependencies, extract_jcl_dependencies, extract_ca7_dependencies,
@@ -32,7 +31,6 @@ from .agent import create_documentation_graph
 from app.core.tools.file_tools import view_file, grep_search
 from app.core.tools.artifact_tools import create_artifact_tools
 
-# --- NEW: Import the Real Builders ---
 from .renderers import TechnicalSpecBuilder, FunctionalSpecBuilder
 
 
@@ -610,14 +608,18 @@ class DocumentationService:
             files_to_process = []
             
             if target_node:
-                # Get the JCL itself + immediate neighbors (Programs it calls, Files it touches)
-                # This is much more accurate than the regex method
-                neighbors = list(analyzer.graph.successors(target_node)) + list(analyzer.graph.predecessors(target_node))
-                neighbors.append(target_node)
+                # 1. Get Programs called by JCL (Successors)
+                programs = list(analyzer.graph.successors(target_node))
                 
-                # Filter strictly for SourceFiles we have in DB
-                relevant_names = set(n.split(':')[0] for n in neighbors) # Remove prefixes like FILE:
+                # 2. Get Layouts/Tables used by those Programs (Grandchildren)
+                data_structures = []
+                for p in programs:
+                    data_structures.extend(list(analyzer.graph.successors(p)))
                 
+                # 3. Combine everything
+                all_relevant_nodes = set(programs + data_structures + [target_node])
+                
+                relevant_names = set(n.split(':')[0] for n in all_relevant_nodes)
                 files_to_process = [
                     f for f in all_files 
                     if any(rn in f.filename.upper() for rn in relevant_names)
@@ -694,7 +696,8 @@ class DocumentationService:
                 jcl_summary=target_summary, # <--- Direct Object Injection
                 summaries=all_summaries,    # Still needed to find called programs
                 metrics=metrics,
-                graph_analyzer=analyzer
+                graph_analyzer=analyzer,
+                output_dir=output_dir
             )
             
             builder.build()
