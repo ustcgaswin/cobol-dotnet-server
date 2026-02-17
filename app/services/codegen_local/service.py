@@ -551,6 +551,7 @@ class CodegenLocalService:
                             "codegen_logs_path": str(codegen_logs_path),
                             "codegen_output_path": str(output_path),
                             "codegen_source_path": str(source_path),
+                            "target_language": self.target_language,
                             "verification_attempts": 0,
                             "verification_step_failures": {},
                         },

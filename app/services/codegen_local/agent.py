@@ -58,6 +58,7 @@ class CodegenState(TypedDict):
     """State for the code generation agent."""
     messages: Annotated[list[AnyMessage], message_reducer]
     project_id: str
+    target_language: str
     iteration_count: int
     codegen_logs_path: str  # Path for dumping session history
     codegen_output_path: str # Path to generated code for verification
@@ -898,15 +899,16 @@ def create_codegen_agent(tools: list, project_id: str, system_prompt: str):
             logger.info("[Verification Step 2] PASS — No placeholders detected")
 
         # =================================================================
-        # STEP 3: JCL → PowerShell scripts exist
+        # STEP 3: JCL → Script existence
         # =================================================================
-        logger.info("[Verification Step 3] Checking JCL → PowerShell scripts...")
+        logger.info("[Verification Step 3] Checking JCL → Scripts...")
+        # Scripts location is same for both languages for now (scripts/jobs)
         scripts_dir = output_path / "scripts" / "jobs"
         step3_failures: list[str] = []
 
         if not scripts_dir.exists() or not any(scripts_dir.iterdir()):
             logger.warning("[Verification Step 3] FAIL — scripts/jobs is empty or missing")
-            step3_failures.append("scripts/jobs directory is empty or missing. You MUST convert JCL jobs to PowerShell scripts.")
+            step3_failures.append("scripts/jobs directory is empty or missing. You MUST convert JCL jobs to scripts.")
         else:
             if source_path_str:
                 source_path = Path(source_path_str)
@@ -916,23 +918,19 @@ def create_codegen_agent(tools: list, project_id: str, system_prompt: str):
                         logger.info(f"[Verification Step 3] Found {len(jcl_files)} JCL source files")
                         for jcl_file in jcl_files:
                             job_name = jcl_file.stem.lower()
-                            expected_script = scripts_dir / f"run-{job_name}.ps1"
-                            if not expected_script.exists():
-                                step3_failures.append(f"Missing Script: run-{job_name}.ps1 (from {jcl_file.name}). Read {jcl_file.name} with view_source_file() first.")
-                            else:
-                                try:
-                                    ps_content = expected_script.read_text(encoding="utf-8", errors="replace")
-                                    has_step_cmd = bool(re.search(r"dotnet run|Copy-Item|Remove-Item", ps_content))
-                                    if not has_step_cmd and len(ps_content.splitlines()) < 8:
-                                        step3_failures.append(
-                                            f"Stub Script: run-{job_name}.ps1 has no step commands (no 'dotnet run', 'Copy-Item', etc.). "
-                                            f"Read {jcl_file.name} with view_source_file() and convert its actual steps."
-                                        )
-                                except Exception:
-                                    pass
-
+                            # For Java, we still use .ps1 wrappers or .sh, but usually .ps1 on Windows envs
+                            # Checks for run-{job}.ps1 or run-{job}.sh or run-{job}.bat
+                            found_script = False
+                            for ext in [".ps1", ".sh", ".bat", ".cmd"]:
+                                if (scripts_dir / f"run-{job_name}{ext}").exists():
+                                    found_script = True
+                                    break
+                            
+                            if not found_script:
+                                step3_failures.append(f"Missing Script: run-{job_name}.ps1/.sh (from {jcl_file.name}). Read {jcl_file.name} with view_source_file() first.")
+                            
             if not step3_failures:
-                logger.info("[Verification Step 3] PASS — All JCL scripts present and substantive")
+                logger.info("[Verification Step 3] PASS — All JCL scripts present")
 
         if step3_failures:
             logger.warning(f"[Verification Step 3] FAIL — {len(step3_failures)} issue(s)")
@@ -940,32 +938,43 @@ def create_codegen_agent(tools: list, project_id: str, system_prompt: str):
             batch_failures.extend(step3_failures)
 
         # =================================================================
-        # STEP 4: 1:1 Job Mapping (.ps1 ↔ Worker Class)
+        # STEP 4: 1:1 Job Mapping (Script ↔ Worker Logic)
         # =================================================================
-        logger.info("[Verification Step 4] Checking 1:1 Job Mapping (.ps1 ↔ Worker logic)...")
-        worker_jobs_dir = output_path / "src" / "Worker" / "Jobs"
+        logger.info("[Verification Step 4] Checking 1:1 Job Mapping...")
+        target_lang = state.get("target_language", "dotnet")
+        
+        if target_lang == "java":
+            # Java: src/main/java/com/example/mainframe/jobs/{Job}.java
+            worker_jobs_dir = output_path / "src" / "main" / "java" / "com" / "example" / "mainframe" / "jobs"
+            job_ext = ".java"
+        else:
+            # .NET: src/Worker/Jobs/{Job}.cs
+            worker_jobs_dir = output_path / "src" / "Worker" / "Jobs"
+            job_ext = ".cs"
+
         step4_failures: list[str] = []
 
-        ps1_jobs = set()
+        script_jobs = set()
         if scripts_dir.exists():
-            for f in scripts_dir.glob("run-*.ps1"):
-                job_name = f.stem[4:].lower()
-                ps1_jobs.add(job_name)
+            for f in scripts_dir.glob("run-*.*"):
+                if f.name.startswith("run-") and f.suffix in [".ps1", ".sh", ".bat", ".cmd"]:
+                    job_name = f.stem[4:].lower()
+                    script_jobs.add(job_name)
 
         worker_classes = set()
         if worker_jobs_dir.exists():
-            for f in worker_jobs_dir.glob("*.cs"):
-                if f.name == "IJob.cs":
+            for f in worker_jobs_dir.glob(f"*{job_ext}"):
+                if f.name == f"IJob{job_ext}": # Skip interface
                     continue
                 worker_classes.add(f.stem.lower())
 
-        for job in ps1_jobs:
+        for job in script_jobs:
             if job not in worker_classes:
-                step4_failures.append(f"Missing Worker Class: {job.title()}.cs (for run-{job}.ps1)")
+                step4_failures.append(f"Missing Worker Class: {job.title()}{job_ext} (for script run-{job})")
 
         for cls in worker_classes:
-            if cls not in ps1_jobs:
-                step4_failures.append(f"Missing Script: run-{cls}.ps1 (for {cls.title()}.cs)")
+            if cls not in script_jobs:
+                step4_failures.append(f"Missing Script: run-{cls}.ps1/.sh (for {cls.title()}{job_ext})")
 
         if step4_failures:
             logger.warning(f"[Verification Step 4] FAIL — {len(step4_failures)} mapping issue(s)")
@@ -975,33 +984,60 @@ def create_codegen_agent(tools: list, project_id: str, system_prompt: str):
             logger.info("[Verification Step 4] PASS — All jobs mapped 1:1")
 
         # =================================================================
-        # STEP 5: Test Existence (rule-based — deterministic, no LLM call)
+        # STEP 5: Test Existence (rule-based)
         # =================================================================
         logger.info("[Verification Step 5] Checking test file existence...")
         step5_failures: list[str] = []
 
-        test_mapping = [
-            ("src/Core/Services", "tests/Core.Tests/Services"),
-            ("src/Infrastructure/Repositories", "tests/Infrastructure.Tests/Repositories"),
-            ("src/Worker/Jobs", "tests/Worker.Tests/Jobs"),
-        ]
-
-        skip_files = {"IJob.cs", "Program.cs"}
+        if target_lang == "java":
+            # Java Mappings
+            # src/main/java/com/example/mainframe/X -> src/test/java/com/example/mainframe/X
+            base_src = "src/main/java/com/example/mainframe"
+            base_test = "src/test/java/com/example/mainframe"
+            
+            test_mapping = [
+                (f"{base_src}/services", f"{base_test}/services"),
+                (f"{base_src}/repositories", f"{base_test}/repositories"),
+                (f"{base_src}/jobs", f"{base_test}/jobs"),
+            ]
+            skip_files = {"MainApplication.java"}
+            test_suffix = "Test.java" # Java convention is usually Test or Tests
+            src_ext = ".java"
+        else:
+            # .NET Mappings
+            test_mapping = [
+                ("src/Core/Services", "tests/Core.Tests/Services"),
+                ("src/Infrastructure/Repositories", "tests/Infrastructure.Tests/Repositories"),
+                ("src/Worker/Jobs", "tests/Worker.Tests/Jobs"),
+            ]
+            skip_files = {"IJob.cs", "Program.cs"}
+            test_suffix = "Tests.cs"
+            src_ext = ".cs"
 
         for src_rel, test_rel in test_mapping:
             src_dir = output_path / src_rel
             if not src_dir.exists():
                 continue
-            for cs_file in src_dir.glob("*.cs"):
-                if cs_file.name in skip_files:
+            for src_file in src_dir.glob(f"*{src_ext}"):
+                if src_file.name in skip_files:
                     continue
-                if cs_file.name.startswith("I") and len(cs_file.name) > 1 and cs_file.name[1].isupper():
+                # Skip interfaces
+                if target_lang == "dotnet" and src_file.name.startswith("I") and len(src_file.name) > 1 and src_file.name[1].isupper():
                     continue
 
-                expected_test = output_path / test_rel / (cs_file.stem + "Tests.cs")
+                # Expected test file
+                expected_test = output_path / test_rel / (src_file.stem + test_suffix.replace(src_ext, ""))
+                
+                # Check for *Tests.cs or *Test.java
                 if not expected_test.exists():
+                     # Try alternative naming for Java (ServiceTest vs ServiceTests)
+                    if target_lang == "java":
+                         alt = output_path / test_rel / (src_file.stem + "Tests.java")
+                         if alt.exists():
+                             continue
+                    
                     step5_failures.append(
-                        f"Missing Test: {test_rel}/{cs_file.stem}Tests.cs (for {src_rel}/{cs_file.name})"
+                        f"Missing Test: {test_rel}/{src_file.stem}{test_suffix} (for {src_rel}/{src_file.name})"
                     )
 
         if step5_failures:
@@ -1020,106 +1056,191 @@ def create_codegen_agent(tools: list, project_id: str, system_prompt: str):
         # =================================================================
         # STEP 6: Solution builds successfully (per-step budget)
         # =================================================================
-        logger.info("[Verification Step 6] Checking dotnet build...")
-
-        # Resolve sln files once for both Step 6 and Step 7
-        sln_files = list(output_path.glob("*.sln"))
-
+        logger.info(f"[Verification Step 6] Checking build ({target_lang})...")
+        
         build_fail_count = step_failures.get("build", 0)
+        
         if build_fail_count >= MAX_STEP_BUDGET:
-            logger.warning(f"[Verification Step 6] SKIP — build budget exhausted ({build_fail_count}/{MAX_STEP_BUDGET})")
+             logger.warning(f"[Verification Step 6] SKIP — build budget exhausted ({build_fail_count}/{MAX_STEP_BUDGET})")
         else:
-            if not sln_files:
-                logger.warning("[Verification Step 6] FAIL — No .sln file found")
-                step_failures["build"] = build_fail_count + 1
-                return _fmt_step("Step 6: Build", ["Missing .sln file — solution was never initialized"])
+            build_success = False
+            build_errors = []
+            
+            if target_lang == "java":
+                # Check for pom.xml
+                pom_path = output_path / "pom.xml"
+                if not pom_path.exists():
+                     logger.warning("[Verification Step 6] FAIL — No pom.xml file found")
+                     build_errors = ["Missing pom.xml — Maven project not initialized"]
+                else:
+                    # Run mvn verify
+                    # On windows use mvnw.cmd, linux ./mvnw
+                    mvn_cmd = "mvnw.cmd" if subprocess.os.name == "nt" else "./mvnw"
+                    if not (output_path / mvn_cmd).exists() and not (output_path / "mvnw").exists():
+                         mvn_cmd = "mvn" # Fallback to local maven
+                    
+                    try:
+                        logger.info(f"Running build info: {mvn_cmd} clean package -DskipTests")
+                        result = subprocess.run(
+                            [str(output_path / mvn_cmd) if (output_path / mvn_cmd).exists() else mvn_cmd, "clean", "package", "-DskipTests"],
+                            cwd=str(output_path),
+                            capture_output=True,
+                            text=True,
+                            timeout=300,
+                        )
+                        if result.returncode == 0:
+                            build_success = True
+                            logger.info("[Verification Step 6] PASS — Build succeeded")
+                        else:
+                            # Parse maven errors
+                            for line in (result.stdout + result.stderr).splitlines():
+                                if "[ERROR]" in line:
+                                    build_errors.append(line)
+                    except Exception as e:
+                        build_errors = [f"Build exception: {e}"]
             else:
-                try:
-                    result = subprocess.run(
-                        ["dotnet", "build", str(sln_files[0])],
-                        cwd=str(output_path),
-                        capture_output=True,
-                        text=True,
-                        timeout=120,
-                    )
-                    if result.returncode == 0:
-                        logger.info("[Verification Step 6] PASS — Build succeeded")
-                    else:
-                        build_output = result.stdout + result.stderr
-                        error_lines = [line for line in build_output.splitlines() if ": error " in line]
-                        # Cap inline errors to avoid token explosion
-                        shown_errors = error_lines[:30]
-                        truncated_msg = f"\n... and {len(error_lines) - 30} more errors" if len(error_lines) > 30 else ""
-                        logger.warning(f"[Verification Step 6] FAIL — Build failed with {len(error_lines)} errors")
-                        step_failures["build"] = build_fail_count + 1
-                        verification_update["verification_step_failures"] = step_failures
-                        return _fmt_step("Step 6: Build", [
-                            f"Build FAILED with {len(error_lines)} error(s) (attempt {build_fail_count + 1}/{MAX_STEP_BUDGET}).\n"
-                            "Fix these errors by reading each message and correcting the code:\n" +
-                            "\n".join(shown_errors) + truncated_msg
-                        ])
-                except Exception as e:
-                    logger.warning(f"[Verification Step 6] SKIP — Build check error: {e}")
+                # DotNet Check
+                sln_files = list(output_path.glob("*.sln"))
+                if not sln_files:
+                    logger.warning("[Verification Step 6] FAIL — No .sln file found")
+                    build_errors = ["Missing .sln file — solution was never initialized"]
+                else:
+                    try:
+                        result = subprocess.run(
+                            ["dotnet", "build", str(sln_files[0])],
+                            cwd=str(output_path),
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        if result.returncode == 0:
+                             build_success = True
+                             logger.info("[Verification Step 6] PASS — Build succeeded")
+                        else:
+                             build_output = result.stdout + result.stderr
+                             build_errors = [line for line in build_output.splitlines() if ": error " in line]
+                    except Exception as e:
+                         build_errors = [f"Build exception: {e}"]
+
+            if not build_success:
+                 # Report errors
+                 shown_errors = build_errors[:30]
+                 truncated_msg = f"\n... and {len(build_errors) - 30} more errors" if len(build_errors) > 30 else ""
+                 logger.warning(f"[Verification Step 6] FAIL — Build failed with {len(build_errors)} errors")
+                 step_failures["build"] = build_fail_count + 1
+                 verification_update["verification_step_failures"] = step_failures
+                 return _fmt_step("Step 6: Build", [
+                     f"Build FAILED ({target_lang}) with {len(build_errors)} error(s) (attempt {build_fail_count + 1}/{MAX_STEP_BUDGET}).\n"
+                     "Fix these errors by reading each message and correcting the code:\n" +
+                     "\n".join(shown_errors) + truncated_msg
+                 ])
 
         # =================================================================
         # STEP 7: Tests pass AND >0 tests ran (per-step budget)
         # =================================================================
-        logger.info("[Verification Step 7] Checking dotnet test...")
+        logger.info(f"[Verification Step 7] Checking tests ({target_lang})...")
 
         test_fail_count = step_failures.get("test", 0)
         if test_fail_count >= MAX_STEP_BUDGET:
-            logger.warning(f"[Verification Step 7] SKIP — test budget exhausted ({test_fail_count}/{MAX_STEP_BUDGET})")
+             logger.warning(f"[Verification Step 7] SKIP — test budget exhausted ({test_fail_count}/{MAX_STEP_BUDGET})")
         else:
-            if sln_files:
-                try:
-                    result = subprocess.run(
-                        ["dotnet", "test", str(sln_files[0]), "--no-build"],
-                        cwd=str(output_path),
-                        capture_output=True,
-                        text=True,
-                        timeout=180,
-                    )
-                    test_output = result.stdout + result.stderr
+             test_success = False
+             test_errors = []
+             executed_count = 0
+             
+             if target_lang == "java":
+                 pass
+                 # For Java, `mvn test` runs tests.
+                 # We need to parse surefire reports or stdout.
+                 mvn_cmd = "mvnw.cmd" if subprocess.os.name == "nt" else "./mvnw"
+                 if not (output_path / mvn_cmd).exists() and not (output_path / "mvnw").exists():
+                      mvn_cmd = "mvn"
 
-                    if result.returncode == 0:
-                        total_match = re.search(r'Total tests: (\d+)', test_output)
-                        passed_match = re.search(r'Passed: (\d+)', test_output)
-                        executed_count = 0
-                        if total_match:
-                            executed_count = int(total_match.group(1))
-                        elif passed_match:
-                            executed_count = int(passed_match.group(1))
+                 try:
+                     result = subprocess.run(
+                         [str(output_path / mvn_cmd) if (output_path / mvn_cmd).exists() else mvn_cmd, "test"],
+                         cwd=str(output_path),
+                         capture_output=True,
+                         text=True,
+                         timeout=300,
+                     )
+                     output = result.stdout + result.stderr
+                     
+                     # Parse regex: "Tests run: 5, Failures: 0, Errors: 0, Skipped: 0"
+                     match = re.search(r"Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)", output)
+                     if match:
+                         executed_count = int(match.group(1))
+                         failures = int(match.group(2))
+                         errors = int(match.group(3))
+                         
+                         if result.returncode == 0 and failures == 0 and errors == 0:
+                             test_success = True
+                         else:
+                             # Extract failures
+                             capture = False
+                             for line in output.splitlines():
+                                 if "[ERROR]" in line or "Test set:" in line:
+                                     test_errors.append(line)
+                     else:
+                         test_errors.append("Could not parse Maven test output")
 
-                        if executed_count > 0:
-                            logger.info(f"[Verification Step 7] PASS — {executed_count} tests passed")
-                        else:
-                            logger.warning("[Verification Step 7] FAIL — Build passed but 0 tests were executed")
-                            step_failures["test"] = test_fail_count + 1
-                            verification_update["verification_step_failures"] = step_failures
-                            return _fmt_step("Step 7: Tests", [
-                                "Test suite passed but 0 tests were executed. "
-                                "You MUST write unit tests with actual [Fact] or [Theory] attributes."
-                            ])
-                    else:
-                        # Extract failed test details
-                        fail_lines = [
-                            line for line in test_output.splitlines()
-                            if "Failed" in line or ": error " in line or "Assert." in line
-                        ]
-                        shown = fail_lines[:30]
-                        truncated_msg = f"\n... and {len(fail_lines) - 30} more failures" if len(fail_lines) > 30 else ""
-                        logger.warning("[Verification Step 7] FAIL — Tests failed")
-                        step_failures["test"] = test_fail_count + 1
-                        verification_update["verification_step_failures"] = step_failures
-                        return _fmt_step("Step 7: Tests", [
-                            f"Tests FAILED (attempt {test_fail_count + 1}/{MAX_STEP_BUDGET}).\n"
-                            "Fix these failures by reading the error output and correcting the code:\n" +
-                            "\n".join(shown) + truncated_msg
-                        ])
-                except Exception as e:
-                    logger.warning(f"[Verification Step 7] SKIP — Test check error: {e}")
-            else:
-                logger.info("[Verification Step 7] SKIP — No solution to test")
+                 except Exception as e:
+                     test_errors = [f"Test exception: {e}"]
+
+             else:
+                 # DotNet
+                 sln_files = list(output_path.glob("*.sln"))
+                 if sln_files:
+                     try:
+                         result = subprocess.run(
+                             ["dotnet", "test", str(sln_files[0]), "--no-build"],
+                             cwd=str(output_path),
+                             capture_output=True,
+                             text=True,
+                             timeout=180,
+                         )
+                         test_output = result.stdout + result.stderr
+
+                         if result.returncode == 0:
+                             total_match = re.search(r'Total tests: (\d+)', test_output)
+                             passed_match = re.search(r'Passed: (\d+)', test_output)
+                             if total_match:
+                                 executed_count = int(total_match.group(1))
+                             elif passed_match:
+                                 executed_count = int(passed_match.group(1))
+                             test_success = True
+                         else:
+                             test_errors = [
+                                 line for line in test_output.splitlines()
+                                 if "Failed" in line or ": error " in line or "Assert." in line
+                             ]
+                     except Exception as e:
+                         test_errors = [f"Test exception: {e}"]
+                 else:
+                     logger.info("[Verification Step 7] SKIP — No solution to test")
+                     return {"messages": [], **verification_update}
+
+             if test_success and executed_count > 0:
+                 logger.info(f"[Verification Step 7] PASS — {executed_count} tests passed")
+             elif test_success and executed_count == 0:
+                  logger.warning("[Verification Step 7] FAIL — Build passed but 0 tests were executed")
+                  step_failures["test"] = test_fail_count + 1
+                  verification_update["verification_step_failures"] = step_failures
+                  return _fmt_step("Step 7: Tests", [
+                      "Test suite passed but 0 tests were executed. "
+                      "You MUST write unit tests."
+                  ])
+             else:
+                  shown = test_errors[:30]
+                  truncated_msg = f"\n... and {len(test_errors) - 30} more failures" if len(test_errors) > 30 else ""
+                  logger.warning("[Verification Step 7] FAIL — Tests failed")
+                  step_failures["test"] = test_fail_count + 1
+                  verification_update["verification_step_failures"] = step_failures
+                  return _fmt_step("Step 7: Tests", [
+                      f"Tests FAILED (attempt {test_fail_count + 1}/{MAX_STEP_BUDGET}).\n"
+                      "Fix these failures by reading the error output and correcting the code:\n" +
+                      "\n".join(shown) + truncated_msg
+                  ])
 
         logger.info("[Verification] ═══ ALL CHECKS PASSED ═══")
         return {"messages": [], **verification_update}

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.services.codegen_local.languages.base import LanguageStrategy
-from app.services.codegen_local.prompts import SYSTEM_PROMPT
+from app.services.codegen_local.languages.dotnet_prompt import SYSTEM_PROMPT
 from app.services.codegen_local.tools import build_tools, scaffold
 
 

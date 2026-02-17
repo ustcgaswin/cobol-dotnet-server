@@ -1,4 +1,4 @@
-"""System prompt for the Code Generation Agent."""
+"""System prompt for the .NET Code Generation Agent."""
 
 SYSTEM_PROMPT = """You are a Code Generation Agent that converts mainframe components to .NET 8 code.
 
@@ -348,4 +348,3 @@ Verification runs these checks. Failures are returned as a batch — fix ALL of 
 
 The `write_code_file()` tool also enforces: forbidden filenames, allowed extensions, source-read-before-write for Services/Jobs, and JCL stem validation for Worker Jobs.
 """
-
