@@ -284,59 +284,121 @@ class SingleJCLReportBuilder(BaseBuilder):
         clean = clean.replace('"', "'").replace('(', '[').replace(')', ']')
         return clean.strip()
 
+    # def _section_visual_step_flow(self):
+    #     """Generates a wrapped grid layout (5 steps per row) for the JCL flow."""
+    #     self.h2("4. Job Execution Flow")
+    #     steps = self.jcl.technical_analysis.get('steps', [])
+    #     if not steps:
+    #         self.para("No execution steps identified.")
+    #         return
+
+    #     STEPS_PER_ROW = 5
+    #     mermaid_lines = ["flowchart TD"]
+    #     mermaid_lines.append("    classDef stepNode fill:#e1f5fe,stroke:#01579b,stroke-width:1px,color:#333,font-size:12px;")
+        
+    #     rows = [steps[i:i + STEPS_PER_ROW] for i in range(0, len(steps), STEPS_PER_ROW)]
+    #     last_node_id = None
+
+    #     for row_idx, row_steps in enumerate(rows):
+    #         # Using subgraphs to keep rows together
+    #         mermaid_lines.append(f"    subgraph Row_{row_idx} [ ]")
+    #         mermaid_lines.append("        direction LR")
+            
+    #         row_node_ids = []
+    #         for step_idx, step in enumerate(row_steps):
+    #             global_idx = (row_idx * STEPS_PER_ROW) + step_idx
+    #             node_id = f"s{global_idx}"
+    #             s_name = self._clean_for_mermaid(step.get('step_name', f"STP{global_idx}"))
+    #             pgm = self._clean_for_mermaid(step.get('program', 'UTIL'))
+    #             label = f"{s_name} : {pgm}"
+                
+    #             mermaid_lines.append(f"        {node_id}[\"{label}\"]")
+    #             mermaid_lines.append(f"        class {node_id} stepNode")
+    #             row_node_ids.append(node_id)
+
+    #         for i in range(len(row_node_ids) - 1):
+    #             mermaid_lines.append(f"        {row_node_ids[i]} --> {row_node_ids[i+1]}")
+            
+    #         mermaid_lines.append("    end") 
+
+    #         if last_node_id and row_node_ids:
+    #             # Vertical link between rows
+    #             mermaid_lines.append(f"    {last_node_id} --> {row_node_ids[0]}")
+            
+    #         if row_node_ids:
+    #             last_node_id = row_node_ids[-1]
+
+    #     mermaid_code = "\n".join(mermaid_lines)
+    #     img_path = self.output_dir / f"{self.jcl.filename}_flow.png"
+        
+    #     if self.graph_analyzer.render_mermaid_code_to_png(mermaid_code, str(img_path)):
+    #         # --- FIX: SMART SCALING LOGIC ---
+    #         self._add_scaled_image(str(img_path))
+    #         self.para("<i>Figure 1: Sequential step execution roadmap.</i>")
+    #     else:
+    #         self.para("<i>[Visual flow could not be rendered]</i>")
     def _section_visual_step_flow(self):
-        """Generates a wrapped grid layout (5 steps per row) for the JCL flow."""
-        self.h2("4. Job Execution Flow")
-        steps = self.jcl.technical_analysis.get('steps', [])
-        if not steps:
-            self.para("No execution steps identified.")
+        """
+        Generates a Lineage Flow: 
+        Predecessors --> Current Job (Highlighted) --> Successors
+        """
+        self.h2("2. Job Lineage & Connectivity")
+        
+        # 1. Extract context
+        flow = self.jcl.technical_analysis.get('flow_context', {})
+        preds = flow.get('predecessors', []) or []
+        succs = flow.get('successors', []) or []
+        current_name = self._clean_for_mermaid(self.jcl.filename)
+
+        # If there's absolutely no connectivity, show a simple block
+        if not preds and not succs:
+            self.para("This job has no identified upstream or downstream job dependencies.")
             return
 
-        STEPS_PER_ROW = 5
-        mermaid_lines = ["flowchart TD"]
-        mermaid_lines.append("    classDef stepNode fill:#e1f5fe,stroke:#01579b,stroke-width:1px,color:#333,font-size:12px;")
+        # 2. Build Mermaid String
+        mermaid_lines = ["flowchart LR"]
         
-        rows = [steps[i:i + STEPS_PER_ROW] for i in range(0, len(steps), STEPS_PER_ROW)]
-        last_node_id = None
+        # Styling: Normal Jobs (Blue) vs Current Job (Gold/Orange)
+        mermaid_lines.append("    classDef normalJob fill:#e1f5fe,stroke:#01579b,stroke-width:1px,color:#333;")
+        mermaid_lines.append("    classDef targetJob fill:#fff9c4,stroke:#fbc02d,stroke-width:3px,color:#333,font-weight:bold;")
 
-        for row_idx, row_steps in enumerate(rows):
-            # Using subgraphs to keep rows together
-            mermaid_lines.append(f"    subgraph Row_{row_idx} [ ]")
-            mermaid_lines.append("        direction LR")
-            
-            row_node_ids = []
-            for step_idx, step in enumerate(row_steps):
-                global_idx = (row_idx * STEPS_PER_ROW) + step_idx
-                node_id = f"s{global_idx}"
-                s_name = self._clean_for_mermaid(step.get('step_name', f"STP{global_idx}"))
-                pgm = self._clean_for_mermaid(step.get('program', 'UTIL'))
-                label = f"{s_name} : {pgm}"
-                
-                mermaid_lines.append(f"        {node_id}[\"{label}\"]")
-                mermaid_lines.append(f"        class {node_id} stepNode")
-                row_node_ids.append(node_id)
+        # Define the Main Target Node
+        target_id = "target_node"
+        mermaid_lines.append(f"    {target_id}[\"{current_name}\"]")
+        mermaid_lines.append(f"    class {target_id} targetJob")
 
-            for i in range(len(row_node_ids) - 1):
-                mermaid_lines.append(f"        {row_node_ids[i]} --> {row_node_ids[i+1]}")
-            
-            mermaid_lines.append("    end") 
+        # Handle Predecessors (Upstream)
+        if preds:
+            for idx, p in enumerate(preds[:10]): # Limit to 10 to keep URL short
+                p_name = self._clean_for_mermaid(str(p))
+                p_id = f"pred_{idx}"
+                mermaid_lines.append(f"    {p_id}[\"{p_name}\"] --> {target_id}")
+                mermaid_lines.append(f"    class {p_id} normalJob")
+        else:
+            # Optional: Show a "Batch Entry" start node if no preds
+            mermaid_lines.append(f"    Start((Start)) --> {target_id}")
 
-            if last_node_id and row_node_ids:
-                # Vertical link between rows
-                mermaid_lines.append(f"    {last_node_id} --> {row_node_ids[0]}")
-            
-            if row_node_ids:
-                last_node_id = row_node_ids[-1]
+        # Handle Successors (Downstream)
+        if succs:
+            for idx, s in enumerate(succs[:10]):
+                s_name = self._clean_for_mermaid(str(s))
+                s_id = f"succ_{idx}"
+                mermaid_lines.append(f"    {target_id} --> {s_id}[\"{s_name}\"]")
+                mermaid_lines.append(f"    class {s_id} normalJob")
+        else:
+            # Optional: Show an "End" node if no successors
+            mermaid_lines.append(f"    {target_id} --> End((End))")
 
         mermaid_code = "\n".join(mermaid_lines)
-        img_path = self.output_dir / f"{self.jcl.filename}_flow.png"
         
+        # 3. Render and Add to PDF
+        img_path = self.output_dir / f"{self.jcl.filename}_lineage_flow.png"
         if self.graph_analyzer.render_mermaid_code_to_png(mermaid_code, str(img_path)):
-            # --- FIX: SMART SCALING LOGIC ---
             self._add_scaled_image(str(img_path))
-            self.para("<i>Figure 1: Sequential step execution roadmap.</i>")
+            self.para("<i>Figure 1: Upstream dependencies and downstream impact for this job.</i>")
         else:
-            self.para("<i>[Visual flow could not be rendered]</i>")
+            # Fallback if the API fails
+            self.para("<i>[Lineage diagram unavailable - see Section 8 for text details]</i>")
 
     def _add_scaled_image(self, path: str):
         """Helper to add image to PDF while ensuring it fits on the page."""
