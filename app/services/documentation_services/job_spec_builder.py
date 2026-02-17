@@ -498,10 +498,65 @@ class SingleJCLReportBuilder(BaseBuilder):
             if param_rows:
                 self.table(["Variable", "Default", "Description"], param_rows, [40*mm, 40*mm, 90*mm])
 
+    # def _section_execution_steps(self):
+    #     """Analyzes every JCL step and links to Program logic."""
+    #     self.h2("8. Execution Roadmap")
+    #     self.para("Detailed breakdown of sequential processing steps and the internal program logic applied.")
+
+    #     steps = self.jcl.technical_analysis.get('steps', [])
+    #     if not steps:
+    #         self.para("<i>No processing steps identified.</i>")
+    #         return
+
+    #     for idx, step in enumerate(steps, 1):
+    #         step_name = step.get('step_name', f"STEP{idx}")
+    #         program = step.get('program', 'UNKNOWN')
+            
+    #         self.h3(f"Step {idx}: {step_name} (PGM: {program})")
+    #         self.para(f"<b>Step Action:</b> {step.get('description', 'N/A')}")
+            
+    #         prog_summary = self._find_summary_by_name(program)
+            
+    #         if prog_summary:
+    #             self.h4(f"Internal Logic: {program}")
+    #             logic_desc = prog_summary.business_overview.get('functional_description')
+    #             if logic_desc: self.para(logic_desc)
+
+    #             prog_rules = prog_summary.business_overview.get('scope', [])
+    #             if prog_rules:
+    #                 self.para("<b>Processing Rules:</b>")
+    #                 self.bullet_list(prog_rules)
+
+    #             calcs = prog_summary.business_overview.get('core_calculations', [])
+    #             if calcs:
+    #                 self.para("<b>Core Calculations:</b>")
+    #                 self.bullet_list(calcs)
+
+    #             recons = prog_summary.business_overview.get('reconciliation_logic', [])
+    #             if recons:
+    #                 self.para("<b>Integrity & Balance Controls:</b>")
+    #                 self.bullet_list(recons)
+
+    #             tech_notes = prog_summary.technical_analysis.get('technical_notes', [])
+    #             if tech_notes:
+    #                 self.h4("Technical Implementation Notes")
+    #                 self.bullet_list(tech_notes)
+    #         else:
+    #             self.para(f"<i>Note: Logic for '{program}' is managed via system utility or external module.</i>")
+
+    #         io_mappings = step.get('io_mappings', [])
+    #         if io_mappings:
+    #             self.h4("Local Step Data Interactions")
+    #             io_rows = [[io.get('dd_name'), io.get('dataset'), io.get('disposition'), io.get('purpose')] for io in io_mappings if isinstance(io, dict)]
+    #             if io_rows:
+    #                 self.table(["DD Name", "Resource", "Disp", "Role"], io_rows, [25*mm, 85*mm, 15*mm, 45*mm])
+
+    #         self.elements.append(Spacer(1, 5*mm))
+
     def _section_execution_steps(self):
-        """Analyzes every JCL step and links to Program logic."""
+        """Analyzes every JCL step and links to Program logic OR Control logic."""
         self.h2("8. Execution Roadmap")
-        self.para("Detailed breakdown of sequential processing steps and the internal program logic applied.")
+        self.para("Detailed breakdown of sequential processing steps and the internal logic applied.")
 
         steps = self.jcl.technical_analysis.get('steps', [])
         if not steps:
@@ -515,88 +570,69 @@ class SingleJCLReportBuilder(BaseBuilder):
             self.h3(f"Step {idx}: {step_name} (PGM: {program})")
             self.para(f"<b>Step Action:</b> {step.get('description', 'N/A')}")
             
-            prog_summary = self._find_summary_by_name(program)
-            
-            if prog_summary:
-                self.h4(f"Internal Logic: {program}")
-                logic_desc = prog_summary.business_overview.get('functional_description')
-                if logic_desc: self.para(logic_desc)
+            logic_summary = self._find_summary_by_name(program)
 
-                prog_rules = prog_summary.business_overview.get('scope', [])
-                if prog_rules:
-                    self.para("<b>Processing Rules:</b>")
-                    self.bullet_list(prog_rules)
+            if not logic_summary:
+                io_mappings = step.get('io_mappings', [])
+                for io in io_mappings:
+                    dsn = io.get('dataset', '')
+                    # Look for a file in our project that matches this DSN or Member name
+                    logic_summary = self._find_summary_by_name(dsn)
+                    if logic_summary: 
+                        break # Found the control file logic
 
-                calcs = prog_summary.business_overview.get('core_calculations', [])
+            if logic_summary:
+                # Determine title based on type
+                stype = logic_summary.file_type.upper()
+                label = f"Internal Logic: {logic_summary.filename}"
+                if stype in ['CONTROL_CARD', 'PARMLIB', 'TEXT']:
+                    label = f"Control/Configuration Logic: {logic_summary.filename}"
+                
+                self.h4(label)
+                
+                # Narrative Description
+                desc = logic_summary.business_overview.get('functional_description') or \
+                       logic_summary.business_overview.get('purpose')
+                if desc: self.para(desc)
+
+                # Rules/Processing points
+                rules = logic_summary.business_overview.get('scope', [])
+                if not rules and stype == 'PARMLIB':
+                    # Fallback for parmlibs which store logic in configuration_areas
+                    rules = logic_summary.technical_analysis.get('configuration_areas', [])
+                
+                if rules:
+                    self.para("<b>Processing Rules / Configuration:</b>")
+                    self.bullet_list(rules)
+
+                # COBOL specific: Calculations & Reconciliation
+                calcs = logic_summary.business_overview.get('core_calculations', [])
                 if calcs:
                     self.para("<b>Core Calculations:</b>")
                     self.bullet_list(calcs)
-
-                recons = prog_summary.business_overview.get('reconciliation_logic', [])
+                
+                recons = logic_summary.business_overview.get('reconciliation_logic', [])
                 if recons:
-                    self.para("<b>Integrity & Balance Controls:</b>")
+                    self.para("<b>Integrity Controls:</b>")
                     self.bullet_list(recons)
 
-                tech_notes = prog_summary.technical_analysis.get('technical_notes', [])
-                if tech_notes:
-                    self.h4("Technical Implementation Notes")
-                    self.bullet_list(tech_notes)
+                # Technical Notes
+                t_notes = logic_summary.technical_analysis.get('technical_notes', [])
+                if t_notes:
+                    self.h4("Technical Notes")
+                    self.bullet_list(t_notes)
             else:
                 self.para(f"<i>Note: Logic for '{program}' is managed via system utility or external module.</i>")
 
+            # Local DD Table
             io_mappings = step.get('io_mappings', [])
             if io_mappings:
-                self.h4("Local Step Data Interactions")
+                self.h4("Step Data Interactions")
                 io_rows = [[io.get('dd_name'), io.get('dataset'), io.get('disposition'), io.get('purpose')] for io in io_mappings if isinstance(io, dict)]
                 if io_rows:
                     self.table(["DD Name", "Resource", "Disp", "Role"], io_rows, [25*mm, 85*mm, 15*mm, 45*mm])
 
             self.elements.append(Spacer(1, 5*mm))
-
-    # def _section_data_structures(self):
-    #     """Extracts field-level details for layouts used in this job."""
-    #     self.h2("7. Data Structure Definitions")
-    #     self.para("The following record layouts define the data formats processed by the programs in this job.")
-
-    #     layouts_to_render = []
-    #     seen_layouts = set()
-
-    #     for step in self.jcl.technical_analysis.get('steps', []):
-    #         pgm = step.get('program')
-    #         prog_summary = self._find_summary_by_name(pgm)
-            
-    #         if prog_summary:
-    #             # Iterate through interactions to find mappings (Copybooks)
-    #             interactions = prog_summary.technical_analysis.get('data_interactions', [])
-    #             for io in interactions:
-    #                 if not isinstance(io, dict): continue
-    #                 layout_name = io.get('mapping')
-    #                 if layout_name and layout_name not in seen_layouts:
-    #                     layout_summary = self._find_summary_by_name(layout_name)
-    #                     if layout_summary:
-    #                         layouts_to_render.append(layout_summary)
-    #                         seen_layouts.add(layout_name)
-
-    #     if not layouts_to_render:
-    #         self.para("<i>No specific file layouts or copybooks identified for this job's datasets.</i>")
-    #         return
-
-    #     for layout in layouts_to_render:
-    #         self.h3(f"Entity Definition: {layout.filename}")
-    #         self.para(f"<b>Purpose:</b> {layout.business_overview.get('purpose', 'N/A')}")
-            
-    #         fields = layout.technical_analysis.get('key_fields', []) or layout.technical_analysis.get('table_structure', [])
-    #         if fields:
-    #             rows = []
-    #             for f in fields:
-    #                 if isinstance(f, dict):
-    #                     # Extract name and description/type
-    #                     name = str(f.get('field') or f.get('column_name') or 'N/A')
-    #                     desc = str(f.get('description') or f.get('type') or 'N/A')
-    #                     rows.append([name, desc])
-    #             if rows:
-    #                 self.table(["Field Name", "Business Meaning / Format"], rows, [70*mm, 100*mm])
-    #         self.elements.append(Spacer(1, 5*mm))
 
     def _section_flow_dependencies(self):
         """Workflow lineage (Predecessors/Successors)."""
@@ -620,13 +656,24 @@ class SingleJCLReportBuilder(BaseBuilder):
         else: self.para("No internal successors identified.")
 
     def _find_summary_by_name(self, name: str):
-        """Helper to find a COBOL/PLI/COPYBOOK summary by name."""
-        if not name or name.upper() in ['SORT', 'IDCAMS', 'IEFBR14', 'IEBGENER']:
+        """
+        Aggressive helper to find ANY summary (COBOL, CTL, PARM) by name.
+        Handles: Program IDs, Dataset Names, and Member names.
+        """
+        if not name: return None
+
+        clean_search = name.upper().strip().split('.')[-1].split('(')[-1].replace(')', '').split('.')[0]
+
+        if clean_search in ['SORT', 'IDCAMS', 'IEFBR14', 'IEBGENER', 'IKJEFT01', 'ICETOOL']:
             return None
-        clean_name = name.upper().strip().split('.')[0]
+
         for s in self.all_summaries:
-            if s.filename.upper().split('.')[0] == clean_name:
+            s_filename = s.filename.upper()
+            s_base = s_filename.split('.')[0].split('(')[-1].replace(')', '')
+            
+            if s_base == clean_search or s_base.startswith(clean_search) or clean_search.startswith(s_base):
                 return s
+        
         return None
 
     def save(self, path: str):
