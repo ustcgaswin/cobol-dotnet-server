@@ -7,7 +7,7 @@ def scaffold_java_solution(output_path: Path, source_path: Path, project_name: s
     
     Args:
         output_path: Path to the output directory
-        source_path: Path to the source directory (for JCL scanning if needed)
+        source_path: Path to the source directory (for JCL scanning)
         project_name: Name of the project
         
     Returns:
@@ -109,24 +109,135 @@ def scaffold_java_solution(output_path: Path, source_path: Path, project_name: s
 """
     (output_path / "pom.xml").write_text(pom_content, encoding="utf-8")
     
-    # 3. Create Application.java
+    # 3. JCL Discovery & Worker Job Scaffolding
+    jcl_jobs = []
+    if source_path.exists():
+        for jcl_file in sorted(source_path.rglob("*.jcl")):
+            if not jcl_file.is_file():
+                continue
+            class_name = jcl_file.stem.capitalize()   # SETLJOB -> Setljob
+            script_name = jcl_file.stem.lower()       # SETLJOB -> setljob
+            jcl_jobs.append((class_name, script_name, jcl_file.name))
+            
+    # Stub IJob Interface (Function Interface)
+    ijob_path = base_package_path / "worker" / "jobs" / "BatchJob.java"
+    ijob_content = """package com.example.migration.worker.jobs;
+
+public interface BatchJob {
+    int execute(String[] args);
+}
+"""
+    ijob_path.write_text(ijob_content, encoding="utf-8")
+
+    scaffolded_jobs = []
+    
+    # Generate Job Stubs
+    for class_name, script_name, jcl_filename in jcl_jobs:
+        # Java Class Stub
+        job_file = base_package_path / "worker" / "jobs" / f"{class_name}.java"
+        if not job_file.exists():
+            job_java = f"""// Source: {jcl_filename}
+package com.example.migration.worker.jobs;
+
+import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
+@Component("{class_name}")
+public class {class_name} implements BatchJob {{
+
+    @Override
+    public int execute(String[] args) {{
+        // TODO: Implement job steps from {jcl_filename}
+        log.error("Job {class_name} not yet implemented.");
+        throw new UnsupportedOperationException("Job {class_name} logic missing.");
+    }}
+}}
+"""
+            job_file.write_text(job_java, encoding="utf-8")
+            
+        # PS1 Script Skeleton
+        ps1_file = output_path / "scripts" / "jobs" / f"run-{script_name}.ps1"
+        if not ps1_file.exists():
+            jar_name = f"{project_name.lower().replace(' ', '-')}-0.0.1-SNAPSHOT.jar"
+            ps1 = f"""# run-{script_name}.ps1 — Converted from: {jcl_filename}
+# Usage: ./run-{script_name}.ps1 [args]
+
+$ErrorActionPreference = "Stop"
+$script:MaxRC = 0
+
+# 1. Verification
+if (-not (Test-Path "target/{jar_name}")) {{
+    Write-Error "Build artifact target/{jar_name} not found. Run './mvnw package -DskipTests' first."
+}}
+
+Write-Host "=== Executing Job: {class_name} ==="
+
+# 2. Execution
+# We pass all arguments from PS1 ($args) to the Java application
+# The Java App uses CommandLineRunner to route '--job {class_name}' to the right Bean.
+java -jar "target/{jar_name}" --job "{class_name}" $args
+
+# 3. Return Code Handling
+if ($LASTEXITCODE -ne 0) {{
+    Write-Error "Job {class_name} failed with RC $LASTEXITCODE"
+}}
+exit $LASTEXITCODE
+"""
+            ps1_file.write_text(ps1, encoding="utf-8")
+            
+        scaffolded_jobs.append(f"{class_name} ({jcl_filename})")
+
+    # 4. Create Application.java with Job Routing Logic
+    # We need a way to run specific jobs via CLI args, similar to .NET
     app_class = """package com.example.migration;
 
+import com.example.migration.worker.jobs.BatchJob;
+import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+
+import java.util.Arrays;
 
 @SpringBootApplication
 public class Application {
 
     public static void main(String[] args) {
-        SpringApplication.run(Application.class, args);
+        System.exit(SpringApplication.exit(SpringApplication.run(Application.class, args)));
     }
 
+    @Bean
+    public CommandLineRunner run(ApplicationContext ctx) {
+        return args -> {
+            if (args.length == 0) return; // Allow normal boot for tests/web
+
+            String jobName = null;
+            for (int i = 0; i < args.length; i++) {
+                if ("--job".equals(args[i]) && i + 1 < args.length) {
+                    jobName = args[i + 1];
+                    break;
+                }
+            }
+
+            if (jobName != null) {
+                try {
+                    BatchJob job = ctx.getBean(jobName, BatchJob.class);
+                    int rc = job.execute(args);
+                    System.exit(rc);
+                } catch (Exception e) {
+                    System.err.println("Job execution failed: " + e.getMessage());
+                    System.exit(1);
+                }
+            }
+        };
+    }
 }
 """
     (base_package_path / "Application.java").write_text(app_class, encoding="utf-8")
     
-    # 4. Create application.properties
+    # 5. Create application.properties
     props = """spring.application.name=migration-app
 logging.level.root=INFO
 logging.level.com.example.migration=DEBUG
@@ -139,7 +250,7 @@ spring.h2.console.enabled=true
 """
     (output_path / "src" / "main" / "resources" / "application.properties").write_text(props, encoding="utf-8")
     
-    # 5. Create .gitignore
+    # 6. Create .gitignore
     gitignore = """
 .mvn/wrapper/maven-wrapper.jar
 **/target/
@@ -154,9 +265,12 @@ spring.h2.console.enabled=true
 """
     (output_path / ".gitignore").write_text(gitignore, encoding="utf-8")
     
-    # 6. Stub mvnw scripts (Text only for now, binary JAR missing)
-    # Ideally we'd copy these from a template, but for now we write placeholders 
-    # instructing to install maven or use existing wrapper if available.
-    # Realistically, downloading the wrapper jar via python is possible but larger scope.
-    
-    return f"Created Java solution structure at {output_path} with pom.xml, src directories, and default config."
+    # Summary
+    summary = [
+        f"Created Java solution structure at {output_path}",
+        f"Pre-scaffolded {len(scaffolded_jobs)} Worker Jobs + PS1 scripts:",
+    ]
+    for j in scaffolded_jobs:
+        summary.append(f"  - {j}")
+        
+    return "\n".join(summary)
