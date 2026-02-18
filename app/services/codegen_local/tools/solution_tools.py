@@ -10,8 +10,6 @@ from pathlib import Path
 from langchain.tools import tool
 from loguru import logger
 
-from app.services.codegen_local.tools.scaffold import scaffold_solution
-from app.services.codegen_local.tools import java_scaffold
 from app.services.codegen_local.tools.source_file_tools import get_source_read_registry
 
 
@@ -77,29 +75,7 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str, t
             logger.error(f"list_batch_components error: {e}")
             return f"Error listing batch components: {e}"
     
-    @tool("initialize_solution")
-    def initialize_solution(solution_name: str) -> str:
-        """Initialize the solution skeleton.
 
-        Note: The solution scaffold is pre-created by the system before
-        the agent starts. This tool verifies it exists and returns the
-        current structure.
-
-        Args:
-            solution_name: Name for the solution
-
-        Returns:
-            Success message with created structure
-        """
-        # Scaffolding is handled by the strategy before agent start, 
-        # but we reuse the scaffold logic if called here.
-        # This tool is mostly a "check if exists" or "noop" for the agent's mental model.
-        if target_language == "java":
-            return java_scaffold.scaffold_java_solution(output_dir, source_dir, solution_name)
-        else:
-            return scaffold_solution(output_dir, source_dir, solution_name)
-
-    @tool("write_code_file")
     def write_code_file(relative_path: str, content: str) -> str:
         """Write a code file to the generated solution.
         
@@ -357,7 +333,6 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str, t
             return f"Error removing file: {e}"
 
     return [
-        initialize_solution,
         write_code_file,
         list_generated_files,
         read_generated_file,
