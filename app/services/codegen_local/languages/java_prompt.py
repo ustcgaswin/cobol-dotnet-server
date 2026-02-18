@@ -93,7 +93,6 @@ local-migration/
 | (File/DB Access) | `infrastructure/repositories/YRepository.java` |
 | (Service Test) | `src/test/java/.../core/YServiceTest.java` |
 | JCL job JOBNAME | `worker/jobs/Jobname.java` |
-| (Job Test) | `src/test/java/.../worker/JobnameTest.java` |
 
 **Service Mapping**: Services correspond to **COBOL Programs**, not JCL Jobs.
 **Worker Jobs**: Orchestrate steps (calling Services).
@@ -121,8 +120,7 @@ For each JCL job:
   c. Create `scripts/jobs/run-jobname.ps1` to run the Java app with arguments.
      Example: `java -jar app.jar --job Jobname --step Step01`
   d. Update `Application.java` or Job Registry to recognize the job.
-  e. Write `src/test/java/.../worker/JobnameTest.java`.
-  f. Log status.
+  e. Log status.
 
 ### Phase 4 — Verify Coverage
   - Ensure all F-IDs are implemented.

@@ -417,24 +417,31 @@ def _scan_placeholder_files(output_path: Path) -> list[dict]:
     if not src_dir.exists():
         return placeholders
     
-    for cs_file in src_dir.rglob("*.cs"):
-        if "bin" in cs_file.parts or "obj" in cs_file.parts:
+    for file in src_dir.rglob("*"):
+        if file.is_dir() or "bin" in file.parts or "obj" in file.parts or ".mvn" in file.parts:
             continue
-        # Skip interfaces and IJob.cs
-        if cs_file.name.startswith("I") and cs_file.name[1].isupper():
+            
+        is_cs = file.suffix == ".cs"
+        is_java = file.suffix == ".java"
+        
+        if not (is_cs or is_java):
             continue
-        if cs_file.name == "Program.cs":
+
+        # Skip interfaces and IJob
+        if is_cs and file.name.startswith("I") and len(file.name) > 1 and file.name[1].isupper():
+            continue
+        if file.name in ["Program.cs", "Application.java", "MainApplication.java"]:
             continue
             
         try:
-            content = cs_file.read_text(encoding="utf-8", errors="replace")
+            content = file.read_text(encoding="utf-8", errors="replace")
             lines = content.splitlines()
             line_count = len(lines)
-            rel_path = str(cs_file.relative_to(output_path)).replace("\\", "/")
+            rel_path = str(file.relative_to(output_path)).replace("\\", "/")
             
             # Check line count thresholds
-            is_service = "Services" in rel_path
-            is_job = "Jobs" in rel_path
+            is_service = "Services" in rel_path or "services" in rel_path
+            is_job = "Jobs" in rel_path or "jobs" in rel_path
             
             if is_service and line_count < 25:
                 placeholders.append({
@@ -452,30 +459,39 @@ def _scan_placeholder_files(output_path: Path) -> list[dict]:
                 })
                 continue
             
-            # Check if ALL methods are just NotImplementedException
-            method_bodies = re.findall(
-                r"\{[^{}]*\}", content, re.DOTALL
-            )
-            all_nie = True
+            # Check if ALL methods are just NotImplementedException / UnsupportedOperationException
+            method_bodies = re.findall(r"\{[^{}]*\}", content, re.DOTALL)
+            all_stubs = True
             has_methods = False
+            
             for body in method_bodies:
                 body_stripped = body.strip().strip("{}")
                 if not body_stripped.strip():
                     continue
                 has_methods = True
-                # Check if body is ONLY NotImplementedException or return default
+                
                 body_clean = body_stripped.strip()
-                if not re.match(
+                
+                # Check for C# stub
+                is_cs_stub = bool(re.match(
                     r"^\s*(throw\s+new\s+NotImplementedException\s*\(\s*\)\s*;|return\s+(default|0|Task\.FromResult\s*\(\s*0\s*\))\s*;)\s*$",
                     body_clean, re.DOTALL
-                ):
-                    all_nie = False
+                ))
+                
+                # Check for Java stub
+                is_java_stub = bool(re.match(
+                    r"^\s*(throw\s+new\s+UnsupportedOperationException\s*\(\s*\)\s*;|return\s+(null|0|false)\s*;)\s*$",
+                    body_clean, re.DOTALL
+                ))
+                
+                if not (is_cs_stub or is_java_stub):
+                    all_stubs = False
                     break
             
-            if has_methods and all_nie:
+            if has_methods and all_stubs:
                 placeholders.append({
                     "file": rel_path,
-                    "reason": "All method bodies are NotImplementedException or return default — no real logic",
+                    "reason": "All method bodies are stubs (NotImplemented/UnsupportedOperation) — no real logic",
                     "line_count": line_count,
                 })
                 continue
@@ -744,8 +760,8 @@ def create_codegen_agent(tools: list, project_id: str, system_prompt: str):
           3. JCL → PowerShell scripts existence
           4. 1:1 Job Mapping (.ps1 ↔ Worker Class)
           5. Test Existence
+          5. Test Existence
           6. dotnet build  (budget: MAX_STEP_BUDGET)
-          7. dotnet test   (budget: MAX_STEP_BUDGET)
         """
         import subprocess
 
@@ -944,8 +960,8 @@ def create_codegen_agent(tools: list, project_id: str, system_prompt: str):
         target_lang = state.get("target_language", "dotnet")
         
         if target_lang == "java":
-            # Java: src/main/java/com/example/mainframe/jobs/{Job}.java
-            worker_jobs_dir = output_path / "src" / "main" / "java" / "com" / "example" / "mainframe" / "jobs"
+            # Java: src/main/java/com/example/migration/worker/jobs/{Job}.java
+            worker_jobs_dir = output_path / "src" / "main" / "java" / "com" / "example" / "migration" / "worker" / "jobs"
             job_ext = ".java"
         else:
             # .NET: src/Worker/Jobs/{Job}.cs
@@ -991,14 +1007,14 @@ def create_codegen_agent(tools: list, project_id: str, system_prompt: str):
 
         if target_lang == "java":
             # Java Mappings
-            # src/main/java/com/example/mainframe/X -> src/test/java/com/example/mainframe/X
-            base_src = "src/main/java/com/example/mainframe"
-            base_test = "src/test/java/com/example/mainframe"
+            # src/main/java/com/example/migration/X -> src/test/java/com/example/migration/X
+            base_src = "src/main/java/com/example/migration"
+            base_test = "src/test/java/com/example/migration"
             
             test_mapping = [
-                (f"{base_src}/services", f"{base_test}/services"),
-                (f"{base_src}/repositories", f"{base_test}/repositories"),
-                (f"{base_src}/jobs", f"{base_test}/jobs"),
+                (f"{base_src}/core/services", f"{base_test}/core/services"),
+                (f"{base_src}/infrastructure/repositories", f"{base_test}/infrastructure/repositories"),
+                (f"{base_src}/worker/jobs", f"{base_test}/worker/jobs"),
             ]
             skip_files = {"MainApplication.java"}
             test_suffix = "Test.java" # Java convention is usually Test or Tests

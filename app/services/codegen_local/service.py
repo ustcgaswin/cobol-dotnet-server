@@ -26,6 +26,7 @@ from app.services.codegen_local.tools.source_file_tools import create_source_fil
 from app.services.codegen_local.tools.system_context_tools import create_system_context_tools
 from app.services.analyst.service import AnalystService
 from app.services.codegen_local.process_flow import ProcessFlowService
+from app.services.codegen_local.testing_agent import create_testing_graph
 from app.config.llm.tracing import trace_execution, trace_tool
 
 
@@ -562,6 +563,93 @@ class CodegenLocalService:
                     trace.set_error(e)
                     raise
             
+            # -------------------------------------------------------------------------
+            # PHASE 2: Testing Agent
+            # -------------------------------------------------------------------------
+            self._update_status(run_id, "running", phase="testing_generation")
+            
+            # Check if Phase 1 ended with a broken build
+            # We can infer this from the agent's final state or logs, but for now
+            # we'll assume it's "Success" unless we explicitly flagged it.
+            # In the new "Force Proceed" plan, we always run Phase 2.
+            # We'll check if the *last* build attempt failed to set the flag.
+            
+            # Create list of generated files for the manifest
+            # (We can scan the disk or use the agent's state if we had it)
+            generated_files = []
+            try:
+                # Simple scan of the output directory
+                generated_files = [
+                    str(p.relative_to(output_path)).replace("\\", "/") 
+                    for p in output_path.rglob("*") 
+                    if p.is_file() and "bin" not in p.parts and "obj" not in p.parts
+                ]
+            except Exception:
+                pass
+
+            # Create and run Testing Agent
+            from app.services.codegen_local.testing_agent import create_testing_graph
+            testing_agent = create_testing_graph(None) # LLM client created inside
+            
+            if settings.CODEGEN_ENABLE_TESTING_AGENT: # Feature flag
+                logger.info(f"Starting Testing Agent for {project_id_str}")
+                try:
+                    await testing_agent.ainvoke({
+                        "project_id": project_id_str,
+                        "target_language": self.target_language,
+                        "output_path": str(output_path),
+                        "source_path": str(source_path),
+                        "generated_files": generated_files,
+                        "iteration_count": 0,
+                        "file_fix_attempts": {},
+                        "build_failed_in_phase_1": False # TODO: Wire up actual build status
+                    })
+                    logger.info("Testing Agent completed")
+                except Exception as e:
+                    logger.error(f"Testing Agent failed: {e}")
+                    # Non-fatal for the whole pipeline, considering it's an additive step
+            
+            # -------------------------------------------------------------------------
+            # Final Cleanup & Completion
+            # -------------------------------------------------------------------------
+
+            # -------------------------------------------------------------------------
+            # PHASE 2: Testing Agent
+            # -------------------------------------------------------------------------
+            self._update_status(run_id, "running", phase="testing_generation")
+            
+            # Simple scan of the output directory for manifest
+            generated_files = []
+            try:
+                generated_files = [
+                    str(p.relative_to(output_path)).replace("\\", "/") 
+                    for p in output_path.rglob("*") 
+                    if p.is_file() and "bin" not in p.parts and "obj" not in p.parts
+                ]
+            except Exception:
+                pass
+
+            if settings.CODEGEN_ENABLE_TESTING_AGENT:
+                logger.info(f"Starting Testing Agent for {project_id_str}")
+                try:
+                    # Create Testing Agent
+                    testing_agent = create_testing_graph(None) 
+                    
+                    await testing_agent.ainvoke({
+                        "project_id": project_id_str,
+                        "target_language": self.target_language,
+                        "output_path": str(output_path),
+                        "source_path": str(source_path),
+                        "generated_files": generated_files,
+                        "iteration_count": 0,
+                        "file_fix_attempts": {},
+                        "build_failed_in_phase_1": False # Placeholder: Assume success for now
+                    })
+                    logger.info("Testing Agent completed")
+                except Exception as e:
+                    logger.error(f"Testing Agent failed: {e}")
+                    # Non-fatal for the whole pipeline
+
             # Clean up all artifacts before marking complete
             self._cleanup_intermediary_files(output_path)
             self._cleanup_build_artifacts(output_path)
@@ -601,7 +689,7 @@ class CodegenLocalService:
             
             # DB: Mark FAILED
             await self._update_db_status(ProjectStatus.FAILED.value)
-
+        
         except httpx.TimeoutException as e:
             end_time = datetime.utcnow().isoformat()
             error_msg = f"LLM Timeout Error: LLM service did not respond in time. Details: {e}"

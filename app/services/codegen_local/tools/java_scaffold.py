@@ -34,8 +34,6 @@ def scaffold_java_solution(output_path: Path, source_path: Path, project_name: s
         base_package_path / "infrastructure" / "io",
         base_package_path / "worker" / "jobs",
         test_package_path / "core",
-        test_package_path / "infrastructure",
-        test_package_path / "worker",
         output_path / "src" / "main" / "resources",
         output_path / "scripts" / "jobs",
         output_path / "data" / "input",
