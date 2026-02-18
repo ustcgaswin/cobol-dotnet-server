@@ -8,30 +8,28 @@ from pathlib import Path
 
 from langchain.tools import tool
 from loguru import logger
+from app.services.codegen_local.tools.java_build_tools import create_java_build_tools
 
-
-def create_build_tools(project_id: str, output_path: str) -> list:
+def create_build_tools(output_path: str, target_language: str = "dotnet", project_id: str = "", include_test_tools: bool = False) -> list:
     """Create build and test tools.
     
     Args:
-        project_id: Project ID for locating the solution
-        output_path: Absolute path to the output directory with the solution
-        
-    Returns:
-        List of LangChain tools
+        output_path: Absolute path to the output directory
+        target_language: "dotnet" or "java"
+        project_id: Project ID (optional, but good for context)
+        include_test_tools: Whether to include tools for running tests
     """
+    
+    if target_language == "java":
+        return create_java_build_tools(project_id, output_path, include_test_tools=include_test_tools)
+        
+    # DOTNET LOGIC
+    # ... (existing dotnet implementation)
     output_dir = Path(output_path)
     
     @tool("run_dotnet_build")
     def run_dotnet_build() -> str:
-        """Run 'dotnet build' on the generated solution.
-        
-        Use this to compile the solution and check for errors.
-        If there are errors, fix the code and try again.
-        
-        Returns:
-            Build output including any errors or warnings
-        """
+        """Run 'dotnet build' on the generated solution."""
         try:
             # Find .sln file
             sln_files = list(output_dir.glob("*.sln"))
@@ -47,7 +45,6 @@ def create_build_tools(project_id: str, output_path: str) -> list:
                 text=True,
                 timeout=120,
             )
-            
             
             output = result.stdout + result.stderr
             
@@ -90,13 +87,7 @@ def create_build_tools(project_id: str, output_path: str) -> list:
     
     @tool("run_dotnet_test")
     def run_dotnet_test() -> str:
-        """Run 'dotnet test' on the generated solution.
-        
-        Use this to run unit tests after the build succeeds.
-        
-        Returns:
-            Test results including passed/failed counts
-        """
+        """Run 'dotnet test' on the generated solution."""
         try:
             sln_files = list(output_dir.glob("*.sln"))
             if not sln_files:
@@ -141,4 +132,8 @@ def create_build_tools(project_id: str, output_path: str) -> list:
             logger.error(f"run_dotnet_test error: {e}")
             return f"Error running tests: {e}"
     
-    return [run_dotnet_build, run_dotnet_test]
+    tools = [run_dotnet_build]
+    if include_test_tools:
+        tools.append(run_dotnet_test)
+        
+    return tools

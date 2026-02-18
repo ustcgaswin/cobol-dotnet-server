@@ -4,17 +4,18 @@ from pathlib import Path
 from loguru import logger
 from langchain.tools import tool
 
-def create_java_build_tools(project_id: str, output_path: str) -> list:
+def create_java_build_tools(project_id: str, output_path: str, include_test_tools: bool = False) -> list:
     """Create Maven build and test tools.
     
     Args:
         project_id: Project ID 
         output_path: Absolute path to the output directory
+        include_test_tools: Whether to include run_maven_test (for Testing Agent)
     """
     output_dir = Path(output_path)
     
     def _get_mvn_command():
-        """Get the Maven command (mvnw or mvn)."""
+        # ... (rest of function remains same)
         # Try wrapper first
         if os.name == 'nt':
             wrapper = output_dir / "mvnw.cmd"
@@ -29,6 +30,7 @@ def create_java_build_tools(project_id: str, output_path: str) -> list:
 
     @tool("run_maven_build")
     def run_maven_build() -> str:
+        # ... (unchanged)
         """Run 'mvn clean compile' on the project."""
         try:
             cmd = _get_mvn_command()
@@ -54,6 +56,7 @@ def create_java_build_tools(project_id: str, output_path: str) -> list:
 
     @tool("run_maven_test")
     def run_maven_test() -> str:
+        # ... (unchanged)
         """Run 'mvn test' on the project."""
         try:
             cmd = _get_mvn_command()
@@ -75,4 +78,8 @@ def create_java_build_tools(project_id: str, output_path: str) -> list:
         except Exception as e:
             return f"Error running maven tests: {e}"
 
-    return [run_maven_build, run_maven_test]
+    tools = [run_maven_build]
+    if include_test_tools:
+        tools.append(run_maven_test)
+        
+    return tools

@@ -76,6 +76,7 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str, t
             return f"Error listing batch components: {e}"
     
 
+    @tool("write_code_file")
     def write_code_file(relative_path: str, content: str) -> str:
         """Write a code file to the generated solution.
         

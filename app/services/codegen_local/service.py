@@ -595,6 +595,7 @@ class CodegenLocalService:
                 logger.info(f"Starting Testing Agent for {project_id_str}")
                 try:
                     await testing_agent.ainvoke({
+                        "messages": [],
                         "project_id": project_id_str,
                         "target_language": self.target_language,
                         "output_path": str(output_path),
@@ -602,7 +603,7 @@ class CodegenLocalService:
                         "generated_files": generated_files,
                         "iteration_count": 0,
                         "file_fix_attempts": {},
-                        "build_failed_in_phase_1": False # TODO: Wire up actual build status
+                        "build_failed_in_phase_1": result.get("verification_step_failures", {}).get("build", 0) > 0 if result else False
                     })
                     logger.info("Testing Agent completed")
                 except Exception as e:
