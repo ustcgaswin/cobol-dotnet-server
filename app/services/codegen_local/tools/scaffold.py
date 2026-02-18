@@ -55,7 +55,6 @@ def scaffold_solution(
         worker_guid = str(uuid.uuid4()).upper()
         core_tests_guid = str(uuid.uuid4()).upper()
         infra_tests_guid = str(uuid.uuid4()).upper()
-        worker_tests_guid = str(uuid.uuid4()).upper()
 
         sln_content = f'''Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
@@ -70,8 +69,6 @@ EndProject
 Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "Core.Tests", "tests\\Core.Tests\\Core.Tests.csproj", "{{{core_tests_guid}}}"
 EndProject
 Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "Infrastructure.Tests", "tests\\Infrastructure.Tests\\Infrastructure.Tests.csproj", "{{{infra_tests_guid}}}"
-EndProject
-Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "Worker.Tests", "tests\\Worker.Tests\\Worker.Tests.csproj", "{{{worker_tests_guid}}}"
 EndProject
 Global
 \tGlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -99,10 +96,6 @@ Global
 \t\t{{{infra_tests_guid}}}.Debug|Any CPU.Build.0 = Debug|Any CPU
 \t\t{{{infra_tests_guid}}}.Release|Any CPU.ActiveCfg = Release|Any CPU
 \t\t{{{infra_tests_guid}}}.Release|Any CPU.Build.0 = Release|Any CPU
-\t\t{{{worker_tests_guid}}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-\t\t{{{worker_tests_guid}}}.Debug|Any CPU.Build.0 = Debug|Any CPU
-\t\t{{{worker_tests_guid}}}.Release|Any CPU.ActiveCfg = Release|Any CPU
-\t\t{{{worker_tests_guid}}}.Release|Any CPU.Build.0 = Release|Any CPU
 \tEndGlobalSection
 EndGlobal
 '''
@@ -258,28 +251,6 @@ public interface IJob
         infra_tests_path.mkdir(parents=True, exist_ok=True)
         (infra_tests_path / "Infrastructure.Tests.csproj").write_text(infra_tests_csproj)
         (infra_tests_path / "Repositories").mkdir(exist_ok=True)
-
-        worker_tests_csproj = f'''<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <IsPackable>false</IsPackable>
-    <IsTestProject>true</IsTestProject>
-    <RootNamespace>ConvertedBatch.Worker.Tests</RootNamespace>
-  </PropertyGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\\..\\src\\Core\\Core.csproj" />
-    <ProjectReference Include="..\\..\\src\\Infrastructure\\Infrastructure.csproj" />
-    <ProjectReference Include="..\\..\\src\\Worker\\Worker.csproj" />
-  </ItemGroup>
-{test_packages}
-</Project>
-'''
-        worker_tests_path = tests_path / "Worker.Tests"
-        worker_tests_path.mkdir(parents=True, exist_ok=True)
-        (worker_tests_path / "Worker.Tests.csproj").write_text(worker_tests_csproj)
-        (worker_tests_path / "Jobs").mkdir(exist_ok=True)
 
         # ================================================================
         # 6. scripts/ & data/
@@ -487,7 +458,6 @@ obj/
             "tests/",
             "  Core.Tests/Services/",
             "  Infrastructure.Tests/Repositories/",
-            "  Worker.Tests/Jobs/",
             "scripts/ (jobs, common)",
             "data/ (input, output)",
         ]

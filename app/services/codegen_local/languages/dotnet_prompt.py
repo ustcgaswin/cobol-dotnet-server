@@ -56,6 +56,7 @@ Generate files in this structure:
 local-migration/
 ├── ConvertedBatch.sln
 ├── src/
+│   ├── (Do NOT put files here - use Core/Infrastructure/Worker!)
 │   ├── Core/
 │   │   ├── Core.csproj
 │   │   ├── Entities/          ← Copybooks → POCOs
@@ -81,16 +82,10 @@ local-migration/
 ├── scripts/common/            ← Shared PowerShell logic
 ├── data/input/                ← Runtime input files
 ├── data/output/               ← Runtime output files
-└── tests/
-    ├── Core.Tests/
-    │   ├── Core.Tests.csproj
-    │   └── Services/         ← Service unit tests
-    ├── Infrastructure.Tests/
-    │   ├── Infrastructure.Tests.csproj
-    │   └── Repositories/     ← Repository tests
-    └── Worker.Tests/
-        ├── Worker.Tests.csproj
-        └── Jobs/             ← Job tests
+├── scripts/jobs/              ← PowerShell from JCL jobs
+├── scripts/common/            ← Shared PowerShell logic
+├── data/input/                ← Runtime input files
+└── data/output/               ← Runtime output files
 ```
 
 ## Mapping Rules
@@ -100,10 +95,7 @@ local-migration/
 | Copybook X.cpy | src/Core/Entities/X.cs |
 | COBOL program Y.cbl | src/Core/Services/YService.cs + src/Core/Interfaces/IYService.cs |
 | (File/DB Access) | src/Infrastructure/Repositories/YRepository.cs + src/Core/Interfaces/Repositories/IYRepository.cs |
-| (Service Test) | tests/Core.Tests/Services/YServiceTests.cs |
-| (Repo Test) | tests/Infrastructure.Tests/Repositories/YRepositoryTests.cs |
 | JCL job JOBNAME | src/Worker/Jobs/Jobname.cs (implements IJob) |
-| (Job Test) | tests/Worker.Tests/Jobs/JobnameTests.cs |
 | JCL job JOBNAME | scripts/jobs/run-jobname.ps1 |
 
 **Worker Naming Convention**: The Worker job class filename MUST match the JCL job name. For example, JCL job `SETLJOB` → `Setljob.cs`. Do NOT use step names for Worker classes — steps are handled as methods within the job class.
@@ -160,8 +152,7 @@ For each COBOL, PL/I, Assembly program:
   e. **Repository**: If the program does file or DB I/O → generate Interface (`Core/Interfaces/Repositories/`) + Implementation (`Infrastructure/Repositories/`)
   f. **Source Provenance**: Add `// Source: FILENAME.ext` at the top of every Service file
   g. Write with `write_code_file()`
-  h. **Tests**: Write `tests/Core.Tests/Services/YServiceTests.cs` (mock repos), and `tests/Infrastructure.Tests/Repositories/YRepositoryTests.cs` if repo exists
-  i. Log status
+  h. Log status
 
 ### Phase 3 — JCL → Worker Jobs + PS1 Scripts (stubs pre-scaffolded)
 **Important:** Worker Job stubs and PS1 script skeletons already exist in the scaffold. You must **overwrite** them with real implementations.
@@ -172,8 +163,7 @@ For each JCL job:
   c. **Overwrite** `src/Worker/Jobs/{Jobname}.cs` with real step logic (the stub has `NotImplementedException`)
   d. **Overwrite** `scripts/jobs/run-{jobname}.ps1` with real step sections
   e. Update `src/Worker/Program.cs` — add any service/repository DI registrations needed by the jobs
-  f. **Tests**: Write `tests/Worker.Tests/Jobs/JobnameTests.cs`
-  g. Log status
+  f. Log status
 
 ### Phase 4 — Verify Coverage
   - Review the functionality catalog and ensure all F-IDs have been implemented

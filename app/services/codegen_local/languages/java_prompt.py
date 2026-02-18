@@ -58,10 +58,12 @@ local-migration/
 ├── mvnw / mvnw.cmd            ← Scripts (Pre-scaffolded)
 ├── .mvn/                      ← Maven wrapper (Pre-scaffolded)
 ├── src/
+│   ├── (Do NOT create 'worker', 'core', or 'tests' folders here! Use main/java...)
 │   ├── main/
 │   │   ├── java/
 │   │   │   └── com/example/migration/
 │   │   │       ├── Application.java   ← Main entry point
+│   │   │       ├── (Do NOT put other files here - use subpackages!)
 │   │   │       ├── core/
 │   │   │       │   ├── entities/      ← Copybooks → Records/POCOs
 │   │   │       │   ├── services/      ← COBOL programs → Business Services
@@ -78,8 +80,7 @@ local-migration/
 │       └── java/
 │           └── com/example/migration/
 │               ├── core/              ← Unit tests for Services
-│               ├── infrastructure/    ← Integration tests for Repos
-│               └── worker/            ← Tests for Jobs
+│               └── infrastructure/    ← Integration tests for Repos
 ├── scripts/jobs/                      ← PowerShell scripts to run Java jobs
 └── data/                              ← Runtime input/output
 ```
@@ -110,8 +111,7 @@ For each COBOL/PLI/Assembly program:
   a. Read source and Phase A summary.
   b. Generate Service in `core/services`.
   c. If DB/File I/O involved, generate Repository in `infrastructure/repositories`.
-  d. Write `src/test/java/.../core/YServiceTest.java` (JUnit 5 + Mockito).
-  e. Log status.
+  d. Log status.
 
 ### Phase 3 — JCL → Worker Jobs + Scripts
 For each JCL job:
