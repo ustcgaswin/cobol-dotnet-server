@@ -11,6 +11,7 @@ from langchain.tools import tool
 from loguru import logger
 
 from app.services.codegen_local.tools.scaffold import scaffold_solution
+from app.services.codegen_local.tools import java_scaffold
 from app.services.codegen_local.tools.source_file_tools import get_source_read_registry
 
 
@@ -91,10 +92,12 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str, t
             Success message with created structure
         """
         # Scaffolding is handled by the strategy before agent start, 
-        # but we reuse the dotnet scaffold logic if called here for dotnet.
-        # For Java, it's also pre-done.
+        # but we reuse the scaffold logic if called here.
         # This tool is mostly a "check if exists" or "noop" for the agent's mental model.
-        return scaffold_solution(output_dir, source_dir, solution_name)
+        if target_language == "java":
+            return java_scaffold.scaffold_java_solution(output_dir, source_dir, solution_name)
+        else:
+            return scaffold_solution(output_dir, source_dir, solution_name)
 
     @tool("write_code_file")
     def write_code_file(relative_path: str, content: str) -> str:
