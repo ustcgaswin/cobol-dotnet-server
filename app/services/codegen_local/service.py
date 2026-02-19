@@ -587,69 +587,19 @@ class CodegenLocalService:
             except Exception:
                 pass
 
-            # Create and run Testing Agent
-            from app.services.codegen_local.testing_agent import create_testing_graph
-            testing_agent = create_testing_graph(None) # LLM client created inside
-            
-            if settings.CODEGEN_ENABLE_TESTING_AGENT: # Feature flag
-                logger.info(f"Starting Testing Agent for {project_id_str}")
-                try:
-                    await testing_agent.ainvoke({
-                        "messages": [],
-                        "project_id": project_id_str,
-                        "target_language": self.target_language,
-                        "output_path": str(output_path),
-                        "source_path": str(source_path),
-                        "generated_files": generated_files,
-                        "iteration_count": 0,
-                        "file_fix_attempts": {},
-                        "build_failed_in_phase_1": result.get("verification_step_failures", {}).get("build", 0) > 0 if result else False
-                    })
-                    logger.info("Testing Agent completed")
-                except Exception as e:
-                    logger.error(f"Testing Agent failed: {e}")
-                    # Non-fatal for the whole pipeline, considering it's an additive step
-            
-            # -------------------------------------------------------------------------
-            # Final Cleanup & Completion
-            # -------------------------------------------------------------------------
-
             # -------------------------------------------------------------------------
             # PHASE 2: Testing Agent
             # -------------------------------------------------------------------------
-            self._update_status(run_id, "running", phase="testing_generation")
-            
-            # Simple scan of the output directory for manifest
-            generated_files = []
-            try:
-                generated_files = [
-                    str(p.relative_to(output_path)).replace("\\", "/") 
-                    for p in output_path.rglob("*") 
-                    if p.is_file() and "bin" not in p.parts and "obj" not in p.parts
-                ]
-            except Exception:
-                pass
-
             if settings.CODEGEN_ENABLE_TESTING_AGENT:
-                logger.info(f"Starting Testing Agent for {project_id_str}")
-                try:
-                    # Create Testing Agent
-                    testing_agent = create_testing_graph(None) 
-                    
-                    await testing_agent.ainvoke({
-                        "project_id": project_id_str,
-                        "target_language": self.target_language,
-                        "output_path": str(output_path),
-                        "source_path": str(source_path),
-                        "generated_files": generated_files,
-                        "iteration_count": 0,
-                        "file_fix_attempts": {},
-                        "build_failed_in_phase_1": False # Placeholder: Assume success for now
-                    })
-                    logger.info("Testing Agent completed")
-                except Exception as e:
-                    logger.error(f"Testing Agent failed: {e}")
-                    # Non-fatal for the whole pipeline
+                await self.run_testing_phase(
+                    run_id=run_id,
+                    build_failed=result.get("verification_step_failures", {}).get("build", 0) > 0 if result else False,
+                    generated_files=generated_files
+                )
+
+            # -------------------------------------------------------------------------
+            # Final Cleanup & Completion
+            # -------------------------------------------------------------------------
 
             # Clean up all artifacts before marking complete
             self._cleanup_intermediary_files(output_path)
@@ -896,4 +846,66 @@ class CodegenLocalService:
         
         logger.info(f"Created zip for project {self.project_id} ({buffer.tell()} bytes)")
         return buffer.getvalue()
+
+    async def run_testing_phase(self, run_id: str = None, build_failed: bool = False, generated_files: list[str] = None):
+        """Run the Testing Agent independently.
+        
+        Args:
+            run_id: Optional run ID for status updates.
+            build_failed: Whether the Phase 1 build failed (affects agent instructions).
+            generated_files: List of files to test. If None, scans the output directory.
+        """
+        project_id_str = str(self.project_id)
+        output_path = self._get_output_path(await self._get_project_name())
+        # source_path is typically the project_artifacts path (Phase A output) for context
+        source_path = self._get_artifacts_path() 
+        
+        if not output_path.exists():
+            # If specifically asked to run tests on empty folder, fail.
+            # But usually we want to test existing code.
+            raise FileNotFoundError(f"Output directory {output_path} does not exist. Run codegen first.")
+
+        if generated_files is None:
+             # Scan output directory
+            try:
+                generated_files = [
+                    str(p.relative_to(output_path)).replace("\\", "/") 
+                    for p in output_path.rglob("*") 
+                    if p.is_file() and "bin" not in p.parts and "obj" not in p.parts
+                ]
+            except Exception:
+                generated_files = []
+
+        if not generated_files:
+            logger.warning(f"No generated files found in {output_path}. Skipping Testing Agent.")
+            if run_id:
+                self._update_status(run_id, "skipped", phase="testing_generation", message="No generated files found")
+            return
+
+        if run_id:
+            self._update_status(run_id, "running", phase="testing_generation")
+
+        # Create and run Testing Agent
+        from app.services.codegen_local.testing_agent import create_testing_graph
+        testing_agent = create_testing_graph(None) 
+        
+        logger.info(f"Starting Testing Agent for {project_id_str}")
+        try:
+            await testing_agent.ainvoke({
+                "messages": [],
+                "project_id": project_id_str,
+                "target_language": self.target_language,
+                "output_path": str(output_path),
+                "source_path": str(source_path),
+                "generated_files": generated_files,
+                "iteration_count": 0,
+                "file_fix_attempts": {},
+                "build_failed_in_phase_1": build_failed
+            })
+            logger.info("Testing Agent completed")
+        except Exception as e:
+            logger.error(f"Testing Agent failed: {e}")
+            # If running standalone (no run_id passed?), we might want to propagate.
+            # But caller (api) handles it.
+            raise
 

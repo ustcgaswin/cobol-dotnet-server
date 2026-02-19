@@ -210,3 +210,41 @@ async def get_process_flow(project_id: uuid.UUID):
         "content": content,
     }
 
+
+@router.post("/projects/{project_id}/codegen/local/generate-tests")
+async def generate_tests(project_id: uuid.UUID, target_language: str = "dotnet"):
+    """Trigger the Testing Agent independently.
+    
+    Runs Phase 2 (Test Generation) on the existing generated code.
+    Useful if Phase 1 completed but tests were skipped or need regeneration.
+    """
+    service = CodegenLocalService(project_id, target_language)
+    
+    # We don't have a 'run_id' for status tracking in the main table for this ad-hoc action
+    # unless we want to create a dummy one. For now, we run it await-style (blocking/async)
+    # or background it if it takes long.
+    # Given the user wants it "similar to process flow", which is blocking-ish but fast? 
+    # Testing agent is slow. 
+    # Process flow is fast-ish.
+    # START_CODEGEN is async background.
+    
+    # We'll run it and return success, but we should probably background it?
+    # BUT the user might want immediate feedback or at least a started message.
+    
+    # Let's run it in background task to avoid timeout
+    import asyncio
+    
+    async def _run_task():
+        try:
+            await service.run_testing_phase(build_failed=False) # Assume build passed if running manually?
+        except Exception as e:
+            logger.error(f"Manual test generation failed: {e}")
+            
+    asyncio.create_task(_run_task())
+    
+    return {
+        "project_id": str(project_id),
+        "status": "started",
+        "message": "Test generation started in background.",
+    }
+
