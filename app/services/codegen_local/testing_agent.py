@@ -174,7 +174,7 @@ def model_node_dynamic(state: TestingState):
     # Re-create tools for this specific run
     solution_tools = create_solution_tools(project_id, output_path, source_path, target_language)
     build_tools = create_build_tools(output_path, target_language, project_id, include_test_tools=True)
-    source_tools = create_source_file_tools(project_id, source_path)
+    source_tools = create_source_file_tools(project_id)
     tools = solution_tools + build_tools + source_tools
     
     model = get_llm(CODEGEN, model=LLMModel.CLAUDE_SONNET_4_5)
@@ -232,7 +232,7 @@ def tool_node_dynamic(state: TestingState):
     # Re-create tools
     solution_tools = create_solution_tools(project_id, output_path, source_path, target_language)
     build_tools = create_build_tools(output_path, target_language, project_id, include_test_tools=True)
-    source_tools = create_source_file_tools(project_id, source_path)
+    source_tools = create_source_file_tools(project_id)
     tools = solution_tools + build_tools + source_tools
     tool_map = {t.name: t for t in tools}
     
