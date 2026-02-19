@@ -166,13 +166,15 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str, t
             # Service and Job files MUST have a // Source: tag referencing a
             # source file that was actually read via view_source_file().
             
-            # Detect logic files based on language
+            # Detect logic files based on language (EXCLUDE tests)
             if target_language == "java":
-                is_service = "/services/" in relative_path.lower() and ext == ".java"
-                is_job = "/jobs/" in relative_path.lower() and ext == ".java"
+                is_test = target.name.endswith("Test.java") or target.name.endswith("Tests.java")
+                is_service = "/services/" in relative_path.lower() and ext == ".java" and not is_test
+                is_job = "/jobs/" in relative_path.lower() and ext == ".java" and not is_test
             else:
-                is_service = "/Services/" in relative_path and ext == ".cs"
-                is_job = "/Jobs/" in relative_path and ext == ".cs" and target.name != "IJob.cs"
+                is_test = target.name.endswith("Test.cs") or target.name.endswith("Tests.cs")
+                is_service = "/Services/" in relative_path and ext == ".cs" and not is_test
+                is_job = "/Jobs/" in relative_path and ext == ".cs" and target.name != "IJob.cs" and not is_test
 
             if is_service or is_job:
                 source_tag = re.search(r'//\s*Source:\s*([\w.\-]+)', content)
