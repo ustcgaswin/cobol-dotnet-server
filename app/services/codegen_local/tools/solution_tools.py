@@ -158,9 +158,9 @@ def create_solution_tools(project_id: str, output_path: str, source_path: str, t
                             "2. 'scripts/common/' (Shared logic)\n"
                             "ALL other .ps1 files (e.g. ad-hoc inputs/tests) are PROHIBITED.")
 
-            # Enforce directory structure (Agent cannot create new folders)
+            # Enforce directory structure (Agent CAN create new folders now, per user request)
             if not target.parent.exists():
-                return f"Error: Directory '{target.parent.name}' does not exist. You must use the existing folder structure."
+                target.parent.mkdir(parents=True, exist_ok=True)
 
             # === PROVENANCE ENFORCEMENT ===
             # Service and Job files MUST have a // Source: tag referencing a
