@@ -721,3 +721,42 @@ class GraphAnalyzer:
             return "flowchart TD\n    Warn[\"Batch Graph too complex to render\"]"
             
         return mermaid_code
+
+    def generate_system_ca7_flow(self) -> str:
+        """
+        Generates a system-wide Mermaid flowchart based on all 
+        CA-7 Job-to-Job trigger relationships.
+        """
+        import networkx as nx
+
+        ca7_types = ['CA7_PREDECESSOR', 'CA7_DATASET_TRIGGER', 'CA7_USER_REQUIREMENT', 'TRIGGER']
+        
+        # 1. Identify all CA-7 predecessor edges
+        ca7_edges = [
+            (u, v) for u, v, d in self.graph.edges(data=True) 
+            if d.get('type') in ca7_types
+        ]
+        
+        if not ca7_edges:
+            return ""
+
+        # 2. Build a temp graph to find the most important paths (URL Safety)
+        temp_nx = nx.DiGraph()
+        temp_nx.add_edges_from(ca7_edges)
+        
+        # Cap to top 25 nodes to prevent URL Too Long errors
+        top_nodes = sorted(temp_nx.degree, key=lambda x: x[1], reverse=True)[:25]
+        subgraph = temp_nx.subgraph([n[0] for n in top_nodes])
+
+        # 3. Build Mermaid Flowchart
+        lines = ["flowchart TD"]
+        lines.append("    classDef ca7Node fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#333;")
+        
+        id_map = {name: f"c{i}" for i, name in enumerate(subgraph.nodes())}
+        
+        for u, v in subgraph.edges():
+            u_id, v_id = id_map[u], id_map[v]
+            lines.append(f"    {u_id}[\"{u}\"] -- Scheduler Trigger --> {v_id}[\"{v}\"]")
+            lines.append(f"    class {u_id},{v_id} ca7Node")
+
+        return "\n".join(lines)

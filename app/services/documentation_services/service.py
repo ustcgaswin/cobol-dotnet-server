@@ -389,18 +389,35 @@ class DocumentationService:
                 logger.warning("Failed to generate functional graph image via Mermaid API")
           
             # D. Batch Flow Diagram (NEW)
-            # Uses the list of summaries to find JCL-to-JCL links
-            batch_mermaid = analyzer.generate_batch_flow_diagram(all_summaries)
+            has_ca7_metadata = any(
+                s.file_type.upper() == 'CA7' or 
+                'ca7' in s.filename.lower() or 
+                s.filename.lower().endswith('.ca7')
+                for s in all_summaries
+            )
+
+            # Determine which diagram to generate
+            batch_mermaid = ""
+            flow_type = "JCL"
+
+            if has_ca7_metadata:
+                logger.info("CA7 context detected via file naming or type. Prioritizing Scheduler Flow.")
+                batch_mermaid = analyzer.generate_system_ca7_flow()
+                flow_type = "CA7"
+            
+            # Fallback to JCL if CA7 flow is empty or didn't exist
+            if not batch_mermaid:
+                logger.info("Generating standard JCL Data Lineage flow.")
+                batch_mermaid = analyzer.generate_batch_flow_diagram(all_summaries)
+                if not has_ca7_metadata:
+                    flow_type = "JCL"
             
             if batch_mermaid:
-                batch_path = output_dir / "batch_flow.png"
+                batch_path = output_dir / ("batch_flow_ca7.png" if flow_type else "batch_flow.png")
                 if analyzer.render_mermaid_code_to_png(batch_mermaid, str(batch_path)):
                     image_paths['batch_flow'] = str(batch_path)
-                    logger.info(f"Successfully generated batch flow image at {batch_path}")
-                else:
-                    logger.info(f"Failed generating batch flow image")
-            else:
-                logger.info(f"Batch Mermaid is missing")
+                    system_overview_json["batch_flow_type"] = flow_type
+                    logger.info(f"Successfully generated batch flow image. Mode: {system_overview_json['batch_flow_type']}")
 
             # 10. Build Real PDFs with the Images dict
             if mode in ["ALL", "TECHNICAL"]:

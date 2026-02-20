@@ -1744,14 +1744,24 @@ class FunctionalSpecBuilder(BaseBuilder):
         # if not chains_found:
         #     self.para("No direct file-based job chains detected. Jobs may operate as independent silos.")
 
-        self.h2("3.2 Batch Execution Flow (Data Lineage)")
-        self.para("The following diagram illustrates the sequential flow of data through the batch system based on dataset handoffs.")
+        flow_type = self.system_summary.get("batch_flow_type", "JCL")
+        
+        if flow_type == "CA7":
+            self.h2("3.3 Batch Execution Flow (Scheduler Sequence)")
+            self.para("The following diagram illustrates the batch execution sequence as defined in the CA-7 Scheduler. " + 
+                      "This represents the operational trigger points and job dependencies.")
+        else:
+            self.h2("3.3 Batch Execution Flow (Data Lineage)")
+            self.para("The following diagram illustrates the sequential flow of data through the batch system based on dataset handoffs.")
 
         if self.batch_flow_image_path:
              self.image(self.batch_flow_image_path)
-             self.para("<i>Figure: Automatic JCL Dependency Graph (Producer-Consumer Analysis).</i>")
+             if flow_type == "CA7":
+                 self.para("<i>Figure: CA-7 Batch Scheduling Dependency Graph.</i>")
+             else:
+                 self.para("<i>Figure: Automatic JCL Dependency Graph (Producer-Consumer Analysis).</i>")
         else:
-             self.para("No visual batch flow could be generated (no shared datasets found).")
+             self.para("No visual batch flow could be generated (no internal dependencies or scheduler triggers found).")
 
         # self.para("The following narratives describe the end-to-end processing sequence, including external data entrances and internal job-to-job handoffs.")
 
